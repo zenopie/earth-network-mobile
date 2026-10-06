@@ -24,11 +24,6 @@ data class EarthDimens(
     val gutter: Dp = 20.dp,
     val radiusSm: Dp = 8.dp,
     val radiusMd: Dp = 12.dp,
-    val radiusLg: Dp = 16.dp,
     val radiusSheet: Dp = 20.dp,
-    val radiusPill: Dp = 999.dp,
-    /** Minimum touch target; buttons never go under this. */
-    val touchTarget: Dp = 48.dp,
-    val buttonHeight: Dp = 52.dp,
     val strokeWidth: Dp = 1.dp,
 )

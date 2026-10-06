@@ -6,7 +6,6 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshots.SnapshotStateList
-import network.erth.wallet.R
 
 /**
  * Every place the app can be.
@@ -33,28 +32,23 @@ sealed interface EarthRoute {
      */
     sealed interface Tab : EarthRoute {
         val label: String
-        val icon: Int
     }
 
     data object Wallet : Tab {
         override val label = "Wallet"
-        override val icon = R.drawable.ic_home_wallet
     }
 
     data object Earn : Tab {
         override val label = "Earn"
-        override val icon = R.drawable.ic_home_earn
     }
 
     data object Swap : Tab {
         override val label = "Swap"
-        override val icon = R.drawable.ic_home_swap
     }
 
-    /** Earth's governance is its two allocation streams; there is no other kind. */
+    /** Proposals in both chambers, and the two allocation streams. */
     data object Govern : Tab {
         override val label = "Govern"
-        override val icon = R.drawable.ic_home_govern
     }
 
 

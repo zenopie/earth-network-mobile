@@ -505,10 +505,6 @@ data class VoteLayout(val order: List<Int?>, val pads: List<Fr>) {
             val order = ((0 until used).map<Int, Int?> { it } + List(VoteWitness.MAX_NOTES - used) { null }).shuffled(rng)
             return VoteLayout(order, List(VoteWitness.MAX_NOTES - used) { network.erth.wallet.privacy.note.NotePlaintext.randomField() })
         }
-
-        /** The notes first, then padding with the given r values (tests and fixtures). */
-        fun inOrder(used: Int, pads: List<Fr>): VoteLayout =
-            VoteLayout((0 until used).map<Int, Int?> { it } + List(VoteWitness.MAX_NOTES - used) { null }, pads)
     }
 }
 

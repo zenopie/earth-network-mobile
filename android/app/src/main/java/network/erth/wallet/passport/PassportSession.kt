@@ -12,8 +12,6 @@ import org.jmrtd.AccessDeniedException
 import org.jmrtd.BACKey
 import org.jmrtd.BACKeySpec
 import org.jmrtd.PassportService
-import org.jmrtd.lds.icao.DG1File
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -43,13 +41,11 @@ object PassportSession {
                 dateOfExpiry.length == 6
     }
 
-    /** What the chip held, and what was proved from it. */
+    /**
+     * What was proved from the chip. The chip's own data is not kept: only
+     * the proof and the Document Signer travel with the registration.
+     */
     data class Scan(
-        val documentNumber: String?,
-        val nationality: String?,
-        val issuingState: String?,
-        val dg1: ByteArray,
-        val sod: ByteArray,
         /** The on-device proof, ready to broadcast. */
         val proof: PassportProver.Result,
         val dscDer: ByteArray,
@@ -129,8 +125,6 @@ object PassportSession {
                 ?.let { readAllBytes(it) }
                 ?: return Result.failure(FailureException(Failure.NoSod))
 
-            val mrzInfo = runCatching { DG1File(ByteArrayInputStream(dg1Bytes)).mrzInfo }.getOrNull()
-
             // The Document Signer travels with the registration: the chain
             // verifies it against the CSCA trust store and binds it to the
             // proof's dsc_key output. No pre-submission and no registry wait.
@@ -145,11 +139,6 @@ object PassportSession {
 
             Result.success(
                 Scan(
-                    documentNumber = mrzInfo?.documentNumber,
-                    nationality = mrzInfo?.nationality,
-                    issuingState = mrzInfo?.issuingState,
-                    dg1 = dg1Bytes,
-                    sod = sodBytes,
                     proof = proof,
                     dscDer = dsc.certificateDer,
                     prep = prep,

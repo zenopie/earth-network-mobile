@@ -7,7 +7,7 @@ import network.erth.earth.proto.dex.MsgRemoveLiquidity
 import org.json.JSONObject
 
 /**
- * x/dex (spoke-and-wheel AMM hubbed on ERTH) queries + messages.
+ * x/dex (hub-and-spoke AMM, every pool paired with ERTH) queries + messages.
  */
 object Dex {
 
@@ -20,17 +20,13 @@ object Dex {
          * 14-day-weighted swap volume, in real uerth.
          *
          * The chain does the weighting and hands over a plain number: a trade a
-         * week ago counts (13/14)^7 of one made today. Nothing here has to age
-         * it, and nothing here should try — an earlier version decayed this
-         * client-side against a mechanism the chain had already replaced, and
-         * the resulting APR drifted further out every day.
+         * week ago counts (13/14)^7 of one made today. Nothing here ages it
+         * again: decaying it client-side would drift from the chain's figure.
          *
          * At a steady trading rate it settles at about fourteen times the daily
          * volume, which is how an APR estimate works back to a daily figure.
          */
         val volumeErth: String = "0",
-        /** Day index this pool last traded (block time / 86400). */
-        val lastTradedDay: Long = 0,
     )
 
     /** Days in the rolling volume window. Mirrors types.VolumeDecayWindowDays. */
@@ -66,7 +62,6 @@ object Dex {
                     tokenDenom = p.getJSONObject("reserve_token").getString("denom"),
                     tokenReserve = p.getJSONObject("reserve_token").getString("amount"),
                     volumeErth = p.optString("volume_erth", "0"),
-                    lastTradedDay = p.optString("last_traded_day", "0").toLongOrNull() ?: 0L,
                 )
             )
         }

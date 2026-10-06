@@ -207,7 +207,6 @@ class WalletSync(
         val newNotes: List<OwnedNote>,
         val spent: List<OwnedNote>,
         val noteRoot: Fr,
-        val identityRoot: Fr,
         val newStake: List<OwnedStakeNote> = emptyList(),
         val identityStatus: IdentityStatus,
         /** Whether every root matched the chain's (false: the indexer moved too fast to pin; sync again). */
@@ -685,7 +684,7 @@ class WalletSync(
             s.identity?.let { id -> if (!id.verified && identityStatus() == IdentityStatus.LIVE) s.identity = id.copy(verified = true) }
         }
         store.save()
-        return Result(s.notesHeight, newNotes, spent, store.noteTree.root(), store.identityTree.root(), newStake, identityStatus(), verified)
+        return Result(s.notesHeight, newNotes, spent, store.noteTree.root(), newStake, identityStatus(), verified)
     }
 
     /**

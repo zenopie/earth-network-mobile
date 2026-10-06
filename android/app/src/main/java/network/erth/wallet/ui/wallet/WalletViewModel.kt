@@ -24,19 +24,12 @@ import network.erth.wallet.wallet.SecureWalletManager
  * Wallet state, loaded from the chain.
  *
  * Every read is wrapped: a wallet that cannot reach its node should show zeroes
- * and stay usable, not fall over. A zero shown for an unreachable node must
- * not look like a real zero: [reachable] carries that distinction.
+ * and stay usable, not fall over.
  */
 class WalletViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow<WalletUiState?>(null)
     val state: StateFlow<WalletUiState?> = _state.asStateFlow()
-
-    private val _reachable = MutableStateFlow(true)
-    val reachable: StateFlow<Boolean> = _reachable.asStateFlow()
-
-    private val _loading = MutableStateFlow(false)
-    val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
     /**
      * Transaction history, loaded separately from the balances.
@@ -50,18 +43,6 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
     val activity: StateFlow<List<ActivityRow>?> = _activity.asStateFlow()
 
     /**
-     * True when there is no unlocked wallet session.
-     *
-     * SecureWalletManager.getWalletAddress throws rather than returning null in
-     * that case — the mnemonic lives behind a PIN session, and a cold start has
-     * none. Treating it as an error would be wrong: locked is a normal state,
-     * not a failure, and the difference matters because one wants a PIN prompt
-     * and the other wants a retry.
-     */
-    private val _locked = MutableStateFlow(false)
-    val locked: StateFlow<Boolean> = _locked.asStateFlow()
-
-    /**
      * Re-read from the chain, and hand back the read so a caller can wait on
      * it.
      *
@@ -71,84 +52,79 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun refresh(): Job {
         return viewModelScope.launch {
-            _loading.value = true
-            try {
-                val ctx = getApplication<Application>()
-                val address = withContext(Dispatchers.IO) {
-                    runCatching { SecureWalletManager.getWalletAddress(ctx) }.getOrNull()
+            val ctx = getApplication<Application>()
+            val address = withContext(Dispatchers.IO) {
+                runCatching { SecureWalletManager.getWalletAddress(ctx) }.getOrNull()
+            }
+            // No unlocked session (a cold start): locked is a normal
+            // state, not a failure.
+            if (address.isNullOrBlank()) {
+                _state.value = WalletUiState.EMPTY
+                return@launch
+            }
+
+            val loaded = withContext(Dispatchers.IO) {
+                // One balances call for every denom, rather than one call
+                // per denom the app knows the name of: every token held
+                // is in the response.
+                val balances = runCatching { Bank.balances(address) }
+                    .getOrDefault(emptyMap())
+                val holdings = Tokens.holdings(balances)
+
+                val erth = balances[Constants.UERTH_DENOM]?.toLongOrNull() ?: 0L
+                val anml = balances["uanml"]?.toLongOrNull() ?: 0L
+
+                val staked = runCatching {
+                    Staking.delegations(address).sumOf { it.amount.toLongOrNull() ?: 0L }
+                }.getOrDefault(0L)
+
+                // The private side: notes and registration, from a full
+                // sync of the indexer's streams (nothing asked about us).
+                val privacy = runCatching { PrivacySession.wallet(ctx) }.getOrNull()
+                // A sync error, else roots the chain has not vouched for
+                // (no private tx is built on them), else a registration
+                // whose leaf did not match: each is shown, none is hidden.
+                val syncError = privacy?.let { w ->
+                    runCatching { w.sync() }.exceptionOrNull()?.message
+                        ?: w.store.state.rootsError?.takeIf { !w.store.state.rootsVerified }
+                        ?: w.pendingRegistration?.failure
                 }
-                if (address.isNullOrBlank()) {
-                    _locked.value = true
-                    _state.value = WalletUiState.EMPTY
-                    return@launch
-                }
-                _locked.value = false
+                val shielded = privacy?.balances().orEmpty()
 
-                val loaded = withContext(Dispatchers.IO) {
-                    // One balances call for every denom, rather than one call
-                    // per denom the app knows the name of: every token held
-                    // is in the response.
-                    val balances = runCatching { Bank.balances(address) }
-                        .getOrElse { _reachable.value = false; emptyMap() }
-                    val holdings = Tokens.holdings(balances)
+                val rewards = runCatching {
+                    Staking.totalRewards(address).toLongOrNull() ?: 0L
+                }.getOrDefault(0L)
 
-                    val erth = balances[Constants.UERTH_DENOM]?.toLongOrNull() ?: 0L
-                    val anml = balances["uanml"]?.toLongOrNull() ?: 0L
+                WalletUiState(
+                    name = runCatching {
+                        SecureWalletManager.getCurrentWalletName()
+                    }.getOrDefault(""),
+                    address = address,
+                    balanceUerth = erth,
+                    anmlBalance = (anml + (shielded["uanml"] ?: 0L)).takeIf { it > 0 }?.let(::formatUerth),
+                    stakedUerth = staked,
+                    rewardsUerth = rewards,
+                    holdings = holdings,
+                    registered = privacy?.let { runCatching { it.identityStatus() }.getOrNull() } == WalletSync.IdentityStatus.LIVE,
+                    // Null without a live registration; otherwise now, or
+                    // the next UTC midnight the chain will take a claim.
+                    anmlClaimableAt = privacy?.let { runCatching { it.claimOpensAt() }.getOrNull() },
+                    shieldedErthUerth = shielded["uerth"] ?: 0L,
+                    shielded = shielded,
+                    unstaking = privacy?.pendingUnbonds.orEmpty(),
+                    shieldedAddress = privacy?.address?.encode().orEmpty(),
+                    privacySyncError = syncError,
+                    unshieldableErthUerth = privacy?.let {
+                        ShieldMove.maxUnshield(it.notes, runCatching { it.maxActions() }.getOrDefault(DEFAULT_MAX_ACTIONS))
+                    } ?: 0L,
+                )
+            }
+            _state.value = loaded
 
-                    val staked = runCatching {
-                        Staking.delegations(address).sumOf { it.amount.toLongOrNull() ?: 0L }
-                    }.getOrDefault(0L)
-
-                    // The private side: notes and registration, from a full
-                    // sync of the indexer's streams (nothing asked about us).
-                    val privacy = runCatching { PrivacySession.wallet(ctx) }.getOrNull()
-                    // A sync error, else roots the chain has not vouched for
-                    // (no private tx is built on them), else a registration
-                    // whose leaf did not match: each is shown, none is hidden.
-                    val syncError = privacy?.let { w ->
-                        runCatching { w.sync() }.exceptionOrNull()?.message
-                            ?: w.store.state.rootsError?.takeIf { !w.store.state.rootsVerified }
-                            ?: w.pendingRegistration?.failure
-                    }
-                    val shielded = privacy?.balances().orEmpty()
-
-                    val rewards = runCatching {
-                        Staking.totalRewards(address).toLongOrNull() ?: 0L
-                    }.getOrDefault(0L)
-
-                    WalletUiState(
-                        name = runCatching {
-                            SecureWalletManager.getCurrentWalletName()
-                        }.getOrDefault(""),
-                        address = address,
-                        balanceUerth = erth,
-                        anmlBalance = (anml + (shielded["uanml"] ?: 0L)).takeIf { it > 0 }?.let(::formatUerth),
-                        stakedUerth = staked,
-                        rewardsUerth = rewards,
-                        holdings = holdings,
-                        registered = privacy?.let { runCatching { it.identityStatus() }.getOrNull() } == WalletSync.IdentityStatus.LIVE,
-                        // Null without a live registration; otherwise now, or
-                        // the next UTC midnight the chain will take a claim.
-                        anmlClaimableAt = privacy?.let { runCatching { it.claimOpensAt() }.getOrNull() },
-                        shieldedErthUerth = shielded["uerth"] ?: 0L,
-                        shielded = shielded,
-                        unstaking = privacy?.pendingUnbonds.orEmpty(),
-                        shieldedAddress = privacy?.address?.encode().orEmpty(),
-                        privacySyncError = syncError,
-                        unshieldableErthUerth = privacy?.let {
-                            ShieldMove.maxUnshield(it.notes, runCatching { it.maxActions() }.getOrDefault(DEFAULT_MAX_ACTIONS))
-                        } ?: 0L,
-                    )
-                }
-                _state.value = loaded
-
-                _activity.value = withContext(Dispatchers.IO) {
-                    runCatching {
-                        Explorer.txsForAddress(address).map { it.toActivityRow(address) }
-                    }.getOrDefault(emptyList())
-                }
-            } finally {
-                _loading.value = false
+            _activity.value = withContext(Dispatchers.IO) {
+                runCatching {
+                    Explorer.txsForAddress(address).map { it.toActivityRow(address) }
+                }.getOrDefault(emptyList())
             }
         }
     }

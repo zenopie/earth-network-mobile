@@ -51,17 +51,8 @@ object TransactionSigner {
     @Throws(Exception::class)
     fun createSignature(data: ByteArray, walletKey: ECKey): TransactionSignature {
 
-        // Hash the data
         val hash = Sha256Hash.of(data)
-
-        // Sign the hash
-        val ecdsaSignature = walletKey.sign(hash)
-
-        // Get public key for verification
-        val publicKey = walletKey.pubKey
-
-        // Create our signature wrapper
-        return TransactionSignature(ecdsaSignature, publicKey)
+        return TransactionSignature(walletKey.sign(hash))
     }
 
     /**
@@ -84,8 +75,7 @@ object TransactionSigner {
      * Wrapper class for transaction signatures
      */
     class TransactionSignature @Throws(Exception::class) constructor(
-        private val ecdsaSignature: ECKey.ECDSASignature,
-        private val publicKey: ByteArray
+        ecdsaSignature: ECKey.ECDSASignature,
     ) {
         private val signatureBytes: ByteArray
 
@@ -123,18 +113,5 @@ object TransactionSigner {
 
         val bytes: ByteArray
             get() = signatureBytes
-
-        val length: Int
-            get() = signatureBytes.size
-
-        val hex: String
-            get() {
-                val hex = StringBuilder()
-                for (b in signatureBytes) {
-                    hex.append(String.format("%02x", b))
-                }
-                return hex.toString()
-            }
-
     }
 }

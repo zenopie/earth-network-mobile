@@ -27,22 +27,17 @@ import java.math.BigInteger
  */
 object PassportProver {
 
-    /** Public-input positions, the same in every register circuit. */
     // Public signals are [current_date, address, nullifier, dsc_key]:
     // current_date and address are the declared public inputs, and bb appends
-    // the circuit's return values after them. On the privacy chain `address`
-    // carries zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, affiliate),
-    // which binds the proof to the registration it is broadcast in.
-    private const val CURRENT_DATE_INDEX = 0
-    private const val ADDRESS_INDEX = 1
-    private const val NULLIFIER_INDEX = 2
+    // the circuit's return values after them. `address` carries
+    // zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, affiliate), which
+    // binds the proof to the registration it is broadcast in.
     private const val NUM_PUBLIC_INPUTS = 4
 
     data class Result(
         val proof: ByteArray,
         val publicSignals: List<String>,
         val signatureAlgorithm: String,
-        val nullifierHex: String,
     )
 
     /**
@@ -83,12 +78,10 @@ object PassportProver {
         val proofHex = NoirProver.prove(circuit, inputs.map, vk)
 
         val (proofBytes, signals) = splitProof(proofHex)
-        val nullifier = signals[NULLIFIER_INDEX]
         return Result(
             proof = proofBytes,
             publicSignals = signals,
             signatureAlgorithm = inputs.algorithm,
-            nullifierHex = "0x" + BigInteger(nullifier).toString(16),
         )
     }
 

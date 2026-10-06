@@ -37,7 +37,6 @@ object Grumpkin {
         operator fun plus(o: Point): Point = add(this, o)
         operator fun minus(o: Point): Point = add(this, neg(o))
         operator fun times(k: BigInteger): Point = mul(this, k)
-        operator fun unaryMinus(): Point = neg(this)
 
         companion object {
             val INFINITY = Point(Fr.ZERO, Fr.ZERO)
