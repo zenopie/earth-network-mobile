@@ -55,6 +55,25 @@ enum PrivacySession {
     nonisolated(unsafe) private static var wallets: [String: PrivacyWallet] = [:]
     private static let lock = NSLock()
 
+    /// The install's data key, which seals every wallet's private store:
+    /// set from the opened vault at unlock, dropped at lock (AppModel).
+    nonisolated(unsafe) private static var openKey: Data?
+
+    static func setDataKey(_ key: Data?) {
+        lock.lock(); defer { lock.unlock() }
+        openKey = key
+    }
+
+    struct Locked: LocalizedError {
+        var errorDescription: String? { "The wallet is locked." }
+    }
+
+    static func dataKey() throws -> Data {
+        lock.lock(); defer { lock.unlock() }
+        guard let openKey else { throw Locked() }
+        return openKey
+    }
+
     /// The app's one handle directory (see HandleDirectory): the privacy
     /// backend's whole-directory stream first, the chain's own pages to fall
     /// back on and to check an entry against before money moves on it.
@@ -75,15 +94,15 @@ enum PrivacySession {
     struct Recorder: PrivacyWallet.MoveRecorder {
         let targetID: String
         func record(_ move: PendingMove) throws {
-            try PrivacyWallet.recordIncoming(try PrivacyStore.shared(root: try PrivacySession.dataRoot(), walletID: targetID), move,
+            try PrivacyWallet.recordIncoming(try PrivacyStore.shared(root: try PrivacySession.dataRoot(), walletID: targetID, key: try PrivacySession.dataKey()), move,
                                              now: Int64(Date().timeIntervalSince1970))
         }
         func rollback(_ move: PendingMove) throws {
-            try PrivacyWallet.rollbackIncoming(try PrivacyStore.shared(root: try PrivacySession.dataRoot(), walletID: targetID), move,
+            try PrivacyWallet.rollbackIncoming(try PrivacyStore.shared(root: try PrivacySession.dataRoot(), walletID: targetID, key: try PrivacySession.dataKey()), move,
                                                now: Int64(Date().timeIntervalSince1970))
         }
         func refusal(_ move: PendingMove) -> String? {
-            guard let st = (try? PrivacyStore.shared(root: try PrivacySession.dataRoot(), walletID: targetID))?.state else { return nil }
+            guard let st = (try? PrivacyStore.shared(root: try PrivacySession.dataRoot(), walletID: targetID, key: try PrivacySession.dataKey()))?.state else { return nil }
             return PrivacyWallet.targetRefusal(st, kind: move.kind, now: Int64(Date().timeIntervalSince1970))
         }
     }
@@ -93,7 +112,7 @@ enum PrivacySession {
     /// vote.
     static func targetInfo(_ keys: PrivacyKeys) -> TargetInfo {
         let id = storeID(keys)
-        let st = (try? PrivacyStore.shared(root: try dataRoot(), walletID: id))?.state
+        let st = (try? PrivacyStore.shared(root: try dataRoot(), walletID: id, key: try dataKey()))?.state
         let t = Int64(Date().timeIntervalSince1970)
         return TargetInfo(storeID: id, registered: st?.identity != nil || st?.pendingRegistration != nil, handle: st?.handle ?? "",
                           handleRefusal: st.flatMap { PrivacyWallet.targetRefusal($0, kind: PendingMove.handleKind, now: t) },
@@ -111,12 +130,13 @@ enum PrivacySession {
     static func open(mnemonic: String, client: EarthClient) throws -> PrivacyWallet {
         let keys = try PrivacyKeys.fromMnemonic(mnemonic)
         let id = storeID(keys)
+        let key = try dataKey()
         lock.lock(); defer { lock.unlock() }
         if let w = wallets[id] { return w }
         let w = PrivacyWallet(
             keys: keys,
             // An unreadable store is an error the user sees, never an empty wallet.
-            store: try PrivacyStore.shared(root: try dataRoot(), walletID: id),
+            store: try PrivacyStore.shared(root: try dataRoot(), walletID: id, key: key),
             indexer: HTTPPrivacyIndexer(),
             chain: RESTPrivateChain(rest: client.rest),
             reads: PrivacyQueries(rest: client.rest),

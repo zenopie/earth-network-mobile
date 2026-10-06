@@ -24,7 +24,7 @@ import Security
 public struct WalletStore: Sendable {
 
     /// One wallet in the list.
-    public struct Entry: Codable, Equatable, Identifiable {
+    public struct Entry: Codable, Equatable, Identifiable, Sendable {
         public let name: String
         public let mnemonic: String
         /// Kept alongside so the list can be shown without deriving every key,
@@ -73,10 +73,53 @@ public struct WalletStore: Sendable {
         public var usesBiometrics: Bool { self != .pin }
     }
 
-    /// The stored blob: a salt and the sealed wallet list.
+    /// The stored blob: a salt, the sealed payload, and (format 2) the key
+    /// derivation that sealed it, so its parameters can change without
+    /// stranding a vault sealed under the old ones. A format-1 blob has no
+    /// `kdf` and was sealed at `KDF.legacy`.
     private struct Vault: Codable {
         let salt: Data
         let sealed: Data
+        var format: Int?
+        var kdf: String?
+        var rounds: Int?
+    }
+
+    /// The vault format this build writes; a newer one is refused.
+    private static let format = 2
+
+    /// How the unlock secret is stretched into the vault key.
+    public struct KDF: Equatable, Sendable {
+        public let id: String
+        public let rounds: Int
+
+        static let pbkdf2SHA512 = "pbkdf2-hmac-sha512"
+        /// 200,000 rounds of PBKDF2-HMAC-SHA512: OWASP's figure for that hash
+        /// (Android's 600,000 is the SHA-256 one).
+        public static let current = KDF(id: pbkdf2SHA512, rounds: 200_000)
+        /// What a vault from before the parameters were recorded was sealed with.
+        static let legacy = KDF(id: pbkdf2SHA512, rounds: 200_000)
+
+        /// A known derivation at a sane count: a ceiling so a damaged blob
+        /// cannot hang the unlock, a floor so nothing is accepted at a trivial one.
+        var supported: Bool { id == Self.pbkdf2SHA512 && (100_000 ... 10_000_000).contains(rounds) }
+    }
+
+    /// What the vault seals (format 2): the wallets, and the key every
+    /// wallet's private data store is sealed with. A format-1 vault sealed
+    /// the bare wallet list.
+    private struct Payload: Codable {
+        let wallets: [Entry]
+        let dataKey: Data
+    }
+
+    /// An opened vault.
+    public struct Opened: Sendable {
+        public let wallets: [Entry]
+        /// The private data stores' key (PrivacyStore / StateSeal): inside the
+        /// vault, so it opens exactly when the wallet does, whatever the
+        /// unlock method, and survives a change of method.
+        public let dataKey: Data
     }
 
     private static let service = "network.erth.wallet"
@@ -113,13 +156,15 @@ public struct WalletStore: Sendable {
     public func create(mnemonic: String, name: String, pin: String) throws {
         try write(
             [Entry(name: name, mnemonic: mnemonic, address: try EarthKey(mnemonic: mnemonic).address)],
+            dataKey: Self.newDataKey(),
             pin: pin
         )
     }
 
     /// Add a wallet and return its index.
     public func add(mnemonic: String, name: String, pin: String) throws -> Int {
-        var wallets = try unlock(pin: pin)
+        let opened = try open(pin: pin)
+        var wallets = opened.wallets
         let entry = Entry(
             name: name,
             mnemonic: mnemonic,
@@ -131,7 +176,7 @@ public struct WalletStore: Sendable {
             return existing
         }
         wallets.append(entry)
-        try write(wallets, pin: pin)
+        try write(wallets, dataKey: opened.dataKey, pin: pin)
         return wallets.count - 1
     }
 
@@ -141,21 +186,46 @@ public struct WalletStore: Sendable {
     /// AES-GCM authenticates: it refuses to produce plaintext it cannot vouch
     /// for instead of returning noise that would parse as an empty list.
     public func unlock(pin: String) throws -> [Entry] {
+        try open(pin: pin).wallets
+    }
+
+    /// The wallets and the private data key, given the PIN. A vault from
+    /// before the key existed gets one now (written before it is returned,
+    /// so nothing is ever sealed under a key that is not on disk); one sealed
+    /// at older derivation parameters is re-sealed at the current ones
+    /// (best effort: it opens either way).
+    public func open(pin: String) throws -> Opened {
         guard let stored = try read() else { throw Error.notFound }
-        guard let vault = try? JSONDecoder().decode(Vault.self, from: stored) else {
+        guard let vault = try? JSONDecoder().decode(Vault.self, from: stored), (vault.format ?? 1) <= Self.format else {
             throw Error.corrupt
         }
-        let key = Self.key(pin: pin, salt: vault.salt)
+        let kdf = vault.kdf.map { KDF(id: $0, rounds: vault.rounds ?? 0) } ?? .legacy
+        guard kdf.supported else { throw Error.corrupt }
+        let key = Self.key(pin: pin, salt: vault.salt, kdf: kdf)
         guard let box = try? AES.GCM.SealedBox(combined: vault.sealed),
               let opened = try? AES.GCM.open(box, using: key)
         else { throw Error.wrongPin }
+        if let payload = try? JSONDecoder().decode(Payload.self, from: opened), payload.dataKey.count == 32 {
+            if kdf != .current { try? write(payload.wallets, dataKey: payload.dataKey, pin: pin) }
+            return Opened(wallets: payload.wallets, dataKey: payload.dataKey)
+        }
         guard let wallets = try? JSONDecoder().decode([Entry].self, from: opened) else {
             throw Error.corrupt
         }
-        return wallets
+        let dataKey = Self.newDataKey()
+        try write(wallets, dataKey: dataKey, pin: pin)
+        return Opened(wallets: wallets, dataKey: dataKey)
     }
 
-    private func write(_ wallets: [Entry], pin: String) throws {
+    /// 32 random bytes: the private data stores' key, made once per vault.
+    private static func newDataKey() -> Data {
+        var bytes = Data(count: 32)
+        let status = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, $0.count, $0.baseAddress!) }
+        precondition(status == errSecSuccess, "SecRandomCopyBytes failed: \(status)")
+        return bytes
+    }
+
+    private func write(_ wallets: [Entry], dataKey: Data, pin: String) throws {
         for wallet in wallets where !BIP39.isValid(mnemonic: wallet.mnemonic) {
             throw Error.invalidMnemonic
         }
@@ -165,25 +235,26 @@ public struct WalletStore: Sendable {
         }
         guard status == errSecSuccess else { throw Error.keychain(status) }
 
+        let kdf = KDF.current
         let sealed = try AES.GCM.seal(
-            try JSONEncoder().encode(wallets),
-            using: Self.key(pin: pin, salt: salt)
+            try JSONEncoder().encode(Payload(wallets: wallets, dataKey: dataKey)),
+            using: Self.key(pin: pin, salt: salt, kdf: kdf)
         )
         guard let combined = sealed.combined else { throw Error.corrupt }
-        try store(try JSONEncoder().encode(Vault(salt: salt, sealed: combined)))
+        try store(try JSONEncoder().encode(Vault(salt: salt, sealed: combined, format: Self.format, kdf: kdf.id, rounds: kdf.rounds)))
     }
 
-    /// The PIN stretched into a key.
+    /// The PIN stretched into a key, at the vault's own parameters.
     ///
-    /// 200,000 rounds because the secret is four digits: the whole keyspace is
+    /// 200,000 rounds (KDF.current) because the secret is four digits: the whole keyspace is
     /// 10,000, so the only thing standing between a stolen ciphertext and the
     /// phrase is how long each guess takes. The on-device lockout protects the
     /// screen; this protects the bytes if they ever leave the device.
-    private static func key(pin: String, salt: Data) -> SymmetricKey {
+    private static func key(pin: String, salt: Data, kdf: KDF) -> SymmetricKey {
         let stretched = Hashes.pbkdf2SHA512(
             password: Data(pin.utf8),
             salt: salt,
-            rounds: 200_000,
+            rounds: UInt32(kdf.rounds),
             keyLength: 32
         )
         return SymmetricKey(data: stretched)
@@ -423,8 +494,8 @@ public struct WalletStore: Sendable {
 
     /// Re-seal the vault under a new secret, keeping the wallets.
     public func reseal(from old: String, to new: String) throws {
-        let wallets = try unlock(pin: old)
-        try write(wallets, pin: new)
+        let opened = try open(pin: old)
+        try write(opened.wallets, dataKey: opened.dataKey, pin: new)
     }
 
     private func read() throws -> Data? {

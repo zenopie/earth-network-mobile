@@ -18,7 +18,7 @@ final class SyncVerificationTests: PrivacyTestCase {
         let idx = WrappedIndexer(chain)
         let root = try tmp()
         defer { try? FileManager.default.removeItem(at: root) }
-        let w = try wallet(chain, indexer: idx, store: try PrivacyStore.open(root: root, walletID: "w"))
+        let w = try wallet(chain, indexer: idx, store: try PrivacyStore.open(root: root, walletID: "w", key: testDataKey))
         try funded(chain, w)
         try await w.sync()
         XCTAssertTrue(w.snapshot.rootsVerified)
@@ -34,7 +34,7 @@ final class SyncVerificationTests: PrivacyTestCase {
         await assertThrowsAsync({ try await w.sync() })
         XCTAssertFalse(w.snapshot.rootsVerified)
         XCTAssertEqual(WalletSync.syncUnfinished, w.snapshot.rootsError)
-        XCTAssertFalse(try PrivacyStore.open(root: root, walletID: "w").state.rootsVerified)
+        XCTAssertFalse(try PrivacyStore.open(root: root, walletID: "w", key: testDataKey).state.rootsVerified)
         let before = chain.height
         await assertThrowsAsync({ try await w.unshield(receiver: self.receiver, denom: "uerth", amount: 40_000_000) }) {
             ($0 as? PrivacyError)?.message == WalletSync.syncUnfinished

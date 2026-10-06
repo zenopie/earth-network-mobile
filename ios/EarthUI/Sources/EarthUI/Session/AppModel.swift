@@ -282,10 +282,12 @@ public final class AppModel {
             // off the main actor. On the main thread it is a visible freeze on
             // every unlock and, because signing re-opens the vault, on every
             // transaction too.
-            let wallets = try await Task.detached { try store.unlock(pin: secret) }.value
+            let opened = try await Task.detached { try store.open(pin: secret) }.value
+            let wallets = opened.wallets
             guard !wallets.isEmpty else { throw WalletStore.Error.notFound }
             UnlockAttempts.recordSuccess()
             sessionPin = secret
+            PrivacySession.setDataKey(opened.dataKey)
             self.wallets = wallets
             selected = min(UserDefaults.standard.integer(forKey: "selectedWallet"),
                            wallets.count - 1)
@@ -406,10 +408,12 @@ public final class AppModel {
         do {
             let store = self.store
             let secret = try await unlockSecret(pin: nil, reason: "Unlock your Earth wallet")
-            let wallets = try await Task.detached { try store.unlock(pin: secret) }.value
+            let opened = try await Task.detached { try store.open(pin: secret) }.value
+            let wallets = opened.wallets
             guard !wallets.isEmpty else { throw WalletStore.Error.notFound }
             UnlockAttempts.recordSuccess()
             sessionPin = secret
+            PrivacySession.setDataKey(opened.dataKey)
             self.wallets = wallets
             selected = min(UserDefaults.standard.integer(forKey: "selectedWallet"),
                            wallets.count - 1)
@@ -494,7 +498,9 @@ public final class AppModel {
         UserDefaults.standard.set(method.rawValue, forKey: "unlockMethod")
         sessionPin = secret
         UnlockAttempts.recordSuccess()
-        wallets = try store.unlock(pin: secret)
+        let opened = try store.open(pin: secret)
+        PrivacySession.setDataKey(opened.dataKey)
+        wallets = opened.wallets
         walletName = name
         selected = 0
         UserDefaults.standard.set(name, forKey: "walletName")
@@ -511,6 +517,7 @@ public final class AppModel {
         do { try PrivacySession.forgetAll() } catch { privacySyncError = describe(error) }
         store.delete()
         sessionPin = nil
+        PrivacySession.setDataKey(nil)
         wallets = []
         biometricsInvalidated = false
         address = ""
@@ -589,6 +596,7 @@ public final class AppModel {
     public func lock() {
         closePrivacy()
         sessionPin = nil
+        PrivacySession.setDataKey(nil)
         wallets = []
         lastError = nil
         phase = store.exists ? .locked : .setup

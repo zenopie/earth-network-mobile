@@ -361,6 +361,9 @@ public struct PrivacyState: Codable, Sendable {
 public final class PrivacyStore {
     private static let stateFile = "state.json"
     private let dir: URL?
+    /// The install's data key (StateSeal); nil only for a store with no file.
+    private let key: Data?
+    private let walletID: String
     public private(set) var state: PrivacyState
     public let noteTree: MerkleTree
     public let identityTree: MerkleTree
@@ -380,19 +383,27 @@ public final class PrivacyStore {
 
     private let fileStores: [FileNodeStore]
 
-    private init(dir: URL?) throws {
+    private init(dir: URL?, key: Data? = nil, walletID: String = "") throws {
         self.dir = dir
+        self.key = key
+        self.walletID = walletID
         let files = dir.map { d in ["notes", "identity", "stake"].map { FileNodeStore(directory: d.appendingPathComponent($0)) } }
         fileStores = files ?? []
         let noteNodes: NodeStore = files?[0] ?? MemNodeStore()
         let identityNodes: NodeStore = files?[1] ?? MemNodeStore()
         let stakeNodes: NodeStore = files?[2] ?? MemNodeStore()
         var loaded: PrivacyState?
+        var contents: StateSeal.Contents?
         if let dir {
             let url = dir.appendingPathComponent(Self.stateFile)
             if FileManager.default.fileExists(atPath: url.path) {
                 do {
-                    loaded = try JSONDecoder().decode(PrivacyState.self, from: Data(contentsOf: url))
+                    let c = try StateSeal.open(Data(contentsOf: url), key: key, walletID: walletID)
+                    contents = c
+                    switch c {
+                    case let .legacy(json), let .opened(json): loaded = try JSONDecoder().decode(PrivacyState.self, from: json)
+                    case .otherKey: loaded = nil
+                    }
                 } catch {
                     throw CorruptState(message: "this wallet's private data (\(Self.stateFile)) is unreadable: \(error.localizedDescription)")
                 }
@@ -402,6 +413,19 @@ public final class PrivacyStore {
         noteTree = MerkleTree(store: noteNodes, size: state.notesNext)
         identityTree = MerkleTree(store: identityNodes, size: state.identityNext)
         stakeTree = MerkleTree(store: stakeNodes, size: state.stakeNext)
+        switch contents {
+        // Sealed under an earlier install's key (the vault, and with it the
+        // key, was made anew): unreadable, and everything in it is found again
+        // by a sync from the mnemonic. Its trees go too.
+        case .otherKey:
+            noteTree.clear(); identityTree.clear(); stakeTree.clear()
+            try save()
+        // Plaintext from before sealing: sealed now, not at some later save.
+        case .legacy where key != nil:
+            try save()
+        default:
+            break
+        }
     }
 
     public static func memory() -> PrivacyStore { try! PrivacyStore(dir: nil) } // no file: nothing to fail
@@ -412,16 +436,17 @@ public final class PrivacyStore {
     /// The process's one store for a wallet's directory: two
     /// instances on one directory each save their whole state over the
     /// other's. Every app path opens stores through this.
-    public static func shared(root: URL, walletID: String) throws -> PrivacyStore {
+    public static func shared(root: URL, walletID: String, key dataKey: Data) throws -> PrivacyStore {
         let key = root.appendingPathComponent("privacy").appendingPathComponent(walletID).standardizedFileURL.path
         sharedLock.lock(); defer { sharedLock.unlock() }
         if let s = sharedStores[key] { return s }
-        let s = try open(root: root, walletID: walletID)
+        let s = try open(root: root, walletID: walletID, key: dataKey)
         sharedStores[key] = s
         return s
     }
 
-    public static func open(root: URL, walletID: String) throws -> PrivacyStore {
+    /// `key`: the install's data key (WalletStore.Opened.dataKey), which seals state.json.
+    public static func open(root: URL, walletID: String, key: Data) throws -> PrivacyStore {
         let top = root.appendingPathComponent("privacy")
         let d = top.appendingPathComponent(walletID)
         try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
@@ -430,7 +455,7 @@ public final class PrivacyStore {
         // would only carry this wallet's private history off the device.
         excludeFromBackup(top)
         excludeFromBackup(d)
-        return try PrivacyStore(dir: d)
+        return try PrivacyStore(dir: d, key: key, walletID: walletID)
     }
 
     /// Deletes a wallet's private data (notes, identity, records, trees) when
@@ -481,8 +506,9 @@ public final class PrivacyStore {
         noteTree.flush(); identityTree.flush(); stakeTree.flush()
         for f in fileStores { if let e = f.takeError() { throw SaveFailed(message: "could not save this wallet's private data: \(e)") } }
         guard let dir else { return }
+        guard let key else { throw SaveFailed(message: "a stored wallet's private data needs the data key to be saved") }
         do {
-            let data = try JSONEncoder().encode(state)
+            let data = try StateSeal.seal(try JSONEncoder().encode(state), key: key, walletID: walletID)
             try data.write(to: dir.appendingPathComponent(Self.stateFile), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         } catch {
             throw SaveFailed(message: "could not save this wallet's private data: \(error.localizedDescription)")

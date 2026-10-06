@@ -250,7 +250,7 @@ final class RestoreTests: PrivacyTestCase {
         var works: [UInt64] = []
         while true {
             // A fresh store each time: what a killed and restarted app reads back from disk.
-            let store = try PrivacyStore.open(root: root, walletID: "w")
+            let store = try PrivacyStore.open(root: root, walletID: "w", key: testDataKey)
             _ = try await WalletSync(indexer: chain, store: store, keys: keys, chainID: chain.chainID, chain: chain,
                                      now: { [unowned chain] in chain.now }, searchBudget: budget).sync()
             let rec = store.state.regRecords[0]
@@ -259,7 +259,7 @@ final class RestoreTests: PrivacyTestCase {
             XCTAssertLessThan(works.count, 20)
             if works.count >= 20 { return }
         }
-        let store = try PrivacyStore.open(root: root, walletID: "w")
+        let store = try PrivacyStore.open(root: root, walletID: "w", key: testDataKey)
         XCTAssertEqual(.matched, store.state.regRecords[0].status)
         XCTAssertGreaterThanOrEqual(works.count, 3)
         for (x, y) in zip(works, works.dropFirst()) { XCTAssertTrue((1 ... budget + 2).contains(y - x)) }
