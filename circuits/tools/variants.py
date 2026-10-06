@@ -42,7 +42,7 @@ CURRENT_DATE = 250101
 # The account every fixture proof is bound to: the bytes "earth-fixture-wallet"
 # as one field element, as the chain's own fixtures use (tools/poafixtures).
 ADDRESS = int.from_bytes(b"earth-fixture-wallet", "big")
-NON_VARIANT_MEMBERS = ["poa_core", "privacy_core", "membership", "action", "stake", "vote"]
+NON_VARIANT_MEMBERS = ["poa_core", "privacy_core", "membership", "move", "action", "stake", "vote"]
 PINS = {
     "rsa": 'rsa = { tag = "v0.12.0", git = "https://github.com/zkpassport/noir_rsa" }',
     "ecdsa": 'ecdsa = { tag = "v0.5.0", git = "https://github.com/zkpassport/noir-ecdsa" }',
