@@ -592,9 +592,28 @@ class WalletSync(
 
         /**
          * Generations past the highest the wallet knows whose record tags
-         * are tried: a 1130 refusal skips one with no record of it.
+         * are tried (N): the scan stops after N consecutive generations with
+         * no record. A registration's record lands in its own tx, so an
+         * honest wallet leaves no gap; a gap comes only from the generation
+         * floor, raised by a structured 1130 refusal of a generation with
+         * no record (PrivacyWallet.identityRefused), and the floor never goes
+         * more than N past the highest recorded generation. So every
+         * registration is within N of the one before it, and a restore that
+         * looks N past each record it finds reaches them all. 8 absorbs
+         * seven record-less refusals in a row, which honest use never meets,
+         * at up to (highest + N + 1) tag hashes per value-0 record note.
          */
         const val GENERATION_LOOKAHEAD = 8
+
+        /** Record rescans (see [rescanRecords]) one sync runs before leaving the rest to the next. */
+        const val MAX_RECORD_RESCANS = 4
+
+        /** Whether [memo] carries a registration or state record's magic (its tag not yet checked). */
+        fun recordCandidate(memo: ByteArray): Boolean {
+            if (memo.size < 3) return false
+            val head = memo.copyOf(3)
+            return head.contentEquals(REG_MAGIC) || head.contentEquals(HANDLE_MAGIC) || head.contentEquals(CARETAKER_MAGIC)
+        }
 
         /** The highest generation whose record tags [s]'s sync tries. */
         fun maxRecordGeneration(s: PrivacyState): Int =
@@ -712,6 +731,7 @@ class WalletSync(
             boundRoots(roots)
             if (atIndexerTip(roots) || ++pass >= MAX_PASSES) break
         }
+        rescanRecords(s, pageLimit)
         releaseStalePending(s)
         val verified = verifyRoots(s, roots)
         // A registration is matched only against an identity
@@ -943,6 +963,44 @@ class WalletSync(
         return found
     }
 
+    /**
+     * A restore's record scan grew its window (it found a record near the
+     * top of it) after notes it had already passed carried a record's magic
+     * and no tag it tried: those notes are tried again, from the earliest,
+     * with the wider window, so a record past the old window is not missed
+     * for good. Only the record side of [open] runs (its state is keyed by
+     * note position, so a record seen again changes nothing); the notes are
+     * the ones held, each checked against the local tree. Repeats while the
+     * window keeps growing, up to [MAX_RECORD_RESCANS] a sync.
+     */
+    private fun rescanRecords(s: PrivacyState, limit: Int) {
+        var rounds = 0
+        while (s.unmatchedRecordFrom in 0 until s.notesNext && maxRecordGeneration(s) > s.unmatchedRecordWindow && rounds++ < MAX_RECORD_RESCANS) {
+            val end = s.notesNext
+            var pos = s.unmatchedRecordFrom
+            // Found again by this pass, with the window it tries them with.
+            s.unmatchedRecordFrom = -1
+            s.unmatchedRecordWindow = 0
+            while (pos < end) {
+                tick()
+                val from = aligned(pos, limit)
+                val page = indexer.notes(from, limit)
+                checkPage(page.rows.size, limit)
+                checkPositions("note", from, page.rows.size, page.nextPos, page.complete)
+                if (page.rows.isEmpty()) throw Inconsistent("a note page from $from ends before the $end held")
+                page.rows.forEachIndexed { i, r ->
+                    if (r.position != from + i) throw Inconsistent("note at position ${r.position}, expected ${from + i}")
+                    if (r.position in pos until end) {
+                        if (store.noteTree.leaf(r.position) != r.cm) throw Inconsistent("note ${r.position} differs from the one held")
+                        // Value-0 rows are all [open] keeps; a note with value is held already.
+                        openTotal(r)
+                    }
+                }
+                pos = from + page.rows.size
+            }
+        }
+    }
+
     /** [open], total: a row it cannot read is not ours. */
     private fun openTotal(r: NoteRow): OwnedNote? = try {
         open(r)
@@ -991,13 +1049,19 @@ class WalletSync(
         if (note.value < 0L) return null
         if (note.value == 0L) {
             val gens = maxRecordGeneration(s)
-            parseRegMemo(keys.nk, note.memo, gens)?.let { (dsc, country, builtAt, generation) ->
+            val reg = parseRegMemo(keys.nk, note.memo, gens)?.also { (dsc, country, builtAt, generation) ->
                 if (s.regRecords.none { it.position == r.position }) {
                     s.regRecords.add(RegRecord(r.height, r.position, dsc, country, builtAt, generation = generation))
                     if (s.regRecords.size > MAX_RECORDS) s.regRecords.remove(s.regRecords.minBy { it.height })
                 }
             }
-            parseStateMemo(keys.nk, note.memo, gens)?.let { applyStateRecord(s, r.position, r.height, it, now()) }
+            val state = parseStateMemo(keys.nk, note.memo, gens)?.also { applyStateRecord(s, r.position, r.height, it, now()) }
+            // A record's magic and none of the tags tried: perhaps a generation past
+            // the window, tried again if the window grows ([rescanRecords]).
+            if (reg == null && state == null && recordCandidate(note.memo)) {
+                if (s.unmatchedRecordFrom < 0 || r.position < s.unmatchedRecordFrom) s.unmatchedRecordFrom = r.position
+                s.unmatchedRecordWindow = if (s.unmatchedRecordWindow <= 0) gens else minOf(s.unmatchedRecordWindow, gens)
+            }
             // An unlock's record: the owner-tag counter of the position it closed.
             parseUnlockMemo(keys.nk, note.memo)?.let { c -> if (c > s.closedOtagMax) s.closedOtagMax = c }
             return null

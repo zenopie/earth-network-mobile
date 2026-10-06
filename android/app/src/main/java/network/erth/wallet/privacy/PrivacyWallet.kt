@@ -262,6 +262,12 @@ class PrivacyWallet(
     /** The chain's own trees, every synced root is checked against. */
     private val roots: ChainRoots,
     private val now: () -> Long = { System.currentTimeMillis() / 1000 },
+    /**
+     * Whether a tx result's code and codespace can be taken as the chain's:
+     * the node is reached over https. An own node over plain http answers
+     * for anyone on its network, so its codes move nothing persistent.
+     */
+    private val chainCodesTrusted: () -> Boolean = { true },
 ) {
     private val engine = PrivateTxEngine(chainId, chain, prover, verifiedHeight = { store.state.verifiedHeight })
 
@@ -676,15 +682,39 @@ class PrivacyWallet(
     /**
      * The chain refused [prep]'s identity as registered before (1130; the
      * wallet's records missed it): the next registration uses a later one.
+     * Only on a structured refusal (CheckTx's code and codespace from an
+     * https node, or the gas service's refusal kind), never on an error's
+     * text. The floor stays below the highest recorded generation plus
+     * [WalletSync.GENERATION_LOOKAHEAD], so a restore's record scan (which
+     * looks that far past what it has found) always reaches the next
+     * registration. Returns whether the wallet moved on.
      */
     @Synchronized
-    fun identityRefused(prep: RegistrationPrep) {
+    fun identityRefused(prep: RegistrationPrep): Boolean {
         val s = store.state
-        if (s.generationFloor <= prep.generation) {
-            s.generationFloor = minOf(prep.generation + 1, PrivacyKeys.MAX_GENERATION)
+        val cap = minOf(PrivacyKeys.MAX_GENERATION, s.usedThroughRecorded() + WalletSync.GENERATION_LOOKAHEAD)
+        val floor = minOf(prep.generation + 1, cap)
+        if (s.generationFloor < floor) {
+            s.generationFloor = floor
             store.save()
         }
+        return s.nextGeneration() > prep.generation
     }
+
+    /**
+     * A refusal that says, in text alone, that [prep]'s identity was
+     * registered before: a simulate's message, an http node's, the gas
+     * service's without its kind. Text proves nothing, so the floor stays;
+     * a sync finds the record if one of this wallet's registrations used it.
+     * Returns whether the wallet moved on.
+     */
+    fun identityRefusedUnconfirmed(prep: RegistrationPrep): Boolean {
+        runCatching { sync() }
+        return nextGeneration() > prep.generation
+    }
+
+    /** The refusal said the identity was used, but neither the chain's code nor this wallet's records confirm it. */
+    class IdentityRefusalUnconfirmed : IllegalStateException(IDENTITY_REFUSAL_UNCONFIRMED)
 
     /** A referrer named by handle, resolved from the directory: the handle and the address it names now. */
     data class Referrer(val handle: String, val address: ShieldedAddress)
@@ -770,8 +800,14 @@ class PrivacyWallet(
             }
         } catch (e: Exception) {
             // Used before, by the chain's own set (1130, refused in the ante at
-            // no cost): the next attempt proves with the next generation.
-            if (identityRefusal(e)) identityRefused(prep)
+            // no cost): the next attempt proves with the next generation. The
+            // chain's code, from an https node, moves the floor; text (a
+            // simulate's message) only prompts a sync for the record.
+            if (identityRefusal(e) && chainCodesTrusted()) {
+                throw if (identityRefused(prep)) IdentityUsed() else IllegalStateException(IDENTITY_SKIPS_EXHAUSTED, e)
+            } else if (identityRefusalText(e)) {
+                throw if (identityRefusedUnconfirmed(prep)) IdentityUsed() else IdentityRefusalUnconfirmed()
+            }
             throw e
         }
         recordRegistration(result)
@@ -924,14 +960,14 @@ class PrivacyWallet(
     }
 
     /** Whether this wallet's identity (generation [g]) holds a caretaker split the chain still counts (as far as it knows). */
-    fun caretakerLive(g: Int = generation): Boolean = caretakerLive(store.state.slot(g))
+    fun caretakerLive(g: Int = generation): Boolean = caretakerLive(store.state.peekSlot(g))
 
     private fun caretakerLive(t: IdentitySlot): Boolean = holdsSplit(t) && caretakerExpiresAt(t) > now()
 
     private fun holdsSplit(t: IdentitySlot = store.state.current): Boolean = t.caretakerSplit.isNotEmpty() || t.caretakerSplitUnknown
 
     /** When the split of identity generation [g] lapses: the chain's expires_at, or its cast time + R. 0 for none. */
-    fun caretakerExpiresAt(g: Int = generation): Long = caretakerExpiresAt(store.state.slot(g))
+    fun caretakerExpiresAt(g: Int = generation): Long = caretakerExpiresAt(store.state.peekSlot(g))
 
     private fun caretakerExpiresAt(t: IdentitySlot): Long {
         if (!holdsSplit(t)) return 0
@@ -1135,7 +1171,7 @@ class PrivacyWallet(
             override val targetId = "$WITHIN_TARGET$g"
             override fun record(move: PendingMove) = recordIncoming(store, move, now(), g)
             override fun rollback(move: PendingMove) = rollbackIncoming(store, move, now(), g)
-            override fun refusal(move: PendingMove): String? = synchronized(store) { targetRefusal(store.state.slot(g), move.kind, now()) }
+            override fun refusal(move: PendingMove): String? = synchronized(store) { targetRefusal(store.state.peekSlot(g), move.kind, now()) }
         }
     }
 
@@ -1256,7 +1292,7 @@ class PrivacyWallet(
      * acts as) that the chain has not confirmed yet, and confirmed ones not
      * yet recorded in their target.
      */
-    fun outgoingMoves(g: Int = generation): List<PendingMove> = store.state.slot(g).pendingMoves.filter { !it.incoming }
+    fun outgoingMoves(g: Int = generation): List<PendingMove> = store.state.peekSlot(g).pendingMoves.filter { !it.incoming }
 
     /**
      * When the wallet suggests bringing the predecessor's handle and
@@ -1365,7 +1401,7 @@ class PrivacyWallet(
      * When this identity's handle stops being live, as the chain last said
      * (its bind, or its directory); 0 when the wallet does not know.
      */
-    fun handleExpiresAt(g: Int = generation): Long = handleExpiresAt(store.state.slot(g))
+    fun handleExpiresAt(g: Int = generation): Long = handleExpiresAt(store.state.peekSlot(g))
 
     private fun handleExpiresAt(s: IdentitySlot): Long = if (s.handle.isNotEmpty() && s.handleExpiresFor == s.handle) s.handleExpiresAt else 0
 
@@ -2892,11 +2928,30 @@ class PrivacyWallet(
         const val IDENTITY_USED = "This identity has been registered before, and the chain accepts each identity once. " +
             "The wallet has moved on to your next identity, from the same recovery phrase: start the registration again."
 
+        /** What a wallet says when a refusal named its identity used but nothing confirms it. */
+        const val IDENTITY_REFUSAL_UNCONFIRMED = "This identity was refused as already registered, but the refusal " +
+            "did not carry the chain's code and this wallet has no record of registering it, so the wallet keeps it. " +
+            "If you use your own node over plain http, check it or switch to Earth's node, then try again."
+
+        /** The chain refused another identity, and the wallet has skipped as many unrecorded ones as a restore can find. */
+        const val IDENTITY_SKIPS_EXHAUSTED = "The chain refused this identity as already registered, and this wallet has " +
+            "already skipped as many identities with no record as it can. Create a new wallet and register there."
+
         /** The chain's text for personhood 1130 (ErrIdcUsed). */
         const val IDENTITY_USED_TEXT = "identity commitment has been registered before"
 
-        /** Whether [e] (or a cause) is the chain refusing an identity as used (1130). */
+        /** ErrIdcUsed's code and codespace: a code means nothing without its codespace. */
+        const val IDENTITY_USED_CODE = 1130
+        const val IDENTITY_USED_CODESPACE = "personhood"
+
+        /** Whether [e] (or a cause) is CheckTx refusing an identity as used: the chain's code and codespace (1130, personhood). */
         fun identityRefusal(e: Throwable): Boolean =
+            generateSequence(e) { it.cause }.take(8).any {
+                it is network.erth.wallet.privacy.tx.UnsignedTx.TxRejected && it.code == IDENTITY_USED_CODE && it.codespace == IDENTITY_USED_CODESPACE
+            }
+
+        /** Whether [e] (or a cause) says in its text alone that an identity is used: a hint for a sync, never a floor. */
+        fun identityRefusalText(e: Throwable): Boolean =
             generateSequence(e) { it.cause }.take(8).any { it.message?.contains(IDENTITY_USED_TEXT) == true }
 
         /**

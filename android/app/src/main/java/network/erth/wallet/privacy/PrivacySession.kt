@@ -65,6 +65,8 @@ object PrivacySession {
             prover = AndroidProver(app),
             chainId = Constants.EARTH_CHAIN_ID,
             roots = network.erth.wallet.privacy.chain.LcdChainRoots,
+            // An http own node's codes could be anyone's on its network.
+            chainCodesTrusted = { !network.erth.wallet.chain.NodeConfig.isCleartext(network.erth.wallet.chain.NodeConfig.current.lcd) },
         )
         wallets[id] = w
         live[id] = java.lang.ref.WeakReference(w)
@@ -193,7 +195,7 @@ object PrivacySession {
         val g = w.generation
         for (k in (g - 1) downTo maxOf(0, g - OWN_LOOKBACK)) {
             if (w.successionIndex(w.keys.idc(k), w.idc, id.leafIndex + 1, nearOnly = true) == null) continue
-            val st = w.store.state.slot(k)
+            val st = w.store.state.peekSlot(k)
             val handleExp = w.handleExpiresAt(k)
             val offer = MoveOffer(
                 fromIndex = SELF, fromName = "",

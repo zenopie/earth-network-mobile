@@ -104,6 +104,22 @@ class GasPowTest {
         assertNotEquals(server.posts[2].getJSONObject("pow").toString(), server.posts[3].getJSONObject("pow").toString())
     }
 
+    /** Only a 403's structured kind names an idc used; the message is never parsed for it. */
+    @Test
+    fun aRefusalCarriesTheServicesKind() = runBlocking<Unit> {
+        val server = Server(0, ArrayDeque())
+        GasGrant.transport = server
+        server.replies.add { _ -> 403 to """{"status":"error","message":"the chain would not accept this registration: identity commitment has been registered before; register a fresh identity","kind":"idc used"}""" }
+        val structured = GasGrant.withPow(body(), binding, nullifier) {} as GasGrant.Result.Refused
+        assertEquals(GasGrant.KIND_IDC_USED, structured.kind)
+        server.replies.add { _ -> 403 to """{"status":"error","message":"the chain would not accept this registration: identity commitment has been registered before; register a fresh identity"}""" }
+        val text = GasGrant.withPow(body(), binding, nullifier) {} as GasGrant.Result.Refused
+        assertEquals(null, text.kind)
+        // A kind on anything but a chain refusal (403) is not one.
+        server.replies.add { _ -> 400 to """{"status":"error","message":"bad","kind":"idc used"}""" }
+        assertEquals(null, (GasGrant.withPow(body(), binding, nullifier) {} as GasGrant.Result.Refused).kind)
+    }
+
     @Test
     fun workCanBeCancelled() = runBlocking<Unit> {
         val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch { GasPow.solve(now, binding, nullifier, GasPow.MAX_BITS) }

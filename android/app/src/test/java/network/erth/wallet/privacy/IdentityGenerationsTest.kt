@@ -145,31 +145,143 @@ class IdentityGenerationsTest : WalletTest() {
         assertTrue(runCatching { a.moveHandleWithin(1) }.exceptionOrNull() is IllegalArgumentException)
     }
 
-    /** The wallet's records missed a used identity: the chain refuses it (1130) and the next try uses the next generation. */
+    private fun signals(prep: PrivacyWallet.RegistrationPrep, passport: String = "555") =
+        listOf("261001", prep.binding.toBigInteger().toString(), passport, Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString())
+
+    private fun funded(chain: FakeChain, w: PrivacyWallet, prep: PrivacyWallet.RegistrationPrep) {
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
+        w.sync()
+    }
+
+    /**
+     * The wallet's records missed a used identity: CheckTx refuses it with
+     * the chain's code (1130, personhood) and the next try uses the next
+     * generation.
+     */
     @Test
     fun aRefusedIdentityMovesTheWalletToItsNextGeneration() {
         val chain = FakeChain()
         val a = wallet(chain, alice)
         register(chain, a, "555")
         lapse(chain, a, 0)
-        // Generation 1 registered somewhere the wallet cannot see (no record of it here).
-        chain.usedIdcs.add(a.keys.idc(1))
         val prep = a.prepareRegistration(null)
         assertEquals(1, prep.generation)
-        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
-        a.sync()
-        val signals = listOf("261001", prep.binding.toBigInteger().toString(), "555", Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString())
-        val e = runCatching { a.register(prep, ByteArray(14_656), signals, "lean_poa", ByteArray(10)) }.exceptionOrNull()
-        assertTrue("$e", e != null && PrivacyWallet.identityRefusal(e))
+        funded(chain, a, prep)
+        // Generation 1 registers somewhere the wallet cannot see, after the simulate.
+        chain.usedOnBroadcast = a.keys.idc(1)
+        val e = runCatching { a.register(prep, ByteArray(14_656), signals(prep), "lean_poa", ByteArray(10)) }.exceptionOrNull()
+        assertTrue("$e", e is PrivacyWallet.IdentityUsed)
+        assertTrue("$e", PrivacyWallet.identityRefusal(network.erth.wallet.privacy.tx.UnsignedTx.TxRejected(1130, "x", "personhood")))
+        assertFalse(PrivacyWallet.identityRefusal(network.erth.wallet.privacy.tx.UnsignedTx.TxRejected(1130, "x", "dex")))
         assertEquals(2, a.nextGeneration())
         register(chain, a, "555")
         assertEquals(2, a.generation)
         assertEquals(WalletSync.IdentityStatus.LIVE, a.identityStatus())
         // A stale prep (its generation landed since) is refused before anything is sent.
-        val stale = prep
         val sent = chain.txs.size
-        assertTrue(runCatching { a.register(stale, ByteArray(14_656), signals, "lean_poa", ByteArray(10)) }.exceptionOrNull() is PrivacyWallet.IdentityUsed)
+        assertTrue(runCatching { a.register(prep, ByteArray(14_656), signals(prep), "lean_poa", ByteArray(10)) }.exceptionOrNull() is PrivacyWallet.IdentityUsed)
         assertEquals(sent, chain.txs.size)
+    }
+
+    /**
+     * Text alone (a simulate's message, which anyone on the node path can
+     * write) never moves the floor: the wallet syncs for a record and, with
+     * none, keeps the identity.
+     */
+    @Test
+    fun aRefusalInTextAloneDoesNotMoveTheFloor() {
+        val chain = FakeChain()
+        val a = wallet(chain, alice)
+        register(chain, a, "555")
+        lapse(chain, a, 0)
+        chain.usedIdcs.add(a.keys.idc(1))
+        val prep = a.prepareRegistration(null)
+        funded(chain, a, prep)
+        val e = runCatching { a.register(prep, ByteArray(14_656), signals(prep), "lean_poa", ByteArray(10)) }.exceptionOrNull()
+        assertTrue("$e", e is PrivacyWallet.IdentityRefusalUnconfirmed)
+        assertEquals(0, a.store.state.generationFloor)
+        assertEquals(1, a.nextGeneration())
+        // The gas service's message without its kind: the same.
+        assertFalse(a.identityRefusedUnconfirmed(prep))
+        assertEquals(1, a.nextGeneration())
+    }
+
+    /** The chain's code from an http own node is anyone's on its network: treated as text. */
+    @Test
+    fun aCodeFromAnHttpNodeDoesNotMoveTheFloor() {
+        val chain = FakeChain()
+        val a = PrivacyWallet(PrivacyKeys.fromMnemonic(alice), PrivacyStore.memory(), chain, chain, reads(chain), chain.prover, chain.chainId, chain,
+            now = { chain.now }, chainCodesTrusted = { false })
+        register(chain, a, "555")
+        lapse(chain, a, 0)
+        val prep = a.prepareRegistration(null)
+        funded(chain, a, prep)
+        chain.usedOnBroadcast = a.keys.idc(1)
+        val e = runCatching { a.register(prep, ByteArray(14_656), signals(prep), "lean_poa", ByteArray(10)) }.exceptionOrNull()
+        assertTrue("$e", e is PrivacyWallet.IdentityRefusalUnconfirmed)
+        assertEquals(1, a.nextGeneration())
+    }
+
+    /**
+     * Structured refusals move the floor at most GENERATION_LOOKAHEAD past
+     * the highest recorded generation, so a restore, which looks that far
+     * past each record it finds, finds the registration that follows.
+     */
+    @Test
+    fun theFloorStaysWithinARestoresReach() {
+        val chain = FakeChain()
+        val a = wallet(chain, alice)
+        register(chain, a, "555")
+        lapse(chain, a, 0)
+        // A dishonest gas service answering "idc used" (a structured kind) every time.
+        var moved = 0
+        while (true) {
+            val prep = a.prepareRegistration(null)
+            if (!a.identityRefused(prep)) break
+            moved++
+        }
+        assertEquals(WalletSync.GENERATION_LOOKAHEAD - 1, moved)
+        assertEquals(WalletSync.GENERATION_LOOKAHEAD, a.nextGeneration())
+        register(chain, a, "555")
+        assertEquals(WalletSync.GENERATION_LOOKAHEAD, a.generation)
+        val r = wallet(chain, alice)
+        r.sync()
+        assertEquals(WalletSync.GENERATION_LOOKAHEAD, r.generation)
+        assertEquals(WalletSync.IdentityStatus.LIVE, r.identityStatus())
+        assertEquals(WalletSync.GENERATION_LOOKAHEAD + 1, r.nextGeneration())
+    }
+
+    /**
+     * A record past the window when its note was passed is tried again
+     * once a later record widens the window: the restore rescans the notes
+     * it passed from the earliest unmatched one.
+     */
+    @Test
+    fun aRestoreRescansWhenItsWindowGrows() {
+        val chain = FakeChain()
+        val a = wallet(chain, alice)
+        val far = WalletSync.GENERATION_LOOKAHEAD + 2
+        // A record of generation [far] early in the stream (another device's, out of order).
+        val memo = WalletSync.regMemo(a.keys.nk, Fr.of(77), "", chain.now, far)
+        val n = network.erth.wallet.privacy.note.NotePlaintext.fresh("uerth", 0, memo)
+        val cm = n.cm(a.address.ownerPk)
+        val pos = chain.noteTree.append(cm)
+        chain.notes.add(network.erth.wallet.privacy.sync.NoteRow(pos, chain.height, cm, network.erth.wallet.privacy.note.NoteCipher.encrypt(n, a.address), null))
+        register(chain, a, "555")
+        // Generation 0's record widened the window to 9, short of [far]: still unmatched.
+        assertEquals(pos, a.store.state.unmatchedRecordFrom)
+        assertEquals(1, a.nextGeneration())
+        lapse(chain, a, 0)
+        register(chain, a, "555")
+        // Generation 1's widened it to 10: the early note was tried again and found.
+        assertTrue(a.store.state.regRecords.any { it.generation == far })
+        assertEquals(far + 1, a.nextGeneration())
+        assertEquals(-1L, a.store.state.unmatchedRecordFrom)
+        val r = wallet(chain, alice)
+        r.sync()
+        assertTrue(r.store.state.regRecords.any { it.generation == far })
+        assertEquals(1, r.generation)
+        assertEquals(far + 1, r.nextGeneration())
     }
 
     /** A restore scans the records' generations: the live one, or (all lapsed) the last, and never offers a used one. */

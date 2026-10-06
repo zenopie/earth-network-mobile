@@ -45,8 +45,12 @@ object GasGrant {
         /** Broadcast but unconfirmed: handled exactly like [Sent]. */
         data object Pending : Result
 
-        /** Nothing was sent; [message] is for the person, as-is. */
-        data class Refused(val message: String) : Result
+        /**
+         * Nothing was sent; [message] is for the person, as-is. [kind] is the
+         * service's structured reason for a chain refusal (its 403's "kind",
+         * e.g. [KIND_IDC_USED]), null when it gave none.
+         */
+        data class Refused(val message: String, val kind: String? = null) : Result
     }
 
     /**
@@ -144,7 +148,10 @@ object GasGrant {
         val message = json?.optString("message")?.takeIf { it.isNotBlank() }
         if (json == null) Log.w(TAG, "not JSON: ${response.take(80)}")
         // The chain's own reason, in plain words where the app has them (1127, 1113).
-        return Result.Refused(message?.let { network.erth.wallet.chain.ChainErrors.explain(it) ?: it } ?: UNAVAILABLE)
+        // The kind is the service's own classification, read only from a 403
+        // (a chain refusal); the message is never parsed for it.
+        val kind = json?.takeIf { code == 403 }?.optString("kind")?.takeIf { it.isNotBlank() }
+        return Result.Refused(message?.let { network.erth.wallet.chain.ChainErrors.explain(it) ?: it } ?: UNAVAILABLE, kind)
     }
 
     /**
@@ -172,6 +179,9 @@ object GasGrant {
     // An error in front of the backend (the tunnel, a proxy) answers in HTML,
     // so a body is not trusted to be JSON.
     private fun parse(body: String): JSONObject? = runCatching { JSONObject(body) }.getOrNull()
+
+    /** The gas service's refusal kind for an identity registered before (the chain's 1130). */
+    const val KIND_IDC_USED = "idc used"
 
     private const val UNREACHABLE = "Couldn't reach the gas service. Check your connection and try again."
     private const val UNAVAILABLE = "Free gas is unavailable right now. Try again later."

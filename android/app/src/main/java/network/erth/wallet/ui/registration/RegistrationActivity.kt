@@ -296,11 +296,23 @@ class RegistrationActivity : ComponentActivity() {
                                 }
                                 if (result is GasGrant.Result.Refused) {
                                     // Its identity used before (1130, the chain's own set): the
-                                    // next registration proves with the next generation.
-                                    if (result.message == PrivacyWallet.IDENTITY_USED) {
-                                        withContext(Dispatchers.IO) { runCatching { PrivacySession.wallet(ctx).identityRefused(ready.prep) } }
-                                    }
-                                    gasError = result.message
+                                    // next registration proves with the next generation. Only the
+                                    // service's structured kind moves the floor; the message alone
+                                    // only prompts a sync for a record of it.
+                                    val structured = result.kind == GasGrant.KIND_IDC_USED
+                                    gasError = if (structured || result.message == PrivacyWallet.IDENTITY_USED) {
+                                        val movedOn = withContext(Dispatchers.IO) {
+                                            runCatching {
+                                                val w = PrivacySession.wallet(ctx)
+                                                if (structured) w.identityRefused(ready.prep) else w.identityRefusedUnconfirmed(ready.prep)
+                                            }.getOrDefault(false)
+                                        }
+                                        when {
+                                            movedOn -> PrivacyWallet.IDENTITY_USED
+                                            structured -> PrivacyWallet.IDENTITY_SKIPS_EXHAUSTED
+                                            else -> PrivacyWallet.IDENTITY_REFUSAL_UNCONFIRMED
+                                        }
+                                    } else result.message
                                     return@launch
                                 }
                                 awaitingGas = true

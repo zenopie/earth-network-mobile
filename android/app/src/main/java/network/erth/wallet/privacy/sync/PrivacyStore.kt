@@ -312,7 +312,14 @@ class PrivacyState {
     var generationFloor: Int = 0
     /** Every generation's slot that holds anything (by generation). */
     val slots: java.util.TreeMap<Int, IdentitySlot> = java.util.TreeMap()
+    /** [generation]'s slot, made if it has none: writers only, under the wallet's (or the store's) lock. */
     fun slot(generation: Int): IdentitySlot = slots.getOrPut(generation) { IdentitySlot() }
+    /**
+     * [generation]'s slot for a reader, never inserting: a reader runs
+     * beside a sync that may be iterating [slots] (an insert there would
+     * fail its save); an empty one when it holds nothing.
+     */
+    fun peekSlot(generation: Int): IdentitySlot = slots[generation] ?: IdentitySlot()
     /** The slot of [generation]: what the identity the wallet acts as holds. */
     val current: IdentitySlot get() = slot(generation)
     var identity: IdentityRecord?
@@ -326,8 +333,15 @@ class PrivacyState {
      * a registration matched or committed, and every one below the floor.
      * Skipping a generation whose registration failed costs nothing.
      */
-    fun usedThrough(): Int {
-        var m = generationFloor - 1
+    fun usedThrough(): Int = maxOf(generationFloor - 1, usedThroughRecorded())
+
+    /**
+     * The highest generation with a registration on chain to show for it (a
+     * record, a matched leaf, a committed tx), -1 for none: what a restore
+     * can find again. The floor is not counted.
+     */
+    fun usedThroughRecorded(): Int {
+        var m = -1
         regRecords.forEach { m = maxOf(m, it.generation) }
         slots.forEach { (g, slot) -> if (slot.identity != null) m = maxOf(m, g) }
         pendingRegistration?.let { if (it.leafIndex != null) m = maxOf(m, it.generation) }
@@ -413,6 +427,14 @@ class PrivacyState {
     var nextOtagCounter: Int = 0
     /** The highest owner-tag counter of a position this wallet closed, from its unlock memos (-1: none). */
     var closedOtagMax: Int = -1
+    /**
+     * The earliest note position holding a value-0 note of ours with a
+     * record's magic whose tag matched no generation tried (-1: none), and
+     * the smallest record window such a note was tried with: once the
+     * window grows past it, WalletSync tries those notes again.
+     */
+    var unmatchedRecordFrom: Long = -1
+    var unmatchedRecordWindow: Int = 0
     /** Per position id of ours: its split's lease as last seen (PrivacyWallet.positions keeps it). */
     val positionLeases: MutableMap<Long, PositionLease> = java.util.TreeMap()
     /** The stake tree's stream cursors and this wallet's stake notes. */
@@ -476,6 +498,7 @@ class PrivacyState {
         })
         put("identity_heights", JSONArray(identityHeights)); put("identity_rows_seen", identityRowsSeen)
         put("next_otag_counter", nextOtagCounter); put("closed_otag_max", closedOtagMax)
+        put("unmatched_record_from", unmatchedRecordFrom); put("unmatched_record_window", unmatchedRecordWindow)
         put("position_leases", JSONArray().apply {
             positionLeases.forEach { (id, l) -> put(JSONObject().put("id", id).put("expires_at", l.expiresAt).put("split", splitJson(l.split))) }
         })
@@ -548,6 +571,7 @@ class PrivacyState {
             }
             identityHeights.addAll(longs(j.optJSONArray("identity_heights"))); identityRowsSeen = j.optLong("identity_rows_seen")
             nextOtagCounter = j.optInt("next_otag_counter"); closedOtagMax = j.optInt("closed_otag_max", -1)
+            unmatchedRecordFrom = j.optLong("unmatched_record_from", -1); unmatchedRecordWindow = j.optInt("unmatched_record_window")
             j.optJSONArray("position_leases")?.let { a ->
                 for (i in 0 until a.length()) a.getJSONObject(i).let {
                     positionLeases[it.getLong("id")] = PositionLease(it.optLong("expires_at"), splitFromJson(it.optJSONObject("split")))
