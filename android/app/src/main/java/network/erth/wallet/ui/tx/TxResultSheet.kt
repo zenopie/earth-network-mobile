@@ -19,8 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import network.erth.wallet.ui.components.EarthCodeBlock
@@ -57,7 +56,7 @@ sealed interface TxOutcome {
 fun TxResultSheet(outcome: TxOutcome, onDismiss: () -> Unit) {
     val colors = EarthTheme.colors
     val dimens = EarthTheme.dimens
-    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
 
     val (glyph, badgeBg, badgeFg, title, detail) =
         when (outcome) {
@@ -132,7 +131,7 @@ fun TxResultSheet(outcome: TxOutcome, onDismiss: () -> Unit) {
         ) {
             EarthButton(
                 text = "Copy",
-                onClick = { clipboard.setText(AnnotatedString("$title\n\n$detail")) },
+                onClick = { network.erth.wallet.ui.components.Clipboard.copy(context, title, "$title\n\n$detail") },
                 modifier = Modifier.weight(1f),
                 colors = EarthButtonDefaults.secondaryColors(),
             )

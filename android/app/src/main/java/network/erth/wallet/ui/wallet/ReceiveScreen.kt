@@ -20,8 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import network.erth.wallet.R
@@ -67,7 +66,7 @@ fun ReceiveScreen(
     scrollable: Boolean = true,
 ) {
     val dimens = EarthTheme.dimens
-    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
 
     Column(
         modifier
@@ -106,14 +105,14 @@ fun ReceiveScreen(
             AddressPanel(
                 label = "Shielded address",
                 address = state.shieldedAddress,
-                onClick = { clipboard.setText(AnnotatedString(state.shieldedAddress)) },
+                onClick = { network.erth.wallet.ui.components.Clipboard.copy(context, "Shielded address", state.shieldedAddress) },
             )
             Spacer(Modifier.height(dimens.space12))
         }
         AddressPanel(
             label = if (state.shieldedAddress.isNotEmpty()) "Transparent address (public)" else state.label,
             address = state.address,
-            onClick = { clipboard.setText(AnnotatedString(state.address)) },
+            onClick = { network.erth.wallet.ui.components.Clipboard.copy(context, "Address", state.address) },
         )
 
         Spacer(Modifier.height(dimens.space24))
