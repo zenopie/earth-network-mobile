@@ -1072,7 +1072,18 @@ pending one dropped. It is never dropped unresolved (a leaf that does not
 match is an error shown to the user, the record kept). Restore from the
 mnemonic: §19.
 
-**Chain errors explained.** personhood 1127 (a switch proven under another
+**Fresh identity [chain + wallet].** The chain refuses a registration to
+any idc registered before, by any passport (error 1130, ErrIdcUsed, in the
+ante before the proof; genesis `used_idcs`, field 23). Every first
+registration, switch and re-entry is to a fresh identity secret; a wallet
+never re-registers a retired identity (a switch back to an earlier wallet is
+refused: that wallet's identity is spent), and a switch target is always a
+wallet whose identity was never registered. The register proof outputs the
+idc of the witness `id_secret` (§9), so the wallet proves with the target
+identity's own secret.
+
+**Chain errors explained.** personhood 1130 ("This identity has been
+registered before. Switch to a new wallet."), 1127 (a switch proven under another
 Document Signer than the live registration's: "This switch was refused. A
 switch must be proven with the same passport you registered with …"), 1113
 (a signer's daily cap, switches included: "Today's limit for passports
@@ -1230,7 +1241,20 @@ switch).
   Caretaker split to this identity" for what it still holds, with the fee
   shown against that wallet's ERTH. A switch from a wallet whose phrase is
   lost finds nothing to offer: the move proof needs its secret. The switch
-  screen itself moves nothing and says so. Without moves, the new identity waits until
+  screen itself moves nothing and says so.
+- **When to move.** Nothing hurries a move while the new identity stays
+  live (until the passport's next switch), and a move landing right after
+  the switch links the handle, its owner_pk and the split to the passport's
+  public registration record by timing (ORCHARD_DESIGN 6.6). The offer
+  suggests waiting a random delay (hours to days; the wallet draws one and
+  shows it) and lets the user choose: move now, or be reminded at the
+  suggested time. The wallet never sends a move on its own; a move spends a
+  fee and only the user starts it.
+- **One step only.** A move goes from an identity to its immediate
+  successor while that successor is live. After a further switch whatever
+  is still on the older identity can never move. The switch screen warns,
+  and asks the user to move first, when the current identity's predecessor
+  (on this phone) still holds a handle or split. Without moves, the new identity waits until
 everything its predecessor could hold has lapsed (lease + 1 day). The mover
 records `*_moved_out` and never casts or claims again.
 
