@@ -1677,6 +1677,24 @@ refused by the chain only while the old leaf is live).
   over (iOS: atomic write); a failed save is an error, never silent. An
   unreadable state.json is an error shown to the user, never replaced by an
   empty wallet. iOS marks the privacy directory excluded from backup.
+- **State at rest.** state.json is sealed (`StateSeal`, both platforms, one
+  format): `{"sealed": 1, "alg": "AES-256-GCM", "kid", "nonce", "ct"}`, all
+  hex, `ct` the ciphertext with its 16-byte tag appended, AAD
+  `"earth/privacy-state/v1|" + walletId`, `kid` the first 8 bytes of
+  SHA-256(`"earth/privacy-store/kid"` ‖ key). The key is a random 32-byte
+  data key kept inside the sealed wallet vault (Android: the storage JSON's
+  `data_key`; iOS: the vault payload's `dataKey`), so it opens exactly when
+  the wallet does, whatever the unlock method, and survives a change of
+  method. A state sealed under another `kid` (an earlier install's vault) is
+  dropped, trees included, and resynced from the mnemonic; a failed tag
+  under the current key is an error. Plaintext from before sealing is read
+  once and sealed. The trees (the chain's public leaves) are not sealed.
+- **Vault key derivation.** The wallet vault records how its key was
+  derived (Android format 2: `kdf` = `pbkdf2-hmac-sha256`, `kdf_iterations`
+  600,000; iOS format 2: `kdf` = `pbkdf2-hmac-sha512`, `rounds` 200,000).
+  A vault without them is format 1, sealed at those same values; counts
+  outside [100,000, 10,000,000] and newer formats are refused; a vault at
+  other than the current parameters is re-sealed at them on unlock.
 - **One store per wallet.** The app keeps one wallet object and one store
   per wallet per process, across lock and unlock.
 - **Forgetting a wallet** deletes its `privacy/<id>/` directory (notes,
