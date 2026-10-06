@@ -3,6 +3,7 @@ members = [
   "poa_core",
   "privacy_core",
   "membership",
+  "move",
   "action",
   "stake",
   "vote",

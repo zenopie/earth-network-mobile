@@ -52,6 +52,8 @@ pub global TAG_VPAD: Field = 0x65617274682e76706164; // "earth.vpad"
 // ORCHARD_DESIGN.md section 20).
 pub global TAG_SLABEL: Field = 0x65617274682e736c6162656c; // "earth.slabel"
 pub global TAG_DEBTL: Field = 0x65617274682e646562746c; // "earth.debtl"
+// Succession leaves in the identity tree (circuits/move; chain x/personhood).
+pub global TAG_SUCC: Field = 0x65617274682e73756363; // "earth.succ"
 
 /// Asset id of `uerth` = H(TAG_ASSET, 5, 0x7565727468) (zk/privacy.AssetID).
 pub global ASSET_ERTH: Field = 0xad44a14c7205c61e39db2c64b79005ffb14a2a927977e8cda2208be2e3fe54c;
@@ -94,6 +96,15 @@ pub fn owner_pk(nk: Field) -> Field {
 /// leaf (unix seconds), 0 for a passport never registered before.
 pub fn identity_leaf(idc: Field, dsc_key: Field, country: Field, activated_at: u64, predecessor_at: u64) -> Field {
     h6(TAG_LEAF, idc, dsc_key, country, activated_at as Field, predecessor_at as Field)
+}
+
+/// succession = H(TAG_SUCC, idc_old, idc_new): the chain appends it to the
+/// identity tree when a passport registers to idc_new while its last
+/// registration was to idc_old (a switch, or a re-entry after a lapse). Never
+/// an identity leaf (another tag and arity), so no membership proof can use
+/// one.
+pub fn succession_leaf(idc_old: Field, idc_new: Field) -> Field {
+    h3(TAG_SUCC, idc_old, idc_new)
 }
 
 /// Field encoding of an ISO 3166-1 alpha-2 code: its two ASCII bytes read
