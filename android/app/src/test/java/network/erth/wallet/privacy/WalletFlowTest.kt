@@ -301,7 +301,7 @@ class WalletFlowTest {
         val items = a.stakeVoteItems(11)
         val preview = a.stakeVotePreview(11, items.single())!!
         assertEquals(notes.size, preview.notes)
-        assertEquals(PrivacyWallet.voteWeight(notes.sumOf { it.amount }), preview.uerth)
+        assertEquals(liveValue(chain, PrivacyWallet.parseDerth(derth), PrivacyWallet.voteWeight(notes.sumOf { it.amount })), preview.uerth)
         val voted = items.mapNotNull { a.castStakeVote(11, it, yes) }
         assertEquals(1, voted.size)
         a.sync()

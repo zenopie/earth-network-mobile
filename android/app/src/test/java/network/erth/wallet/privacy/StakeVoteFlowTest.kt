@@ -193,11 +193,12 @@ class StakeVoteFlowTest {
         val item = a.stakeVoteItems(1).single() as PrivacyWallet.StakeVoteItem.Validator
         assertEquals(3, item.notes)
         assertEquals(2, item.parts)
-        assertEquals(PrivacyWallet.VotePreview(2, PrivacyWallet.voteWeight(ns.take(2).sumOf { it.amount })), a.stakeVotePreview(1, item))
+        // The snapshot names no rates: the ERTH figure is at the live book's.
+        assertEquals(PrivacyWallet.VotePreview(2, liveValue(chain, vB, PrivacyWallet.voteWeight(ns.take(2).sumOf { it.amount }))), a.stakeVotePreview(1, item))
         assertNotNull(a.castStakeVote(1, item, yes))
         assertEquals(ns.take(2).map { it.position }.toSet(), chain.lastVotePositions())
         a.sync()
-        assertEquals(PrivacyWallet.VotePreview(1, PrivacyWallet.voteWeight(ns[2].amount)), a.stakeVotePreview(1, item))
+        assertEquals(PrivacyWallet.VotePreview(1, liveValue(chain, vB, PrivacyWallet.voteWeight(ns[2].amount))), a.stakeVotePreview(1, item))
         assertNotNull(a.castStakeVote(1, item, yes))
         assertEquals(setOf(ns[2].position), chain.lastVotePositions())
         assertNull(a.castStakeVote(1, item, yes))

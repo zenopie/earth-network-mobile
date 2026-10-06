@@ -12,6 +12,15 @@ import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Privacy
 import org.junit.Assert.assertEquals
 
+/** [validator]'s ERTH value of [derth] at its live book rate: what a vote preview shows when the snapshot carries no rates. */
+fun liveValue(chain: FakeChain, validator: String, derth: Long): Long {
+    val book = chain.validatorsRead().of(validator)
+    return PrivacyWallet.derthValue(derth, java.math.BigDecimal(book.backing).divide(java.math.BigDecimal(book.supply), 18, java.math.RoundingMode.DOWN))
+}
+
+/** The install data key the tests seal stores under (SessionManager.dataKey in the app). */
+val testDataKey = ByteArray(32) { it.toByte() }
+
 /**
  * What the wallet tests against [FakeChain] share: fixed mnemonics, the
  * chain reads a wallet takes (each swappable), wallet setup, funding and a
