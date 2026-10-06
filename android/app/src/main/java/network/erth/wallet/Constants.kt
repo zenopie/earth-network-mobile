@@ -38,6 +38,18 @@ object Constants {
     const val EARTH_API_URL = "https://api.erth.network"
 
     const val EARTH_CHAIN_ID = "earth-1"
+
+    // ======================== SET AT THE GENESIS CEREMONY ========================
+    // The live earth-1's block 1 hash: 64 lowercase hex digits, as the LCD's
+    // /cosmos/base/tendermint/v1beta1/blocks/1 (block_id.hash, base64) and the
+    // RPC's /block?height=1 (result.block_id.hash, hex) both give it. earth-1
+    // has been relaunched under the same chain id, so the chain id alone does
+    // not tell the live chain from an old genesis or a fork: Settings -> Network
+    // refuses a node whose block 1 is not this one (NodeConfig.probe). Must
+    // equal iOS Constants.genesisBlockHash. Empty until it is set: the check
+    // then compares with Earth's own node's block 1 instead.
+    const val EARTH_GENESIS_BLOCK_HASH = ""
+    // =============================================================================
     const val EARTH_PREFIX = "earth"
     const val UERTH_DENOM = "uerth"
 }

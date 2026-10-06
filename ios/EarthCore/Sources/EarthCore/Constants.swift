@@ -16,6 +16,19 @@ public enum Constants {
     public static let rpcURL = URL(string: "https://rpc.erth.network")!
 
     public static let chainID = "earth-1"
+
+    // ======================== SET AT THE GENESIS CEREMONY ========================
+    /// The live earth-1's block 1 hash: 64 lowercase hex digits, as the LCD's
+    /// /cosmos/base/tendermint/v1beta1/blocks/1 (block_id.hash, base64) and
+    /// the RPC's /block?height=1 (result.block_id.hash, hex) both give it.
+    /// earth-1 has been relaunched under the same chain id, so the chain id
+    /// alone does not tell the live chain from an old genesis or a fork:
+    /// Settings → Network refuses a node whose block 1 is not this one
+    /// (`NodeSettings.probe`). Must equal Android's EARTH_GENESIS_BLOCK_HASH.
+    /// Empty until it is set: the check then compares with Earth's own
+    /// node's block 1 instead.
+    public static let genesisBlockHash = ""
+    // =============================================================================
     public static let bech32Prefix = "earth"
     /// Cosmos default. Not a custom coin type — do not "fix" this to 529.
     public static let coinType: UInt32 = 118

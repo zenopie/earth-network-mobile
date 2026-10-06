@@ -5,6 +5,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import network.erth.wallet.Constants
+import network.erth.wallet.privacy.chain.RestPrivateChain
+import okio.ByteString.Companion.decodeBase64
 import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.Inet6Address
@@ -91,24 +93,41 @@ object NodeConfig {
 
     /**
      * The phone itself or a private network: localhost, a loopback,
-     * link-local or RFC 1918 / unique-local address, or a .local name.
-     * Literal addresses only (no DNS lookup): a public name that resolves
-     * to a private address is still a public name.
+     * link-local or RFC 1918 / unique-local / site-local (fec0::/10) address,
+     * or a .local name. An IPv4-mapped IPv6 address (::ffff:a.b.c.d) is
+     * judged by its IPv4 address, where the socket goes. Literal addresses
+     * only (no DNS lookup): a public name that resolves to a private
+     * address is still a public name. Same rules as iOS NodeSettings.isLocal.
      */
     fun isLocal(host: String?): Boolean {
         val h = host?.lowercase()?.trim('[', ']') ?: return false
         if (h == "localhost" || h.endsWith(".local")) return true
-        // Literals only, so getByName never resolves a name.
-        val v4 = Regex("""\d{1,3}(\.\d{1,3}){3}""").matches(h)
+        // Literals only, checked before getByName so it never resolves a
+        // name: four decimal octets each at most 255, or an IPv6 literal (a
+        // string with a colon is parsed as one and never looked up).
+        val v4 = Regex("""\d{1,3}(\.\d{1,3}){3}""").matches(h) && h.split('.').all { it.toInt() <= 255 }
         val v6 = h.contains(':') && h.all { it.isDigit() || it == ':' || it == '.' || it in 'a'..'f' }
         if (!v4 && !v6) return false
         val a = runCatching { InetAddress.getByName(h) }.getOrNull() ?: return false
-        return when (a) {
-            is Inet4Address, is Inet6Address ->
-                a.isLoopbackAddress || a.isSiteLocalAddress || a.isLinkLocalAddress ||
-                    (a is Inet6Address && (a.address[0].toInt() and 0xfe) == 0xfc)
+        return localBytes(a.address)
+    }
+
+    /** [isLocal] on an address's bytes (4 or 16). */
+    internal fun localBytes(b: ByteArray): Boolean {
+        fun u(i: Int) = b[i].toInt() and 0xff
+        if (b.size == 4) return when {
+            u(0) == 127 || u(0) == 10 -> true
+            u(0) == 192 && u(1) == 168 -> true
+            u(0) == 169 && u(1) == 254 -> true
+            u(0) == 172 && u(1) in 16..31 -> true
             else -> false
         }
+        if (b.size != 16) return false
+        if ((0 until 10).all { u(it) == 0 } && u(10) == 0xff && u(11) == 0xff) return localBytes(b.copyOfRange(12, 16)) // ::ffff:a.b.c.d
+        if ((0 until 15).all { u(it) == 0 } && u(15) == 1) return true // ::1
+        if (u(0) and 0xfe == 0xfc) return true // fc00::/7
+        if (u(0) == 0xfe && (u(1) and 0xc0 == 0x80 || u(1) and 0xc0 == 0xc0)) return true // fe80::/10, fec0::/10
+        return false
     }
 
     /** Whether [EarthRest] may send to [base]: https, or the custom node's own local http. */
@@ -122,18 +141,22 @@ object NodeConfig {
     /** What a node said about itself: its chain id and latest height. */
     data class Probe(val chainId: String, val height: Long)
 
+    /** How far behind the wall clock a node's latest block may be (it is syncing or stalled past that). */
+    const val MAX_LAG_SECONDS = 10L * 60
+
     /**
-     * Asks [node] which chain it follows and how far it is, and refuses
-     * one that is not [Constants.EARTH_CHAIN_ID]. The RPC, when given, is
-     * checked the same way. On the caller's (IO) thread; throws with a
-     * message to show.
+     * Asks [node] which chain it follows and how far it is. Refused: a node
+     * that is not [Constants.EARTH_CHAIN_ID]; one whose block 1 is not the
+     * live chain's (an earlier earth-1 genesis or a fork under the same id;
+     * the hash is [Constants.EARTH_GENESIS_BLOCK_HASH], or Earth's own node's
+     * block 1 until that is set); one whose latest block is more than
+     * [MAX_LAG_SECONDS] old. The RPC, when given, is checked the same way.
+     * On the caller's (IO) thread; throws with a message to show.
      */
     fun probe(node: Node): Probe {
         problem(node.lcd)?.let { throw IllegalArgumentException("LCD: $it") }
         if (node.rpc.isNotEmpty()) problem(node.rpc)?.let { throw IllegalArgumentException("RPC: $it") }
-        val (code, body) = runCatching { EarthRest.getFrom(node.lcd, "/cosmos/base/tendermint/v1beta1/blocks/latest", allowLocal = true) }
-            .getOrElse { throw IllegalStateException("Could not reach the LCD: ${it.message ?: it.javaClass.simpleName}") }
-        if (code !in 200..299) throw IllegalStateException("The LCD answered $code.")
+        val body = lcdGet(node.lcd, "/cosmos/base/tendermint/v1beta1/blocks/latest", "the LCD")
         val header = runCatching {
             val j = JSONObject(body)
             (j.optJSONObject("sdk_block") ?: j.getJSONObject("block")).getJSONObject("header")
@@ -141,16 +164,59 @@ object NodeConfig {
         val chainId = header.optString("chain_id")
         if (chainId != Constants.EARTH_CHAIN_ID) throw IllegalStateException("That node follows \"$chainId\", not ${Constants.EARTH_CHAIN_ID}.")
         val height = header.optString("height").toLongOrNull() ?: throw IllegalStateException("The LCD did not say its latest height.")
+        checkLag("The LCD", RestPrivateChain.parseTime(header.optString("time")))
+        val expected = expectedGenesis()
+        val lcdGenesis = runCatching {
+            base64Hex(JSONObject(lcdGet(node.lcd, "/cosmos/base/tendermint/v1beta1/blocks/1", "the LCD")).getJSONObject("block_id").getString("hash"))
+        }.getOrNull() ?: throw IllegalStateException(NO_BLOCK_ONE)
+        if (lcdGenesis != expected) throw IllegalStateException(OTHER_GENESIS)
         if (node.rpc.isNotEmpty()) {
-            val (rc, rb) = runCatching { EarthRest.getFrom(node.rpc, "/status", allowLocal = true) }
-                .getOrElse { throw IllegalStateException("Could not reach the RPC: ${it.message ?: it.javaClass.simpleName}") }
-            if (rc !in 200..299) throw IllegalStateException("The RPC answered $rc.")
-            val network = runCatching {
-                val j = JSONObject(rb)
-                (j.optJSONObject("result") ?: j).getJSONObject("node_info").getString("network")
-            }.getOrElse { throw IllegalStateException("That does not look like a CometBFT RPC.") }
-            if (network != Constants.EARTH_CHAIN_ID) throw IllegalStateException("The RPC follows \"$network\", not ${Constants.EARTH_CHAIN_ID}.")
+            val status = runCatching { JSONObject(lcdGet(node.rpc, "/status", "the RPC")).let { it.optJSONObject("result") ?: it } }
+                .getOrElse { throw if (it is IllegalStateException) it else IllegalStateException("That does not look like a CometBFT RPC.") }
+            val net = status.optJSONObject("node_info")?.optString("network")
+                ?: throw IllegalStateException("That does not look like a CometBFT RPC.")
+            if (net != Constants.EARTH_CHAIN_ID) throw IllegalStateException("The RPC follows \"$net\", not ${Constants.EARTH_CHAIN_ID}.")
+            checkLag("The RPC", RestPrivateChain.parseTime(status.optJSONObject("sync_info")?.optString("latest_block_time").orEmpty()))
+            val rpcGenesis = runCatching {
+                JSONObject(lcdGet(node.rpc, "/block?height=1", "the RPC")).let { it.optJSONObject("result") ?: it }
+                    .getJSONObject("block_id").getString("hash").lowercase().takeIf { h -> h.length == 64 && h.all { c -> c in '0'..'9' || c in 'a'..'f' } }
+            }.getOrNull() ?: throw IllegalStateException(NO_BLOCK_ONE)
+            if (rpcGenesis != expected) throw IllegalStateException(OTHER_GENESIS)
         }
         return Probe(chainId, height)
     }
+
+    private const val NO_BLOCK_ONE = "That node does not serve block 1 (it was state-synced or prunes old blocks), so the wallet " +
+        "cannot tell which earth-1 it follows. Use a node that keeps the chain from its first block."
+    private const val OTHER_GENESIS = "That node follows another earth-1: its first block is not the live chain's " +
+        "(an earlier launch, or a fork). Point it at the live chain."
+
+    /** GET [path] from [base] (local http allowed for the probe); the body of a 2xx, else throws with a message. */
+    private fun lcdGet(base: String, path: String, what: String): String {
+        val (code, body) = runCatching { EarthRest.getFrom(base, path, allowLocal = true) }
+            .getOrElse { throw IllegalStateException("Could not reach $what: ${it.message ?: it.javaClass.simpleName}") }
+        if (code !in 200..299) throw IllegalStateException("${what.replaceFirstChar { it.uppercase() }} answered $code for $path.")
+        return body
+    }
+
+    private fun checkLag(what: String, time: Long) {
+        val now = System.currentTimeMillis() / 1000
+        if (time <= 0) throw IllegalStateException("$what did not say when its latest block was made.")
+        if (now - time > MAX_LAG_SECONDS) {
+            throw IllegalStateException("$what's latest block is ${(now - time) / 60} minutes old: it is still syncing or has stopped. Try again once it has caught up.")
+        }
+    }
+
+    /** The live chain's block 1 hash: pinned, or (until the pin is set) Earth's own node's. */
+    private fun expectedGenesis(): String {
+        if (Constants.EARTH_GENESIS_BLOCK_HASH.isNotEmpty()) return Constants.EARTH_GENESIS_BLOCK_HASH.lowercase()
+        return runCatching {
+            base64Hex(JSONObject(lcdGet(DEFAULT.lcd, "/cosmos/base/tendermint/v1beta1/blocks/1", "Earth's node")).getJSONObject("block_id").getString("hash"))
+        }.getOrNull() ?: throw IllegalStateException("Could not read the live chain's first block from Earth's node to compare with; try again.")
+    }
+
+    /** A 32-byte hash as base64 (the LCD's encoding), as 64 lowercase hex digits; null otherwise. */
+    private fun base64Hex(b64: String): String? =
+        b64.decodeBase64()?.toByteArray()
+            ?.takeIf { it.size == 32 }?.joinToString("") { "%02x".format(it.toInt() and 0xff) }
 }

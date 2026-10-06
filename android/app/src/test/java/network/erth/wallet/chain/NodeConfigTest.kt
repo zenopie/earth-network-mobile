@@ -31,6 +31,13 @@ class NodeConfigTest {
         }
     }
 
+    /** R2-MC-03: the rules iOS NodeSettings.isLocal applies, case for case. */
+    @Test
+    fun localRulesMatchIos() {
+        for (h in listOf("::ffff:192.168.1.5", "[::ffff:10.0.0.1]", "fec0::1", "fe80::1", "fc00::1")) assertTrue(h, NodeConfig.isLocal(h))
+        for (h in listOf("::ffff:8.8.8.8", "300.1.1.1", "192.168.1.256", "2001:db8::1", "::2")) assertFalse(h, NodeConfig.isLocal(h))
+    }
+
     @Test
     fun cleartextOnlyLocal() {
         assertNull(NodeConfig.problem("https://node.example.com"))
