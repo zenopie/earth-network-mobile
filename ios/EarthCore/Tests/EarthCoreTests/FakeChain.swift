@@ -109,6 +109,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var passportLastIdc: [String: Fr] = [:]
     /// Succession leaves: index -> (idc_old, idc_new).
     var successions: [UInt64: (Fr, Fr)] = [:]
+    /// current_date_max_skew_seconds (the default 48 h unless a test sets it).
+    var currentDateMaxSkew: Int64 = 172_800
     /// Each leaf's predecessor_at.
     var predecessorOf: [UInt64: Int64] = [:]
     /// Referral notes minted (handle, pc).
@@ -1326,7 +1328,7 @@ struct FakeReads: PrivacyChainReads, @unchecked Sendable {
 
     func personhoodParams() async throws -> PrivacyReads.PersonhoodParams {
         .init(caretakerVoteSeconds: chain.caretakerLease, identityRootWindowSeconds: 3_600, handleLeaseSeconds: chain.handleLease,
-              handleRenewalSeconds: chain.handleRenewal)
+              handleRenewalSeconds: chain.handleRenewal, currentDateMaxSkewSeconds: chain.currentDateMaxSkew)
     }
 
     func leaseBounds() async throws -> PrivacyReads.LeaseBounds { chain.leaseBounds() }

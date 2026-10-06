@@ -18,6 +18,18 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// switch must also be proven on a later date than the live registration
     /// (error 1128), so the wallet always proves on today's UTC date.
     public static let registrationSkewSeconds: Int64 = 172_800
+    /// The largest skew governance may set (x/personhood: a year) plus a
+    /// day: past it the chain refuses any current_date anyway.
+    public static let maxRegistrationSkewSeconds: Int64 = 366 * secondsPerDay
+
+    /// How long after its current_date a sent registration is kept as
+    /// possibly landing: the chain's current_date_max_skew_seconds as the
+    /// node reports it, never below the default 48 h (a shorter window only
+    /// means keeping longer than needed; a node that says nothing, or 0, gets
+    /// the default) and never above `maxRegistrationSkewSeconds`. As Android.
+    public static func keepSkew(_ param: Int64?) -> Int64 {
+        min(max(param ?? 0, registrationSkewSeconds), maxRegistrationSkewSeconds)
+    }
     /// MsgRegister's gas, for the fee estimate before simulating: the
     /// passport proof (3M) and DSC chain (300k), the fee bundle's two action
     /// proofs and note writes, and the tx's bytes.
@@ -659,6 +671,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// proof's: [current_date, address, nullifier, dsc_key].
     public func register(_ prep: RegistrationPrep, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data) async throws -> TxResult {
         let mx = await maxActions()
+        let skewParam = try? await reads.personhoodParams().currentDateMaxSkewSeconds
         let result: TxResult = try await locked {
             try require(publicSignals.count == 4, "a passport proof has four public signals")
             try require(try PrivateMsgs.decimalField(publicSignals[1]) == prep.binding, "the passport proof is bound to other notes")
@@ -669,7 +682,8 @@ public final class PrivacyWallet: @unchecked Sendable {
             // chain's skew, so this identity counts as possibly registered
             // until then.
             let proofDate = PrivateMsgs.calendarDateUnix(publicSignals[0])!
-            store.mutate { $0.registrationKeepUntil = max($0.registrationKeepUntil, Handles.satAdd(proofDate, Self.registrationSkewSeconds)) }
+            let skew = Self.keepSkew(skewParam)
+            store.mutate { $0.registrationKeepUntil = max($0.registrationKeepUntil, Handles.satAdd(proofDate, skew)) }
             try store.save()
             let dscKey = try PrivateMsgs.decimalField(publicSignals[3])
             let hint = Self.dscCountry(dscDer)

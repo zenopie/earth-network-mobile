@@ -154,6 +154,26 @@ final class RegistrationTests: PrivacyTestCase {
         XCTAssertNil(a.registrationMayLandUntil())
     }
 
+    /// The keep window is the chain's current_date_max_skew_seconds, read before the broadcast, never below 48 h.
+    func testTheKeepWindowFollowsTheChainsSkew() async throws {
+        XCTAssertEqual(PrivacyWallet.registrationSkewSeconds, PrivacyWallet.keepSkew(nil))
+        XCTAssertEqual(PrivacyWallet.registrationSkewSeconds, PrivacyWallet.keepSkew(0))
+        XCTAssertEqual(PrivacyWallet.registrationSkewSeconds, PrivacyWallet.keepSkew(3_600))
+        XCTAssertEqual(5 * 86_400, PrivacyWallet.keepSkew(5 * 86_400))
+        XCTAssertEqual(PrivacyWallet.maxRegistrationSkewSeconds, PrivacyWallet.keepSkew(.max))
+        let chain = FakeChain()
+        chain.currentDateMaxSkew = 5 * 86_400
+        let a = try wallet(chain)
+        let prep = try await a.prepareRegistration(referrer: nil)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
+        try await a.sync()
+        chain.failInBlockNext = 1
+        await assertThrowsAsync({
+            try await a.register(prep, proof: Data(count: 14_656), publicSignals: self.signals(prep, "1"), signatureAlgorithm: "lean_poa", dscDer: Data(count: 10))
+        })
+        XCTAssertEqual(1_790_812_800 + 5 * 86_400, a.registrationMayLandUntil())
+    }
+
     /// A claim for day 0 is refused, never an underflow trap.
     func testAClaimForDayZeroIsRefused() async throws {
         let chain = FakeChain()
