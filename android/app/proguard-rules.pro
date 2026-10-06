@@ -62,3 +62,14 @@
 -keepattributes *Annotation*,RuntimeVisibleAnnotations,RuntimeVisibleParameterAnnotations
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# --- Logging ----------------------------------------------------------------
+# Release builds carry no debug/info logging: whatever a library or a future
+# change logs at these levels (a passport field in an exception message,
+# say) never reaches logcat. Warnings and errors stay, and say only a type
+# or a code where the data could be personal.
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+}

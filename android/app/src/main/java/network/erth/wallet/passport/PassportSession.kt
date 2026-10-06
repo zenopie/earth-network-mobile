@@ -148,7 +148,7 @@ object PassportSession {
             Log.w(TAG, "unsupported passport: ${e.scheme}")
             Result.failure(FailureException(Failure.Unsupported(e.scheme)))
         } catch (e: PassportInputs.PassportDataException) {
-            Log.e(TAG, "passport data does not hold together: ${e.code}", e)
+            Log.e(TAG, "passport data does not hold together: ${e.code}")
             Result.failure(FailureException(Failure.BadData))
         } catch (e: AccessDeniedException) {
             // The chip refused the key, which in practice means a mistyped
@@ -159,10 +159,11 @@ object PassportSession {
             // authentication failed ... SW = 0x6985") names no "BAC", and a
             // refused key reported as Failure.Error would send the user back
             // to the chip instead of to the three fields they mistyped.
-            Log.e(TAG, "passport refused the access key", e)
+            // The type only: jmrtd's messages can quote the document number and dates.
+            Log.e(TAG, "passport refused the access key: ${e.javaClass.simpleName}")
             Result.failure(FailureException(Failure.WrongMrz))
         } catch (e: Exception) {
-            Log.e(TAG, "passport read failed", e)
+            Log.e(TAG, "passport read failed: ${e.javaClass.simpleName}")
             Result.failure(FailureException(Failure.Error(e)))
         } finally {
             // Every exit, not just the successful one. An abandoned session can

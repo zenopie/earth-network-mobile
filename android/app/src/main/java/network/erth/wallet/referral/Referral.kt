@@ -70,6 +70,14 @@ object Referral {
     /**
      * Pulls the referrer out of a verified App Link: exactly
      * `https://erth.network/ref/<handle>`. Nothing else names a referrer.
+     *
+     * Verification decides which app opens such a link, not who sends the
+     * intent: another installed app can start the (exported) launcher with
+     * one explicitly and win the first write, and nothing in the intent tells
+     * that apart from a tapped link. Accepted: any web page can do the same
+     * by getting the link tapped, the referrer is shown, editable and
+     * removable before registration, and what it earns is a share of the
+     * registration reward, never anything of the user's.
      */
     fun fromIntent(context: Context, intent: Intent?): Boolean {
         if (intent?.action != Intent.ACTION_VIEW) return false
