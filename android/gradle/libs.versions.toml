@@ -11,7 +11,6 @@ coroutines = "1.7.3"
 # modal sheet uses APIs that do not exist in earlier versions.
 compose = "1.10.4"
 compose-material3 = "1.4.0"
-compose-material-icons = "1.7.8"
 activity-compose = "1.10.1"
 lifecycle = "2.7.0"
 camera = "1.4.1"
@@ -27,12 +26,9 @@ kotlinx-collections-immutable = "org.jetbrains.kotlinx:kotlinx-collections-immut
 
 compose-ui = { module = "androidx.compose.ui:ui", version.ref = "compose" }
 compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics", version.ref = "compose" }
-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling", version.ref = "compose" }
-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview", version.ref = "compose" }
 compose-ui-text-google-fonts = { module = "androidx.compose.ui:ui-text-google-fonts", version.ref = "compose" }
 compose-foundation = { module = "androidx.compose.foundation:foundation", version.ref = "compose" }
 compose-material3 = { module = "androidx.compose.material3:material3", version.ref = "compose-material3" }
-compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended", version.ref = "compose-material-icons" }
 compose-shimmer = "com.valentinilk.shimmer:compose-shimmer:1.3.1"
 lottie-compose = "com.airbnb.android:lottie-compose:6.4.0"
 
@@ -64,7 +60,6 @@ zxing-core = "com.google.zxing:core:3.5.2"
 zxing-android-embedded = "com.journeyapps:zxing-android-embedded:4.3.0"
 mlkit-text-recognition = "com.google.android.gms:play-services-mlkit-text-recognition:19.0.1"
 play-app-update = "com.google.android.play:app-update:2.1.0"
-play-app-update-ktx = "com.google.android.play:app-update-ktx:2.1.0"
 installreferrer = "com.android.installreferrer:installreferrer:2.2"
 
 junit = "junit:junit:4.13.2"

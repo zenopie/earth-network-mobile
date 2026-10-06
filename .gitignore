@@ -24,6 +24,9 @@ out/
 build/
 **/build/
 
+# Kotlin compiler daemon session data
+.kotlin/
+
 # Local configuration (SDK path, etc.)
 local.properties
 
