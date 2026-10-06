@@ -43,11 +43,13 @@ final class StakeNoteTests: PrivacyTestCase {
         let nfs = chain.stakeNfValues.count
         _ = try await a.delegate(validator: vA, amount: 1_000_000); try await a.sync()
         let first = try XCTUnwrap(chain.lastMsg as? MsgShieldedDelegate)
-        // A padding input publishes its own nullifier: a first delegation looks like a top-up.
+        // A padding input publishes its own nullifier: a first delegation looks like a top-up,
+        // and slot 1 is always spent or padded, so a merge looks like a single spend.
         XCTAssertFalse(f(first.stake.nullifiers[0]).isZero)
-        XCTAssertTrue(f(first.stake.nullifiers[1]).isZero)
-        XCTAssertEqual(nfs + 1, chain.stakeNfValues.count)
-        XCTAssertTrue(chain.prover.allStakes.last!.ins[0].pad)
+        XCTAssertFalse(f(first.stake.nullifiers[1]).isZero)
+        XCTAssertNotEqual(f(first.stake.nullifiers[0]), f(first.stake.nullifiers[1]))
+        XCTAssertEqual(nfs + 2, chain.stakeNfValues.count)
+        XCTAssertTrue(chain.prover.allStakes.last!.ins.allSatisfy(\.pad))
         XCTAssertEqual(first.derth, at(a, vA)[0].amount)
         assertNamesTheDebt(chain, first.stake)
         // A second delegation spends the note and creates the merged one.
@@ -55,6 +57,8 @@ final class StakeNoteTests: PrivacyTestCase {
         _ = try await a.delegate(validator: vA, amount: 500_000); try await a.sync()
         let second = try XCTUnwrap(chain.lastMsg as? MsgShieldedDelegate)
         XCTAssertEqual(n.nf, f(second.stake.nullifiers[0]))
+        XCTAssertFalse(f(second.stake.nullifiers[1]).isZero)
+        XCTAssertTrue(chain.prover.allStakes.last!.ins[1].pad)
         XCTAssertEqual(1, at(a, vA).count)
         XCTAssertEqual(n.amount + second.derth, at(a, vA)[0].amount)
         XCTAssertTrue(a.stakeMergeable().isEmpty)

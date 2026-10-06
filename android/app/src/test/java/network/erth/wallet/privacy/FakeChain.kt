@@ -623,12 +623,12 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     private fun spent(p: StakeProof) = (p.nullifiersList + listOf(p.creditNullifier)).map(::f).filter { !it.isZero }
 
-    /** The chain's shape rule: a note-moving msg spends in its first slot and creates; a crediting one uses its credit lane; the rest are zero. */
+    /** The chain's shape rule: a note-moving msg spends (or pads) in both slots and creates; a crediting one uses its credit lane; the rest are zero. */
     private fun stakeShape(m: MessageLite, p: StakeProof) {
         val notes = m !is MsgUpdatePosition && m !is MsgPositionVote
         val credit = m is MsgRedelegate
         if (notes) {
-            require(!f(p.getNullifiers(0)).isZero) { "the stake proof spends a note (or pads with its own nullifier) in its first slot" }
+            require(!f(p.getNullifiers(0)).isZero && !f(p.getNullifiers(1)).isZero) { "the stake proof spends a note (or pads with its own nullifier) in both slots" }
             require(!f(p.commitment).isZero) { "the stake proof creates a note (the merged note, the change or a zero note)" }
         } else {
             require(f(p.getNullifiers(0)).isZero && f(p.getNullifiers(1)).isZero && f(p.commitment).isZero) { "the stake proof spends and creates nothing for this msg" }

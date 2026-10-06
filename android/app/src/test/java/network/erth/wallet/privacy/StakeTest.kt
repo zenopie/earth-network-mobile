@@ -13,6 +13,7 @@ import network.erth.wallet.privacy.zk.DebtTree
 import network.erth.wallet.privacy.zk.Fr
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -58,11 +59,13 @@ class StakeTest : WalletTest() {
         val nfs = chain.stakeNfValues.size
         a.delegate(vA, 1_000_000); a.sync()
         val first = chain.lastMsg as MsgDelegate
-        // A padding input publishes its own nullifier: a first delegation looks like a top-up.
+        // A padding input publishes its own nullifier: a first delegation looks like a top-up,
+        // and slot 1 is always spent or padded, so a merge looks like a single spend.
         assertFalse(f(first.stake.getNullifiers(0)).isZero)
-        assertTrue(f(first.stake.getNullifiers(1)).isZero)
-        assertEquals(nfs + 1, chain.stakeNfValues.size)
-        assertTrue(chain.prover.allStakes.last().ins[0].pad)
+        assertFalse(f(first.stake.getNullifiers(1)).isZero)
+        assertNotEquals(f(first.stake.getNullifiers(0)), f(first.stake.getNullifiers(1)))
+        assertEquals(nfs + 2, chain.stakeNfValues.size)
+        assertTrue(chain.prover.allStakes.last().ins.all { it.pad })
         assertEquals(first.derth, a.at(vA).single().amount)
         assertNamesTheDebt(chain, first.stake)
         // A second delegation spends the note and creates the merged one.
@@ -70,6 +73,8 @@ class StakeTest : WalletTest() {
         a.delegate(vA, 500_000); a.sync()
         val second = chain.lastMsg as MsgDelegate
         assertEquals(n.nf, f(second.stake.getNullifiers(0)))
+        assertFalse(f(second.stake.getNullifiers(1)).isZero)
+        assertTrue(chain.prover.allStakes.last().ins[1].pad)
         val merged = a.at(vA).single()
         assertEquals(n.amount + second.derth, merged.amount)
         assertTrue(a.stakeMergeable().isEmpty())

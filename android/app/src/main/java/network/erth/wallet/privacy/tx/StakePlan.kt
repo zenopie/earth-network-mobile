@@ -16,7 +16,7 @@ import network.erth.wallet.privacy.zk.Privacy
 
 /**
  * One stake proof laid out (circuits/stake v2, ORCHARD_DESIGN 4.1): lane A
- * spends up to two of this wallet's notes of [denom] (or pads its first slot)
+ * spends up to two of this wallet's notes of [denom] (padding the slots it does not fill)
  * and creates one note back to it (the merged note, the change, or a zero
  * note), crediting [vIn] and releasing [vOut]; the credit lane ([credit])
  * merges a redelegation's credit into the wallet's note at the destination.
@@ -111,8 +111,10 @@ class StakePlan(
     fun witness(sighash: Fr): StakeWitness {
         val ins = (0..1).map { i ->
             spends.getOrNull(i)?.let { n -> StakeIn(n.amount, n.rho, n.rcm, n.position, paths[i], n.label) }
-                // A note-moving msg pads its first slot when it spends nothing of ours.
-                ?: if (i == 0 && out != null && spends.isEmpty()) StakeIn.padding(noneIn[0].first, noneIn[0].second)
+                // A note-moving msg pads every slot it spends nothing of ours in:
+                // the chain requires both nullifiers, so a merge of two notes
+                // looks like a spend of one (ORCHARD_DESIGN 8.3).
+                ?: if (out != null) StakeIn.padding(noneIn[i].first, noneIn[i].second)
                 else StakeIn.none(noneIn[i].first, noneIn[i].second)
         }
         val c = credit

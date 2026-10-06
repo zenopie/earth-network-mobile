@@ -3,7 +3,7 @@ import Foundation
 
 /// One stake proof laid out (circuits/stake v2, ORCHARD_DESIGN 4.1). Ports
 /// `privacy/tx/StakePlan.kt`: lane A spends up to two of this wallet's notes
-/// of `denom` (or pads its first slot) and creates one note back to it (the
+/// of `denom` (padding the slots it does not fill) and creates one note back to it (the
 /// merged note, the change, or a zero note), crediting `vIn` and releasing
 /// `vOut`; the credit lane (`credit`) merges a redelegation's credit into the
 /// wallet's note at the destination. Everything the sighash binds (the
@@ -113,8 +113,10 @@ public struct StakePlan: Sendable {
                 let n = spends[i]
                 return try StakeIn(amount: n.amount, rho: n.rho, rcm: n.rcm, pos: n.position, path: paths[i], label: n.label)
             }
-            // A note-moving msg pads its first slot when it spends nothing of ours.
-            if i == 0 && out != nil && spends.isEmpty { return StakeIn.padding(rho: noneIn[0].0, rcm: noneIn[0].1) }
+            // A note-moving msg pads every slot it spends nothing of ours in:
+            // the chain requires both nullifiers, so a merge of two notes
+            // looks like a spend of one (ORCHARD_DESIGN 8.3).
+            if out != nil { return StakeIn.padding(rho: noneIn[i].0, rcm: noneIn[i].1) }
             return StakeIn.none(rho: noneIn[i].0, rcm: noneIn[i].1)
         }
         let crIn: StakeIn

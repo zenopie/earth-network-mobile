@@ -82,7 +82,7 @@ class StakeVoteFlowTest {
         val p = a.live().single { it.position != n.position }
         val s1 = chain.openProposal(1)
         val s2 = chain.openProposal(2)
-        assertEquals(2L, s1.nfSize) // the sentinel and the first delegation's padding nullifier
+        assertEquals(3L, s1.nfSize) // the sentinel and the first delegation's two padding nullifiers
         assertEquals(s1.nfRoot, s2.nfRoot)
         a.sync()
         return Scenario(chain, a, n, p)

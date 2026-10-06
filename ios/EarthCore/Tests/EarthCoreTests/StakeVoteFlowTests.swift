@@ -39,7 +39,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         let p = live(a).first { $0.position != n.position }!
         let s1 = chain.openProposal(1)
         let s2 = chain.openProposal(2)
-        XCTAssertEqual(2, s1.nfSize) // the sentinel and the first delegation's padding nullifier
+        XCTAssertEqual(3, s1.nfSize) // the sentinel and the first delegation's two padding nullifiers
         XCTAssertEqual(s1.nfRoot, s2.nfRoot)
         try await a.sync()
         return Scenario(chain: chain, a: a, n: n, p: p)

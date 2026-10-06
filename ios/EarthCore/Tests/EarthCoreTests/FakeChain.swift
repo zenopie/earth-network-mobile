@@ -584,12 +584,13 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     private func spent(_ p: StakeProof) throws -> [Fr] { try (p.nullifiers + [p.creditNullifier]).map(f).filter { !$0.isZero } }
 
-    /// The chain's shape rule: a note-moving msg spends in its first slot and creates; a crediting one uses its credit lane; the rest are zero.
+    /// The chain's shape rule: a note-moving msg spends (or pads) in both slots and creates; a crediting one uses its credit lane; the rest are zero.
     private func stakeShape(_ m: any PrivateMsg, _ p: StakeProof) throws {
         let notes = !(m is MsgUpdatePosition) && !(m is MsgPositionVote)
         let credit = m is MsgRedelegate
         if notes {
-            try need(!(try f(p.nullifiers[0])).isZero, "the stake proof spends a note (or pads with its own nullifier) in its first slot")
+            try need(!(try f(p.nullifiers[0])).isZero && !(try f(p.nullifiers[1])).isZero,
+                     "the stake proof spends a note (or pads with its own nullifier) in both slots")
             try need(!(try f(p.commitment)).isZero, "the stake proof creates a note (the merged note, the change or a zero note)")
         } else {
             try need((try f(p.nullifiers[0])).isZero && (try f(p.nullifiers[1])).isZero && (try f(p.commitment)).isZero,
