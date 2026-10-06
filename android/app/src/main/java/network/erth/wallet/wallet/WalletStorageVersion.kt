@@ -96,9 +96,11 @@ object WalletStorageVersion {
             }
 
         } catch (e: Exception) {
-            // No message: it can quote the storage it failed on.
+            // Neither the message nor the cause: a parser's error can quote the
+            // decrypted storage it failed on, mnemonics included, and callers
+            // log what they catch.
             Log.e(TAG, "Failed to parse wallet storage")
-            throw Exception("Invalid wallet storage format: ${e.message}", e)
+            throw Exception("Invalid wallet storage format")
         }
     }
 
@@ -133,54 +135,17 @@ object WalletStorageVersion {
             throw Exception("Wallet storage version ${oldStorage.version} is too old (minimum supported: $MIN_SUPPORTED_VERSION)")
         }
 
-        var currentStorage = oldStorage
+        val currentStorage = oldStorage
 
-        // Apply migrations step by step
+        // Apply migrations step by step (none yet: version 1 is the only one).
         for (targetVersion in (oldStorage.version + 1)..CURRENT_VERSION) {
-            currentStorage = when (targetVersion) {
-                2 -> migrateToV2(currentStorage)
-                3 -> migrateToV3(currentStorage)
-                // Add more migration functions as needed
-                else -> throw Exception("No migration available for version $targetVersion")
-            }
+            throw Exception("No migration available for version $targetVersion")
         }
 
         // Update metadata
         currentStorage.metadata.put(KEY_LAST_MIGRATION, System.currentTimeMillis())
 
         return currentStorage
-    }
-
-    /**
-     * Future migration example to version 2
-     * This is a placeholder for when you need to change the wallet format
-     */
-    @Throws(Exception::class)
-    private fun migrateToV2(storage: VersionedWalletStorage): VersionedWalletStorage {
-
-        // Example: Add a new field to each wallet
-        val migratedWallets = JSONArray()
-        for (i in 0 until storage.wallets.length()) {
-            val wallet = storage.wallets.getJSONObject(i)
-            // Add new fields or transform existing ones
-            // wallet.put("new_field", "default_value")
-            migratedWallets.put(wallet)
-        }
-
-        return storage.copy(
-            version = 2,
-            wallets = migratedWallets
-        )
-    }
-
-    /**
-     * Future migration example to version 3
-     */
-    @Throws(Exception::class)
-    private fun migrateToV3(storage: VersionedWalletStorage): VersionedWalletStorage {
-
-        // Example future migration logic
-        return storage.copy(version = 3)
     }
 
 }
