@@ -41,7 +41,8 @@ abstract class WalletTest {
         bounds: () -> PrivacyChainReads.LeaseBounds = chain::leaseBounds,
         due: (Long) -> Long? = { null },
     ) = object : PrivacyChainReads {
-        override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(chain.caretakerLease, 3_600, chain.handleLease, chain.handleRenewal)
+        override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(chain.caretakerLease, 3_600, chain.handleLease, chain.handleRenewal,
+            PrivacyWallet.keepSkew(chain.currentDateMaxSkew))
         override fun leaseBounds() = bounds()
         override fun ballotInputs(proposalId: Long, optionId: Long) =
             PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, 0, 0, chain.ballotMaxPredecessor())

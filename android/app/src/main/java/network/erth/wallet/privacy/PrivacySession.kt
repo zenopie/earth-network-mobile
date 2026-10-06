@@ -240,7 +240,8 @@ object PrivacySession {
 
     private object RestChainReads : PrivacyChainReads {
         override fun personhoodParams() = PrivacyQueries.personhoodParams().let {
-            PrivacyChainReads.PersonhoodParams(it.caretakerVoteSeconds, it.identityRootWindowSeconds, it.handleLeaseSeconds, it.handleRenewalSeconds)
+            PrivacyChainReads.PersonhoodParams(it.caretakerVoteSeconds, it.identityRootWindowSeconds, it.handleLeaseSeconds, it.handleRenewalSeconds,
+                PrivacyWallet.keepSkew(it.currentDateMaxSkewSeconds.takeIf { s -> s > 0 }))
         }
 
         override fun leaseBounds() = PrivacyQueries.leaseBounds()

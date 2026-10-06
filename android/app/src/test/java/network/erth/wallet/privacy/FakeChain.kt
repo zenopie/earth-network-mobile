@@ -159,6 +159,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     var caretakerLease = 30L * 86_400
     var handleLease = 365L * 86_400
     var handleRenewal = 30L * 86_400
+    /** current_date_max_skew_seconds (the default 48 h unless a test sets it). */
+    var currentDateMaxSkew = 172_800L
     /** The handle directory: handle -> (holder's nullifier, address, expires_at). */
     data class HandleRec(val handle: String, val nullifier: Fr, val address: String, val expiresAt: Long)
     val handles = java.util.TreeMap<String, HandleRec>()

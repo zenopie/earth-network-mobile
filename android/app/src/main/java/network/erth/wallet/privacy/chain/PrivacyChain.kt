@@ -77,6 +77,8 @@ object PrivacyQueries {
         val registrationValiditySeconds: Long,
         val handleLeaseSeconds: Long = network.erth.wallet.privacy.handles.Handles.DEFAULT_LEASE_SECONDS,
         val handleRenewalSeconds: Long = network.erth.wallet.privacy.handles.Handles.DEFAULT_RENEWAL_SECONDS,
+        /** current_date_max_skew_seconds (0: the node did not say). */
+        val currentDateMaxSkewSeconds: Long = 0,
     )
 
     fun personhoodParams(): PersonhoodParams {
@@ -91,6 +93,7 @@ object PrivacyQueries {
             registrationValiditySeconds = p.long("registration_validity_seconds"),
             handleLeaseSeconds = (p.long("handle_lease_seconds").takeIf { it > 0 } ?: network.erth.wallet.privacy.handles.Handles.DEFAULT_LEASE_SECONDS).coerceAtMost(max),
             handleRenewalSeconds = (p.long("handle_renewal_seconds").takeIf { it > 0 } ?: network.erth.wallet.privacy.handles.Handles.DEFAULT_RENEWAL_SECONDS).coerceAtMost(max),
+            currentDateMaxSkewSeconds = p.long("current_date_max_skew_seconds").coerceIn(0, max),
         )
     }
 

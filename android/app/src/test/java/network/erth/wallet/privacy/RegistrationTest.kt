@@ -168,4 +168,24 @@ class RegistrationTest : WalletTest() {
         chain.now = 1_790_812_800L + PrivacyWallet.REGISTRATION_SKEW_SECONDS + 1
         assertEquals(null, a.registrationMayLandUntil())
     }
+
+    /** The keep window is the chain's current_date_max_skew_seconds, read before the broadcast, never below 48 h. */
+    @Test
+    fun theKeepWindowFollowsTheChainsSkew() {
+        assertEquals(PrivacyWallet.REGISTRATION_SKEW_SECONDS, PrivacyWallet.keepSkew(null))
+        assertEquals(PrivacyWallet.REGISTRATION_SKEW_SECONDS, PrivacyWallet.keepSkew(0))
+        assertEquals(PrivacyWallet.REGISTRATION_SKEW_SECONDS, PrivacyWallet.keepSkew(3_600))
+        assertEquals(5 * 86_400L, PrivacyWallet.keepSkew(5 * 86_400L))
+        assertEquals(PrivacyWallet.MAX_REGISTRATION_SKEW_SECONDS, PrivacyWallet.keepSkew(Long.MAX_VALUE))
+        val chain = FakeChain()
+        chain.currentDateMaxSkew = 5 * 86_400L
+        val a = wallet(chain)
+        val prep = a.prepareRegistration(null)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
+        a.sync()
+        chain.failInBlockNext = 1
+        val sigs = listOf("261001", prep.binding.toBigInteger().toString(), "1", Fr.of(77).toBigInteger().toString())
+        assertThrows(java.io.IOException::class.java) { a.register(prep, ByteArray(14_656), sigs, "lean_poa", ByteArray(10)) }
+        assertEquals(1_790_812_800L + 5 * 86_400L, a.registrationMayLandUntil())
+    }
 }

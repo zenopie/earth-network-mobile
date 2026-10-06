@@ -77,6 +77,8 @@ interface PrivacyChainReads {
         val identityRootWindowSeconds: Long,
         val handleLeaseSeconds: Long = network.erth.wallet.privacy.handles.Handles.DEFAULT_LEASE_SECONDS,
         val handleRenewalSeconds: Long = network.erth.wallet.privacy.handles.Handles.DEFAULT_RENEWAL_SECONDS,
+        /** current_date_max_skew_seconds: how long a failed registration may still land after its current_date. */
+        val currentDateMaxSkewSeconds: Long = PrivacyWallet.REGISTRATION_SKEW_SECONDS,
     )
     data class BallotInputs(
         val scope: Fr,
@@ -687,8 +689,9 @@ class PrivacyWallet(
         // public and may still land while its current_date is in the chain's
         // skew, so this identity counts as possibly registered until then.
         val proofDate = PrivateMsgs.calendarDateUnix(publicSignals[0])!!
+        val skew = keepSkew(runCatching { reads.personhoodParams().currentDateMaxSkewSeconds }.getOrNull())
         synchronized(this) {
-            store.state.registrationKeepUntil = maxOf(store.state.registrationKeepUntil, Handles.satAdd(proofDate, REGISTRATION_SKEW_SECONDS))
+            store.state.registrationKeepUntil = maxOf(store.state.registrationKeepUntil, Handles.satAdd(proofDate, skew))
             store.save()
         }
         val dscKey = PrivateMsgs.decimalField(publicSignals[3])
@@ -2670,6 +2673,21 @@ class PrivacyWallet(
          * UTC date.
          */
         const val REGISTRATION_SKEW_SECONDS = 172_800L
+
+        /**
+         * The largest skew governance may set (x/personhood: a year) plus a
+         * day: past it the chain refuses any current_date anyway.
+         */
+        const val MAX_REGISTRATION_SKEW_SECONDS = 366L * SECONDS_PER_DAY
+
+        /**
+         * How long after its current_date a sent registration is kept as
+         * possibly landing: the chain's current_date_max_skew_seconds as the
+         * node reports it, never below the default 48 h (a shorter window
+         * only means keeping longer than needed; a node that says nothing, or
+         * 0, gets the default) and never above [MAX_REGISTRATION_SKEW_SECONDS].
+         */
+        fun keepSkew(param: Long?): Long = (param ?: 0L).coerceIn(REGISTRATION_SKEW_SECONDS, MAX_REGISTRATION_SKEW_SECONDS)
 
         fun notYetText(waitSeconds: Long): String =
             if (waitSeconds > 2 * SECONDS_PER_DAY) "this identity replaced another too recently for this action; it opens in ${waitSeconds / SECONDS_PER_DAY + 1} days"
