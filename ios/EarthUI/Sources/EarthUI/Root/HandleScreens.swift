@@ -79,7 +79,7 @@ struct HandleScreen: View {
                 Text("Couldn't read the handle directory: \(err)").font(EarthType.bodySmall).foregroundStyle(theme.colors.textError)
             }
             if movingOut {
-                note("A move of @\(model.handle) to another wallet was sent and is waiting for the chain. Check it on Switch identity.")
+                note("A move of @\(model.handle) to the identity that replaced this one was sent and is waiting for the chain. Check it on Identity in the new wallet.")
             }
             if model.incomingMoves.contains(where: { $0.kind == PendingMove.handleKind }) {
                 note("@\(model.handle) was moved here and is waiting for the chain to confirm the move.")
@@ -212,33 +212,27 @@ struct HandleScreen: View {
 
 /// A voluntary switch of identity: the same passport registered from another
 /// of this phone's wallets. The chain zeroes this wallet's leaf and makes a
-/// new one there. What this identity holds (its handle, its caretaker vote)
-/// can be moved to the new identity first, so it keeps them with no wait;
-/// otherwise the new identity waits until they lapse (up to a year).
+/// new one there. Once the switch has landed, the new identity can bring this
+/// one's handle and caretaker vote over (`MoveOfferCard`, on Identity in the
+/// new wallet): a move proves knowledge of both identities' secrets, so it
+/// comes after the switch and needs both recovery phrases on this phone.
 ///
-/// A move counts as done only once the chain confirmed it; the
-/// recovery phrase is shown after a fresh unlock and dropped when the app
+/// The recovery phrase is shown after a fresh unlock and dropped when the app
 /// leaves the foreground or the screen closes; the backup box needs the
-/// phrase shown first; the first move fixes the target.
+/// phrase shown first.
 struct SwitchIdentityScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
-    @Environment(TxController.self) private var tx
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var target: Int?
-    @State private var moveHandle = true
-    @State private var moveVote = true
     @State private var backedUp = false
     @State private var confirming = false
     @State private var phrase: String?
     @State private var revealedFor: Int?
     @State private var adding = false
     @State private var registering = false
-    @State private var frozenTarget: Int?
     @State private var targetWarning: String?
-
-    private var now: Int64 { Int64(Date().timeIntervalSince1970) }
 
     var body: some View {
         NavigationStack {
@@ -256,41 +250,21 @@ struct SwitchIdentityScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button(confirming ? "Cancel" : "Done") { if confirming { confirming = false } else { dismiss() } } } }
             .background(theme.colors.bgPrimary)
-            .task { model.loadWallets(); await model.refreshPersonal(); findFrozen() }
-            .onChange(of: model.switchTarget) { findFrozen() }
+            .task { model.loadWallets(); await model.refreshPersonal() }
             .onChange(of: scenePhase) { if scenePhase != .active { phrase = nil } }
             .onDisappear { phrase = nil }
             .sheet(isPresented: $adding) { AddWalletSheet(mode: .create).earthThemed() }
             .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
-            .overlay { TxOverlay(host: .switchIdentity) }
         }
-    }
-
-    private var handleInFlight: Bool { model.outgoingMoves.contains { $0.kind == PendingMove.handleKind && !$0.confirmed } }
-    private var voteInFlight: Bool { model.outgoingMoves.contains { $0.kind == PendingMove.caretakerKind && !$0.confirmed } }
-    private var inFlight: Bool { handleInFlight || voteInFlight }
-    private var unrecorded: Bool { model.outgoingMoves.contains { !$0.recorded } }
-    /// Only a live handle moves (not one in its renewal period).
-    private var handleInRenewal: Bool { model.handleEntry.map { $0.status(at: now) == HandleEntry.renewal } ?? false }
-    private var holdsHandle: Bool { !model.handle.isEmpty && !handleInFlight && !handleInRenewal }
-    private var holdsVote: Bool {
-        !voteInFlight && model.caretakerExpiresAt > now && (!(model.privacy?.snapshot.caretakerSplit.isEmpty ?? true) || model.caretakerSplitUnknown)
-    }
-
-    /// The wallet this identity's moves already went to, by store id.
-    private func findFrozen() {
-        let id = model.switchTarget
-        guard !id.isEmpty else { frozenTarget = nil; return }
-        frozenTarget = model.wallets.indices.first { model.switchTargetInfo(ofWallet: $0)?.storeID == id }
-        if let f = frozenTarget, target != f { pick(f) }
     }
 
     private func pick(_ index: Int) {
         target = index; phrase = nil; backedUp = false
-        guard let info = model.switchTargetInfo(ofWallet: index), info.storeID != model.switchTarget else { targetWarning = nil; return }
-        // What the wallet refuses to move there, said up front.
+        guard let info = model.switchTargetInfo(ofWallet: index) else { targetWarning = nil; return }
+        // What a move after the switch could not bring there, said up front.
         if info.handleRefusal != nil || info.voteRefusal != nil {
-            targetWarning = [info.handleRefusal.map { "Your handle cannot move there: \($0)." }, info.voteRefusal.map { "Your caretaker vote cannot move there: \($0)." }]
+            targetWarning = [info.handleRefusal.map { "Your handle cannot be brought there: \($0)." },
+                             info.voteRefusal.map { "Your caretaker vote cannot be brought there: \($0)." }]
                 .compactMap { $0 }.joined(separator: " ")
         } else {
             targetWarning = info.registered
@@ -299,14 +273,12 @@ struct SwitchIdentityScreen: View {
         }
     }
 
-    private func suffix(_ moved: Bool, _ flying: Bool) -> String { flying ? " (sent, waiting for the chain)" : moved ? " (moved)" : "" }
-
     private var form: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: theme.space.x12) {
-                Text("Switching moves your personhood to another wallet: register the same passport there and this wallet stops counting as you. Your handle and caretaker vote can move with you first, so the new identity keeps them at once. Anything not moved stays with this wallet until it lapses, and the new identity cannot claim a handle or cast a caretaker vote until then (up to a year).")
+                Text("Switching moves your personhood to another wallet: register the same passport there and this wallet stops counting as you. Once the switch lands, open Identity in the new wallet to bring your handle and caretaker vote over; each is a private move proven with both wallets' recovery phrases, which stay on this phone. Do it before switching again: a move goes only to the passport's live identity. Anything not moved stays with this wallet until it lapses, and the new identity cannot claim a handle or cast a caretaker vote until then (up to a year).")
                     .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
-                Text("If you ever lose a wallet, nothing it holds can be moved: a new identity waits out its handle and caretaker vote. Back up every wallet's recovery phrase.")
+                Text("A switch from a wallet whose recovery phrase is lost cannot move anything: the move needs that wallet's secret. Its handle and caretaker vote wait out their leases. Back up every wallet's recovery phrase.")
                     .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
                 EarthLabel("Switch to")
                 let others = model.wallets.enumerated().filter { $0.offset != model.selected }
@@ -324,44 +296,9 @@ struct SwitchIdentityScreen: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .disabled(frozenTarget != nil && frozenTarget != index)
-                }
-                if frozenTarget != nil {
-                    Text("This identity already moved to that wallet, so the switch goes there.").font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
                 }
                 if let targetWarning { Text(targetWarning).font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary) }
-                if frozenTarget == nil { EarthButton(title: "Create a new wallet", role: .secondary) { adding = true } }
-                if holdsHandle || handleInRenewal || holdsVote || inFlight || model.handleMovedOut || model.caretakerMovedOut {
-                    EarthLabel("Move first")
-                    if handleInRenewal && !handleInFlight {
-                        Text("@\(model.handle) is past its expiry (in its renewal period): only a live handle can be moved. Renew it first to move it.")
-                            .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
-                    }
-                    if holdsHandle || handleInFlight || model.handleMovedOut {
-                        let name = !model.handle.isEmpty ? model.handle : model.outgoingMoves.first { $0.kind == PendingMove.handleKind }?.handle ?? ""
-                        Toggle("Move " + (name.isEmpty ? "my handle" : "@\(name)") + suffix(model.handleMovedOut, handleInFlight),
-                               isOn: Binding(get: { moveHandle && holdsHandle }, set: { moveHandle = $0 }))
-                            .disabled(!holdsHandle)
-                    }
-                    if holdsVote || voteInFlight || model.caretakerMovedOut {
-                        Toggle("Move my caretaker vote" + suffix(model.caretakerMovedOut, voteInFlight),
-                               isOn: Binding(get: { moveVote && holdsVote }, set: { moveVote = $0 }))
-                            .disabled(!holdsVote)
-                    }
-                    Text("Each move is a private transaction with its own fee. Once moved, this identity can never hold one again.")
-                        .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
-                    if inFlight {
-                        Text("A move was sent but the chain has not confirmed it yet. Check again before switching; the new wallet already counts it as pending.")
-                            .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
-                    }
-                    if unrecorded {
-                        Text("The new wallet has not recorded a move yet. It finds it on its own when it syncs; you can also record it now.")
-                            .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
-                    }
-                    if inFlight || unrecorded {
-                        EarthButton(title: "Check the moves again", role: .secondary) { Task { await model.checkMoves() } }
-                    }
-                }
+                EarthButton(title: "Create a new wallet", role: .secondary) { adding = true }
                 if let phrase {
                     SeedGrid(words: phrase.split(separator: " ").map(String.init))
                     Text("Write these words down, in order, and keep them offline. Anyone with them controls that wallet.")
@@ -376,49 +313,74 @@ struct SwitchIdentityScreen: View {
                 Toggle(canTick ? "I have backed up the new wallet's recovery phrase" : "Show the new wallet's recovery phrase to confirm you have backed it up",
                        isOn: Binding(get: { backedUp && canTick }, set: { backedUp = $0 }))
                     .disabled(!canTick)
-                let ready = target != nil && backedUp && canTick && !inFlight
-                let pending = (holdsHandle && moveHandle) || (holdsVote && moveVote)
-                if pending {
-                    EarthButton(title: "Move to the new wallet") { move() }
-                        .disabled(!ready)
-                } else {
-                    EarthButton(title: "Switch: register there") {
-                        guard let t = target else { return }
-                        Task { await model.select(t); registering = true }
-                    }
-                    .disabled(!ready)
+                EarthButton(title: "Switch: register there") {
+                    guard let t = target else { return }
+                    Task { await model.select(t); registering = true }
                 }
+                .disabled(!(target != nil && backedUp && canTick))
             }
             .padding(theme.space.gutter)
         }
         .scrollContentBackground(.hidden)
     }
+}
 
-    /// Each move names the new wallet's nullifier in that scope, derived from
-    /// its keys on this phone, and is recorded in its store before the
-    /// broadcast. Shown as moved only once confirmed.
-    private func move() {
-        guard let t = target, let keys = try? model.privacyKeys(ofWallet: t) else { return }
-        let handle = model.handle
-        let recorder = model.moveRecorder(for: keys)
-        let doVote = holdsVote && moveVote
-        func moveVoteTx() {
-            tx.requestPrivate(.private(action: "Move caretaker vote to the new wallet", rows: []), host: .switchIdentity,
-                              onSuccess: { await model.syncPrivacy() }) { w in
-                try await w.moveCaretaker(newOwner: PrivacyWallet.newOwner(keys, scope: PrivacyHash.caretakerScope()), target: keys, recorder: recorder)
+/// After a switch has landed: what the identity this one replaced (another
+/// wallet on this phone, same passport) still holds, and a move for each.
+/// Each move is proven with both identities' secrets and paid from the
+/// previous wallet's private ERTH; it shows as done only once confirmed.
+struct MoveOfferCard: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+    @Environment(TxController.self) private var tx
+    let offer: AppModel.MoveOffer
+    /// Asked to read the offer again (after a move, or a check).
+    let refresh: () async -> Void
+
+    private var handleInFlight: Bool { offer.inFlight.contains { $0.kind == PendingMove.handleKind && !$0.confirmed } }
+    private var voteInFlight: Bool { offer.inFlight.contains { $0.kind == PendingMove.caretakerKind && !$0.confirmed } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.x12) {
+            EarthLabel("From your previous identity")
+            note("This identity replaced the one in \(offer.fromName). You can bring what it holds here with no wait, while this is still the passport's live identity. The fee comes from \(offer.fromName)'s private ERTH.")
+            if !offer.handle.isEmpty && !handleInFlight {
+                if offer.handleLive {
+                    EarthButton(title: "Bring your handle @\(offer.handle) to this identity") { bring(handle: true) }
+                } else {
+                    note("@\(offer.handle) is in its renewal period: only a live handle can move, and the old identity can no longer renew it.")
+                }
             }
+            if offer.voteLive && !voteInFlight {
+                EarthButton(title: "Bring your Caretaker split to this identity") { bring(handle: false) }
+            }
+            if !offer.inFlight.isEmpty {
+                note(handleInFlight || voteInFlight
+                     ? "A move was sent and the chain has not confirmed it yet; this identity already counts it as pending."
+                     : "A confirmed move has not been recorded in this wallet yet. It finds it on its own when it syncs; you can also record it now.")
+                EarthButton(title: "Check the moves again", role: .secondary) {
+                    Task { await model.checkMoves(from: offer.fromIndex); await refresh() }
+                }
+            }
+            note("Once moved, the previous identity can never hold a handle or caretaker vote again.")
         }
-        if holdsHandle && moveHandle {
-            // onSuccess runs only for a confirmed tx: the vote follows a handle move the chain confirmed.
-            tx.requestPrivate(.private(action: "Move @\(handle) to the new wallet", rows: []), host: .switchIdentity,
-                              onSuccess: {
-                                  await model.syncPrivacy()
-                                  if doVote { moveVoteTx() }
-                              }) { w in
-                try await w.moveHandle(newOwner: PrivacyWallet.newOwner(keys, scope: PrivacyHash.handleScope()), target: keys, recorder: recorder)
-            }
-        } else if doVote {
-            moveVoteTx()
+    }
+
+    private func note(_ s: String) -> some View { Text(s).font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary) }
+
+    /// Proven with both identities' secrets: this wallet's (the successor) and
+    /// the previous one's, which builds and pays for the tx; recorded in this
+    /// wallet's store before the broadcast.
+    private func bring(handle: Bool) {
+        let from = offer.fromIndex
+        var d = TxController.Details.private(action: handle ? "Bring @\(offer.handle) to this identity" : "Bring your Caretaker split to this identity", rows: [])
+        d.payerErth = offer.feeErth
+        tx.requestPrivate(d, host: .identity, onSuccess: { await model.syncPrivacy(); await refresh() }) { _ in
+            let to = try model.selfAsSuccessor()
+            let p = try model.predecessorWallet(from)
+            try await p.sync()
+            let rec = model.moveRecorder(for: to.keys)
+            return handle ? try await p.moveHandle(to: to, recorder: rec) : try await p.moveCaretaker(to: to, recorder: rec)
         }
     }
 }

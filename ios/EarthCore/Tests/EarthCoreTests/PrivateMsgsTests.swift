@@ -49,6 +49,11 @@ final class PrivateMsgsTests: XCTestCase {
         Membership(proof: Data([0xbe, 0xef, UInt8(truncatingIfNeeded: seed)]), root: fb(seed + 100), nullifier: fb(seed + 101))
     }
 
+    /// main.go moveProof.
+    func moveProof(_ seed: UInt64) -> MoveProof {
+        MoveProof(proof: Data([0x30, 0x7e, UInt8(truncatingIfNeeded: seed)]), root: fb(seed + 100), oldNullifier: fb(seed + 101), newNullifier: fb(seed + 102))
+    }
+
     let validator = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
     let opts = [WeightedVoteOption(option: WeightedVoteOption.yes, weight: "0.700000000000000000"),
                 WeightedVoteOption(option: WeightedVoteOption.no, weight: "0.300000000000000000")]
@@ -77,10 +82,10 @@ final class PrivateMsgsTests: XCTestCase {
         "claim_anml": MsgClaimAnmlPrivate(fee: fee(50, 2000), membership: membership(50), day: 20360, pc: fb(51), ciphertext: bct(51)),
         "set_caretaker": MsgSetCaretaker(fee: fee(60, 2000), membership: membership(60), percentages: [w(1, 60), w(7, 40)], maxPredecessor: 1_750_000_000),
         "set_caretaker_no_bound": MsgSetCaretaker(fee: fee(61, 2000), membership: membership(61), percentages: [w(2, 100)], maxPredecessor: PrivacyHash.noBound),
-        "move_caretaker": MsgMoveCaretaker(fee: fee(62, 2000), membership: membership(62), newOwner: fb(63)),
+        "move_caretaker": MsgMoveCaretaker(fee: fee(62, 2000), move: moveProof(62)),
         "bind_handle": MsgBindHandle(fee: fee(70, 2000), membership: membership(70), handle: "alice-01", address: zaddr, maxPredecessor: 1_750_000_000),
         "bind_handle_release": MsgBindHandle(fee: fee(71, 2000), membership: membership(71), handle: "", address: "", maxPredecessor: PrivacyHash.noBound),
-        "move_handle": MsgMoveHandle(fee: fee(72, 2000), membership: membership(72), handle: "alice-01", newOwner: fb(73)),
+        "move_handle": MsgMoveHandle(fee: fee(72, 2000), move: moveProof(72), handle: "alice-01"),
         "vote_proposal": MsgVoteProposalPrivate(fee: fee(80, 2000), membership: membership(80), proposalID: 5, option: .yes),
         "propose_removal": MsgProposeRemoval(fee: fee(81, 2000), membership: membership(81), optionID: 3),
         "vote_removal": MsgVoteRemoval(fee: fee(82, 2000), membership: membership(82), optionID: 3, option: .no),
@@ -203,6 +208,26 @@ final class PrivateMsgsTests: XCTestCase {
         XCTAssertEqual(8, ins.count)
         XCTAssertEqual(PrivacyHash.noBound, maxAct)
         XCTAssertEqual(ins, mine.map(\.hex))
+    }
+
+    /// The move proof's public inputs (8acf58f): root, scope, old_nullifier, new_nullifier, signal.
+    func testMovePublicInputsMatchTheChain() throws {
+        let v = Vectors.obj("move_public_inputs")
+        let ins = v["inputs"] as! [String]
+        func h(_ k: String) -> Fr { Vectors.fr(v[k] as! String) }
+        XCTAssertEqual(PrivacyHash.handleScope(), h("scope"))
+        let m = moveProof(72)
+        XCTAssertEqual(h("root").bytes, m.root)
+        XCTAssertEqual(h("old_nullifier").bytes, m.oldNullifier)
+        XCTAssertEqual(h("new_nullifier").bytes, m.newNullifier)
+        XCTAssertEqual(5, ins.count)
+        XCTAssertEqual(ins, [h("root"), h("scope"), h("old_nullifier"), h("new_nullifier"), h("signal")].map(\.hex))
+        // The witness lays them out the same way.
+        let z = [Fr](repeating: .zero, count: Merkle.depth)
+        let w = try MoveWitness(oldSecret: Vectors.fe(1), newSecret: Vectors.fe(2), successionIndex: 0, successionSiblings: z, dscKey: .zero, country: .zero,
+                                activatedAt: 0, predecessorAt: 0, leafIndex: 1, siblings: z, root: h("root"), scope: h("scope"), signal: h("signal"))
+        XCTAssertEqual([h("root"), h("scope"), PrivacyHash.scopeNullifier(idSecret: Vectors.fe(1), scope: h("scope")),
+                        PrivacyHash.scopeNullifier(idSecret: Vectors.fe(2), scope: h("scope")), h("signal")], w.publicInputs())
     }
 
     /// A bind's address must be canonical; a release binds Bytes(""), 0, Bytes("").

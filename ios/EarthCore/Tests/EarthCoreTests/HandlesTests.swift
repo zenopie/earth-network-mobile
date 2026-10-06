@@ -247,7 +247,7 @@ final class HandlesTests: PrivacyTestCase {
         chain.now += 86_400
         let c = try wallet(chain, carol)
         try await switched(chain, c, passport: "502")
-        chain.handles["bobby"]!.nullifier = PrivacyWallet.newOwner(c.keys, scope: PrivacyHash.handleScope())
+        chain.handles["bobby"]!.nullifier = PrivacyHash.scopeNullifier(idSecret: c.keys.idSecret, scope: PrivacyHash.handleScope())
         try await c.adoptMoved(handle: "bobby", split: nil, splitExpiresAt: 0)
         _ = await c.reconcileHandle(["bobby": try await entry(chain, "bobby")!], readAt: chain.now + 1)
         let cExp = await c.handleExpiresAt()
@@ -267,7 +267,7 @@ final class HandlesTests: PrivacyTestCase {
         XCTAssertEqual(sent, chain.txs.count)
         // ... and it cannot be moved either.
         do {
-            _ = try await c.moveHandle(newOwner: PrivacyWallet.newOwner(try PrivacyKeys.fromMnemonic(alice), scope: PrivacyHash.handleScope()))
+            _ = try await c.moveHandle(to: .init(keys: try PrivacyKeys.fromMnemonic(alice), identity: c.snapshot.identity!))
             XCTFail("moved a handle in its renewal period")
         } catch is PrivacyWallet.HandleNotMovable {}
         XCTAssertEqual(sent, chain.txs.count)
@@ -282,7 +282,7 @@ final class HandlesTests: PrivacyTestCase {
         chain.now += 86_400
         let c = try wallet(chain, carol)
         try await switched(chain, c, passport: "602")
-        chain.handles["bobby"]!.nullifier = PrivacyWallet.newOwner(c.keys, scope: PrivacyHash.handleScope())
+        chain.handles["bobby"]!.nullifier = PrivacyHash.scopeNullifier(idSecret: c.keys.idSecret, scope: PrivacyHash.handleScope())
         try await c.adoptMoved(handle: "bobby", split: nil, splitExpiresAt: 0)
         let exp = await c.handleExpiresAt()
         XCTAssertEqual(0, exp)
@@ -304,7 +304,7 @@ final class HandlesTests: PrivacyTestCase {
         // The split moved to c (as MsgMoveCaretaker would), then lapses unswept.
         let exp = chain.now + 3 * 86_400
         let nfB = PrivacyHash.scopeNullifier(idSecret: b.keys.idSecret, scope: PrivacyHash.caretakerScope())
-        let nfC = PrivacyWallet.newOwner(c.keys, scope: PrivacyHash.caretakerScope())
+        let nfC = PrivacyHash.scopeNullifier(idSecret: c.keys.idSecret, scope: PrivacyHash.caretakerScope())
         chain.caretakerVotes[nfC] = chain.caretakerVotes.removeValue(forKey: nfB)
         chain.caretakerExpiry.removeValue(forKey: nfB); chain.caretakerExpiry[nfC] = exp
         try await c.adoptMoved(handle: nil, split: [1: 100], splitExpiresAt: exp)

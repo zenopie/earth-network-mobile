@@ -140,6 +140,8 @@ struct IdentityScreen: View {
     @Environment(TxController.self) private var tx
     @Environment(\.dismiss) private var dismiss
     @State private var registering = false
+    /// After a switch: what the identity this one replaced can bring here (it syncs that wallet).
+    @State private var moveOffer: AppModel.MoveOffer?
 
     var body: some View {
         NavigationStack {
@@ -160,7 +162,10 @@ struct IdentityScreen: View {
                     if model.isRegistered {
                         EarthDetailRow(label: "Handle", value: model.handle.isEmpty ? "None" : "@\(model.handle)")
                         EarthButton(title: model.handle.isEmpty ? "Claim a handle" : "Manage @\(model.handle)", role: .secondary) { handleOpen = true }
-                        Text("Your registration stays with this wallet until it expires. To move it to another wallet, switch identity: your handle and caretaker vote move first, then you register the same passport there. Nothing is paid the second time. A passport can switch once per day (UTC).")
+                        if let moveOffer, moveOffer.anything {
+                            MoveOfferCard(offer: moveOffer) { self.moveOffer = await model.moveOffer() }
+                        }
+                        Text("Your registration stays with this wallet until it expires. To move it to another wallet, switch identity: register the same passport there, then bring your handle and caretaker vote over from the new wallet. Nothing is paid the second time. A passport can switch once per day (UTC).")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
                         EarthButton(title: "Switch identity", role: .secondary) { switching = true }
@@ -185,6 +190,7 @@ struct IdentityScreen: View {
             .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
             .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
             .sheet(isPresented: $switching) { SwitchIdentityScreen().earthThemed() }
+            .task(id: model.isRegistered) { moveOffer = model.isRegistered ? await model.moveOffer() : nil }
             // A sheet over the settings sheet, so the root's confirmation
             // would draw behind both. See TxController.Host.
             .overlay { TxOverlay(host: .identity) }

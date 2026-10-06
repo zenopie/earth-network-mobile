@@ -105,6 +105,10 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var handleAsks: [String] = []
     /// Passports ever registered: a re-registration's leaf has a predecessor (x/personhood PassportsSeen).
     var passportsSeen: Set<String> = []
+    /// Each passport's last registered idc (PassportsSeen's value): a registration to another appends a succession leaf.
+    var passportLastIdc: [String: Fr] = [:]
+    /// Succession leaves: index -> (idc_old, idc_new).
+    var successions: [UInt64: (Fr, Fr)] = [:]
     /// Each leaf's predecessor_at.
     var predecessorOf: [UInt64: Int64] = [:]
     /// Referral notes minted (handle, pc).
@@ -467,7 +471,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         if rejectNext > 0 {
             // The proofs made for it never reach the chain.
             rejectNext -= 1
-            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll()
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll()
             throw UnsignedTx.TxRejected(code: 19, log: "broadcast refused (test)")
         }
         let hash = UnsignedTx.hash(tx)
@@ -476,14 +480,14 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             dropNext -= 1
             _ = try check(tx, simulate: true)
             accepted(hash)
-            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll()
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll()
             throw URLError(.timedOut)
         }
         if failInBlockNext > 0 {
             failInBlockNext -= 1
             _ = try check(tx, simulate: true)
             accepted(hash)
-            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll()
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll()
             block()
             txs[hash] = TxResult(hash: hash, height: height - 1, time: now, events: [], code: 5, log: "failed in block (test)")
             throw Refused(why: "tx failed (code 5)")
@@ -567,9 +571,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try need(m.handle.isEmpty == m.address.isEmpty, "a bind names a handle and an address; a release neither")
             if !m.address.isEmpty { try need((try ShieldedAddress.decode(m.address)).encode() == m.address, "address not canonical") }
         case let m as MsgMoveHandle:
-            try only(nil); try need(m.newOwner != m.membership.nullifier, "new_owner is the prover")
+            try only(nil); try moveShape(m.move); try need(Handles.valid(m.handle), "handle")
         case let m as MsgMoveCaretaker:
-            try only(nil); try need(m.newOwner != m.membership.nullifier, "new_owner is the prover")
+            try only(nil); try moveShape(m.move)
         case let m as MsgClaimAnmlPrivate:
             try only(nil)
             try need(m.ciphertext.count == NoteCipher.blindCiphertextBytes, "claim ciphertext")
@@ -633,14 +637,6 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                 try predecessorBound(m.maxPredecessor, now - effectiveCaretakerLease - 86_400)
             }
             return (PrivacyHash.caretakerScope(), none, m.maxPredecessor)
-        case let m as MsgMoveCaretaker:
-            let n = try f(m.membership.nullifier)
-            guard let exp = caretakerExpiry[n] else { throw Refused(why: "the prover holds no caretaker split") }
-            try need(exp > now, "the prover's caretaker split has lapsed")
-            let o = try f(m.newOwner)
-            try need(caretakerVotes[o] == nil, "new_owner already holds a caretaker split")
-            try need(!caretakerMovedOut.contains(o), "this identity moved its caretaker split away (code 1126)")
-            return (PrivacyHash.caretakerScope(), none, none)
         case let m as MsgBindHandle:
             let n = try f(m.membership.nullifier)
             let holds = handleOf(n) != nil
@@ -655,16 +651,37 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                 try need(holds, "the prover holds no handle to release")
             }
             return (PrivacyHash.handleScope(), none, m.maxPredecessor)
-        case let m as MsgMoveHandle:
-            let n = try f(m.membership.nullifier)
-            try need(handles[m.handle]?.nullifier == n, "the prover does not hold \(m.handle)")
-            try need(now < handles[m.handle]!.expiresAt, "\"\(m.handle)\" is not live (renewal): renew it before moving it")
-            let o = try f(m.newOwner)
-            try need(handleOf(o) == nil, "new_owner already holds a handle")
-            try need(!handleMovedOut.contains(o), "this identity moved its handle away (code 1125)")
-            return (PrivacyHash.handleScope(), none, none)
         case let m as MsgProposeRemoval: return (PrivacyHash.proposeRemovalScope(optionID: m.optionID, day: day), none, day * 86_400 - 86_400)
         case let m as MsgVoteRemoval: return (PrivacyHash.removalScope(ballotID: removalBallots[m.optionID] ?? 0), none, ballotMaxPredecessor())
+        default: return nil
+        }
+    }
+
+    /// MoveProof.ValidateBasic: the proof's length, canonical fields, two distinct nullifiers.
+    private func moveShape(_ p: MoveProof) throws {
+        try need(p.proof.count == PrivateTxEngine.proofBytes, "a move proof is exactly \(PrivateTxEngine.proofBytes) bytes")
+        try need(p.root.count == 32 && p.oldNullifier.count == 32 && p.newNullifier.count == 32, "a move field is 32 bytes")
+        try need(p.oldNullifier != p.newNullifier, "old and new nullifier are the same")
+    }
+
+    /// A move's statement (x/personhood checkMoveHandle / checkMoveCaretaker):
+    /// the scope its msg fixes, after the holder and recipient checks.
+    private func moveStatement(_ m: any PrivateMsg) throws -> Fr? {
+        switch m {
+        case let m as MsgMoveCaretaker:
+            let n = try f(m.move.oldNullifier), o = try f(m.move.newNullifier)
+            guard let exp = caretakerExpiry[n] else { throw Refused(why: "old_nullifier holds no caretaker split") }
+            try need(exp > now, "old_nullifier's caretaker split has lapsed")
+            try need(caretakerVotes[o] == nil, "new_nullifier already holds a caretaker split")
+            try need(!caretakerMovedOut.contains(o), "this identity moved its caretaker split away (code 1126)")
+            return PrivacyHash.caretakerScope()
+        case let m as MsgMoveHandle:
+            let n = try f(m.move.oldNullifier), o = try f(m.move.newNullifier)
+            try need(handles[m.handle]?.nullifier == n, "old_nullifier does not hold \(m.handle)")
+            try need(now < handles[m.handle]!.expiresAt, "\"\(m.handle)\" is not live (renewal): renew it before moving it")
+            try need(handleOf(o) == nil, "new_nullifier already holds a handle")
+            try need(!handleMovedOut.contains(o), "this identity moved its handle away (code 1125)")
+            return PrivacyHash.handleScope()
         default: return nil
         }
     }
@@ -871,6 +888,20 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                 try need(w.publicInputs() == expect, "membership proof is for other public inputs")
             }
         }
+        if let mm = m as? any MoveMsg {
+            let mv = mm.move
+            try need(identityRoots.contains(try f(mv.root)), "unknown identity anchor")
+            let scope = try moveStatement(m)!
+            if !simulate {
+                guard !prover.moves.isEmpty else { throw Refused(why: "no move proof") }
+                let w = prover.moves.removeFirst()
+                let expect = [try f(mv.root), scope, try f(mv.oldNullifier), try f(mv.newNullifier), sighash]
+                try need(w.publicInputs() == expect, "invalid move proof (code 1129): it is for other public inputs")
+                // What the circuit proves of the tree: a succession leaf and the successor's live leaf at that root.
+                let (a, b) = (PrivacyHash.idc(w.oldSecret), PrivacyHash.idc(w.newSecret))
+                try need(successions.values.contains { $0.0 == a && $0.1 == b }, "invalid move proof (code 1129): not a succession")
+            }
+        }
         try precheck(m, rem)
         if simulate { return (m, []) }
         actionCounts.append(bundles.reduce(0) { $0 + $1.actions.count })
@@ -915,6 +946,12 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             predecessorOf[idx] = pred
             identityRows.append(IdentityRow(index: idx, height: height, leaf: identityTree.leaf(idx), zeroedHeight: nil, time: UInt64(now)))
             registeredIdc[idx] = idc; passportOf[idx] = m.publicSignals[2]
+            // The succession from the passport's last identity, right after the new leaf (never zeroed).
+            if let old = passportLastIdc.updateValue(idc, forKey: m.publicSignals[2]), old != idc {
+                let si = identityTree.append(PrivacyHash.successionLeaf(idcOld: old, idcNew: idc))
+                identityRows.append(IdentityRow(index: si, height: height, leaf: identityTree.leaf(si), zeroedHeight: nil, time: UInt64(now)))
+                successions[si] = (old, idc)
+            }
             mint("uanml", 1_000_000, try f(m.pcAnml), m.ciphertextAnml)
             if !switched {
                 mint("uerth", 5_000_000, try f(m.pcErth), m.ciphertextErth)
@@ -998,10 +1035,10 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             }
             events.append((type: "set_caretaker", attributes: ["expires_at": String(forgeCaretakerExpiry ?? caretakerExpiry[n] ?? 0)]))
         case let m as MsgMoveCaretaker:
-            let n = try f(m.membership.nullifier), o = try f(m.newOwner)
+            let n = try f(m.move.oldNullifier), o = try f(m.move.newNullifier)
             caretakerVotes[o] = caretakerVotes.removeValue(forKey: n); caretakerExpiry[o] = caretakerExpiry.removeValue(forKey: n)
             caretakerMovedOut.insert(n)
-            events.append((type: "move_caretaker", attributes: ["expires_at": String(caretakerExpiry[o] ?? 0)]))
+            events.append((type: "move_caretaker", attributes: ["nullifier": o.hex, "previous_nullifier": n.hex, "expires_at": String(caretakerExpiry[o] ?? 0)]))
         case let m as MsgBindHandle:
             let n = try f(m.membership.nullifier)
             let cur = handleOf(n)
@@ -1012,8 +1049,10 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                 events.append((type: "handle_bound", attributes: ["handle": m.handle, "expires_at": String(now + handleLease)]))
             }
         case let m as MsgMoveHandle:
-            handles[m.handle]!.nullifier = try f(m.newOwner)
-            handleMovedOut.insert(try f(m.membership.nullifier))
+            let n = try f(m.move.oldNullifier), o = try f(m.move.newNullifier)
+            handles[m.handle]!.nullifier = o
+            handleMovedOut.insert(n)
+            events.append((type: "handle_moved", attributes: ["handle": m.handle, "nullifier": o.hex, "owner": o.hex, "previous_owner": n.hex]))
         case let m as MsgProposeRemoval:
             removalBallots[m.optionID] = 100 + m.optionID
         case let m as MsgVoteRemoval:
@@ -1241,6 +1280,8 @@ final class CheckingProver: PrivacyProver, @unchecked Sendable {
     var allActions: [ActionWitness] = []
     var allStakes: [StakeWitness] = []
     var allMemberships: [MembershipWitness] = []
+    var moves: [MoveWitness] = []
+    var allMoves: [MoveWitness] = []
 
     func proveAction(_ w: ActionWitness) async throws -> Data {
         try w.check()
@@ -1260,6 +1301,12 @@ final class CheckingProver: PrivacyProver, @unchecked Sendable {
         try w.check()
         memberships.append(w); allMemberships.append(w)
         return Data(repeating: 2, count: PrivateTxEngine.proofBytes)
+    }
+
+    func proveMove(_ w: MoveWitness) async throws -> Data {
+        try w.check()
+        moves.append(w); allMoves.append(w)
+        return Data(repeating: 5, count: PrivateTxEngine.proofBytes)
     }
 
     func proveVote(_ w: VoteWitness) async throws -> Data {

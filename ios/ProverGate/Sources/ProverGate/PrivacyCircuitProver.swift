@@ -100,11 +100,13 @@ public enum SRS {
 /// own, and only the body is sent.
 public final class PrivacyCircuitProver: @unchecked Sendable {
     public enum Kind: String, CaseIterable, Sendable {
-        case membership, action, stake, vote
+        case membership, move, action, stake, vote
 
         public var publicInputs: Int {
             switch self {
             case .membership: 8
+            // root, scope, old_nullifier, new_nullifier, signal.
+            case .move: 5
             case .action: 6
             // anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root,
             // cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash.
@@ -142,7 +144,7 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
     public private(set) var lastMillis: [Kind: Int] = [:]
 
     /// - Parameters:
-    ///   - manifests: the compiled circuits (the app bundle's circuits/membership.json, action.json, stake.json, vote.json).
+    ///   - manifests: the compiled circuits (the app bundle's circuits/membership.json, move.json, action.json, stake.json, vote.json).
     ///   - reserve: the manifest whose SRS to provision first when nothing has
     ///     been yet — the largest passport circuit while a registration may
     ///     still follow in this launch (with the local transcript prefix

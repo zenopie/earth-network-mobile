@@ -115,7 +115,7 @@ struct TxConfirmSheet: View {
     private var funded: Bool {
         guard let needed = BigInt(details.feeUerth) else { return true }
         // A private action pays from shielded ERTH, not the account.
-        if details.shielded { return BigInt(model.shieldedErth) >= needed }
+        if details.shielded { return BigInt(details.payerErth ?? model.shieldedErth) >= needed }
         return model.balance(.erth) >= needed
     }
 }

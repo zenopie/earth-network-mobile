@@ -6,6 +6,7 @@ public protocol PrivacyProver: Sendable {
     func proveAction(_ w: ActionWitness) async throws -> Data
     func proveStake(_ w: StakeWitness) async throws -> Data
     func proveMembership(_ w: MembershipWitness) async throws -> Data
+    func proveMove(_ w: MoveWitness) async throws -> Data
     func proveVote(_ w: VoteWitness) async throws -> Data
 }
 
@@ -61,6 +62,26 @@ public struct MembershipWitnessSpec: Sendable {
     public func witness(signal: Fr) throws -> MembershipWitness { try make(signal) }
 }
 
+/// A move proof's statement, waiting for the sighash (its signal). The root
+/// and both nullifiers are fixed before it: the chain checks them before any
+/// proof, and a quote lays them out too.
+public struct MoveWitnessSpec: Sendable {
+    public let root: Fr
+    public let oldNullifier: Fr
+    public let newNullifier: Fr
+    let make: @Sendable (Fr) throws -> MoveWitness
+    public init(_ make: @escaping @Sendable (Fr) throws -> MoveWitness) throws {
+        let probe = try make(.zero)
+        self.root = probe.root; self.oldNullifier = probe.oldNullifier; self.newNullifier = probe.newNullifier
+        self.make = make
+    }
+    public func witness(signal: Fr) throws -> MoveWitness {
+        let w = try make(signal)
+        guard w.root == root, w.oldNullifier == oldNullifier, w.newNullifier == newNullifier else { throw PrivacyError("the move witness is for another statement") }
+        return w
+    }
+}
+
 /// A vote proof's statement, waiting for the sighash; `vnfs` (both slots:
 /// the notes' and the padding's, in the layout's order) are known before:
 /// the sighash binds them.
@@ -90,6 +111,9 @@ public struct Assembled {
     public let stake: StakePlan?
     public let membership: MembershipWitnessSpec?
     public let vote: VoteWitnessSpec?
+    /// A move proof's statement (MsgMoveHandle, MsgMoveCaretaker): the engine
+    /// sets the msg's MoveProof (root, nullifiers, proof) on the built msg.
+    public let move: MoveWitnessSpec?
     /// Gas declared beyond the simulation and its headroom: what the chain
     /// may charge by the tx's block that it did not when simulated (a move's
     /// pair reaching its entry cap: PrivacyWallet.redelegateHeadroom).
@@ -97,8 +121,9 @@ public struct Assembled {
     public let build: ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg
 
     public init(bundles: [BundlePlan], stake: StakePlan? = nil, membership: MembershipWitnessSpec? = nil, vote: VoteWitnessSpec? = nil,
-                extraGas: UInt64 = 0, build: @escaping ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg) {
-        self.bundles = bundles; self.stake = stake; self.membership = membership; self.vote = vote; self.extraGas = extraGas; self.build = build
+                move: MoveWitnessSpec? = nil, extraGas: UInt64 = 0, build: @escaping ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg) {
+        self.bundles = bundles; self.stake = stake; self.membership = membership; self.vote = vote; self.move = move; self.extraGas = extraGas
+        self.build = build
     }
 
     /// The pool notes the msg spends.
@@ -190,10 +215,17 @@ public struct PrivateTxEngine: Sendable {
     public static let voteGas: UInt64 = 2_250_000
     /// A membership proof and its nullifier write.
     public static let membershipGas: UInt64 = 2_150_000
-    /// MsgRegister: the passport proof (3,000,000), the DSC chain (300,000) and two minted notes.
-    public static let registerGas: UInt64 = 3_600_000
     /// One note write (x/shielded note_gas default).
     public static let noteGas: UInt64 = 150_000
+    /// MsgRegister: the passport proof (3,000,000), the DSC chain (300,000)
+    /// and six note-sized writes (the leaf, the minted notes, the records,
+    /// and the succession leaf a switch or re-entry appends).
+    public static let registerGas: UInt64 = 3_300_000 + 6 * noteGas
+    /// A move's writes beyond the one in `membershipGas` (a move proof costs
+    /// what a membership proof does): the chain prices MsgMoveHandle as four
+    /// note writes, MsgMoveCaretaker as six.
+    public static let moveHandleExtraGas: UInt64 = 3 * noteGas
+    public static let moveCaretakerExtraGas: UInt64 = 5 * noteGas
     /// MsgBindHandle's writes beyond the one in `membershipGas`: the chain
     /// prices a bind as nine note writes.
     public static let bindHandleExtraGas: UInt64 = 8 * noteGas
@@ -237,6 +269,7 @@ public struct PrivateTxEngine: Sendable {
             if !p.creditNullifier.allSatisfy({ $0 == 0 }) { g = g &+ creditGas &+ redelegateRecordGas }
         }
         if a.membership != nil { g = g &+ membershipGas }
+        if a.move != nil { g = g &+ membershipGas &+ (msg is MsgMoveCaretaker ? moveCaretakerExtraGas : moveHandleExtraGas) }
         if let v = a.vote { g = g &+ voteGas &+ (1 &+ UInt64(v.vnfs.count)) &* noteGas }
         if msg is MsgRegisterPrivate { g = g &+ registerGas }
         if msg is MsgBindHandle { g = g &+ bindHandleExtraGas }
@@ -318,6 +351,11 @@ public struct PrivateTxEngine: Sendable {
             let w = try v.witness(sighash: sighash)
             try w.check()
             msg = try Self.withVote(msg, vnfs: v.vnfs, proof: try Self.proofSized(try await prover.proveVote(w)))
+        }
+        if let mv = a.move {
+            let w = try mv.witness(signal: sighash)
+            try w.check()
+            msg = try Self.withMove(msg, proof: try Self.proofSized(try await prover.proveMove(w)), root: w.root, old: w.oldNullifier, new: w.newNullifier)
         }
         guard try msg.sighash(chainID: chainID, tx: tx) == sighash else { throw PrivacyError("the proven msg binds another sighash") }
         guard msg.totalFee == q.fee else { throw PrivacyError("the msg must pay exactly the quoted fee") }
@@ -431,7 +469,12 @@ public struct PrivateTxEngine: Sendable {
                 stake = p
             }
         }
-        let msg = try a.build(bundles, stake, try a.membership.map { try placeholderMembership($0, placeholders: placeholders) })
+        var msg = try a.build(bundles, stake, try a.membership.map { try placeholderMembership($0, placeholders: placeholders) })
+        if let mv = a.move {
+            // A quote's move nullifiers are random, as a membership's: the node learns nothing before the user confirms.
+            func nf(_ real: Fr) -> Fr { placeholders ? NotePlaintext.randomField() : real }
+            msg = try Self.withMove(msg, proof: Self.placeholder, root: mv.root, old: nf(mv.oldNullifier), new: nf(mv.newNullifier))
+        }
         // A quote's vote nullifiers are random too: the node learns nothing
         // of the notes before the user confirms.
         guard let v = a.vote else { return msg }
@@ -447,6 +490,15 @@ public struct PrivateTxEngine: Sendable {
         guard vnfs.count == MsgStakeVote.maxVoteNotes else { throw PrivacyError("a stake vote carries exactly \(MsgStakeVote.maxVoteNotes) vote nullifiers") }
         m.voteNullifiers = vnfs.map(\.bytes)
         m.proof = proof
+        return m
+    }
+
+    /// A move msg with its move proof's body, root and nullifiers set (the
+    /// sighash binds none of them: the proof binds the sighash, and the
+    /// nullifiers are its public inputs, which the chain lays out from the msg).
+    static func withMove(_ msg: any PrivateMsg, proof: Data, root: Fr, old: Fr, new: Fr) throws -> any PrivateMsg {
+        guard var m = msg as? any MoveMsg else { throw PrivacyError("not a move") }
+        m.move = MoveProof(proof: proof, root: root.bytes, oldNullifier: old.bytes, newNullifier: new.bytes)
         return m
     }
 

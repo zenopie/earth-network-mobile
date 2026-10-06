@@ -51,7 +51,7 @@ final class ZkVectorsTests: XCTestCase {
     func testTagsAssetsBytesCountry() {
         let tags = Vectors.obj("tags")
         let mine: [String: Fr] = [
-            "id": PrivacyHash.tagID, "owner": PrivacyHash.tagOwner, "leaf": PrivacyHash.tagLeaf, "sn": PrivacyHash.tagSN,
+            "id": PrivacyHash.tagID, "owner": PrivacyHash.tagOwner, "leaf": PrivacyHash.tagLeaf, "succ": PrivacyHash.tagSucc, "sn": PrivacyHash.tagSN,
             "pc": PrivacyHash.tagPC, "cm": PrivacyHash.tagCM, "nf": PrivacyHash.tagNF, "reg": PrivacyHash.tagReg,
             "asset": PrivacyHash.tagAsset, "signal": PrivacyHash.tagSignal, "bytes": PrivacyHash.tagBytes, "scope": PrivacyHash.tagScope, "affiliate": PrivacyHash.tagAffiliate, "referral": PrivacyHash.tagReferral,
             "stake": PrivacyHash.tagStake, "spc": PrivacyHash.tagSPC, "snf": PrivacyHash.tagSNF, "otag": PrivacyHash.tagOTag,
@@ -86,6 +86,8 @@ final class ZkVectorsTests: XCTestCase {
         // A switched or re-entered identity's leaf commits to predecessor_at.
         XCTAssertEqual(s("leaf_pred"), PrivacyHash.identityLeaf(idc: idc, dscKey: Vectors.fr(s("leaf_dsc")), country: PrivacyHash.countryField("DE"),
                                                                 activatedAt: 1_790_000_000, predecessorAt: 1_790_000_000).hex)
+        // The succession leaf a switch to another identity appends (circuits/move).
+        XCTAssertEqual(s("succession"), PrivacyHash.successionLeaf(idcOld: idc, idcNew: PrivacyHash.idc(Vectors.fr(s("succession_new_secret")))).hex)
         XCTAssertEqual(s("sn"), PrivacyHash.scopeNullifier(idSecret: idSecret, scope: PrivacyHash.claimScope(day: 20360)).hex)
         let pc = PrivacyHash.pc(ownerPK: opk, rho: rho, rcm: rcm)
         XCTAssertEqual(s("pc"), pc.hex)

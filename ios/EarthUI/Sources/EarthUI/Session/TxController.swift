@@ -43,6 +43,9 @@ public final class TxController {
         /// comes from simulating at confirm time), and the balance it is
         /// checked against is shielded ERTH, not the account's.
         public var shielded = false
+        /// The shielded ERTH that pays, when not this wallet's (a move after a
+        /// switch is paid by the identity it replaced); nil: this wallet's.
+        public var payerErth: UInt64?
 
         /// Set only for registration, whose free gas is a shielded note (pc and
         /// its required 177-byte v2 ciphertext) paid
@@ -119,8 +122,6 @@ public final class TxController {
         case notes
         /// The handle screen, another sheet over the settings sheet.
         case handle
-        /// The identity switch, a sheet over the identity screen.
-        case switchIdentity
     }
 
     public private(set) var host: Host = .root

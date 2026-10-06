@@ -920,39 +920,102 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// The nullifier `other`'s identity proves in `scope`: what a move names
-    /// as new_owner, H(TAG_SN, new_id_secret, scope). Computed from the
-    /// other wallet's keys on this phone; it says nothing about the passport.
-    public static func newOwner(_ other: PrivacyKeys, scope: Fr) -> Fr { PrivacyHash.scopeNullifier(idSecret: other.idSecret, scope: scope) }
+    /// The identity that succeeded this one under the same passport, on this
+    /// phone: another wallet's keys (derived from its recovery phrase) and its
+    /// registration as its own store records it. A move proves knowledge of
+    /// both identity secrets, so a wallet whose phrase is lost can move nothing.
+    public struct Successor: Sendable {
+        public let keys: PrivacyKeys
+        public let identity: IdentityRecord
+        public init(keys: PrivacyKeys, identity: IdentityRecord) { self.keys = keys; self.identity = identity }
+    }
 
-    /// Hands the live caretaker split (and its expiry) to `newOwner`, the
-    /// caretaker-scope nullifier of the identity that is to hold it: how a
-    /// switch of identity keeps its vote. This identity may never cast one
-    /// again (ErrCaretakerMovedOut, 1126).
-    public func moveCaretaker(newOwner: Fr, target: PrivacyKeys? = nil, recorder: MoveRecorder? = nil) async throws -> TxResult {
+    /// A move cannot be made to that identity (nothing was sent).
+    public struct MoveNotPossible: Swift.Error, LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
+
+    /// The local trees are behind what a move needs: sync, then try again.
+    public struct MoveSyncFirst: Swift.Error, LocalizedError {
+        public var errorDescription: String? { "This wallet has not synced the new identity's registration yet: sync, then try again." }
+    }
+
+    /// Where the succession leaf H(TAG_SUCC, `idcOld`, `idcNew`) sits in the
+    /// local identity tree, or nil. The chain appends it right after the new
+    /// identity's leaf (`near`), in the same tx; the rest of the tree is
+    /// searched only if it is not there. Local: nothing asked names it.
+    public func successionIndex(idcOld: Fr, idcNew: Fr, near: UInt64) async -> UInt64? {
+        await locked { successionIndexLocked(idcOld: idcOld, idcNew: idcNew, near: near) }
+    }
+
+    private func successionIndexLocked(idcOld: Fr, idcNew: Fr, near: UInt64) -> UInt64? {
+        let want = PrivacyHash.successionLeaf(idcOld: idcOld, idcNew: idcNew)
+        let tree = store.identityTree
+        if near < tree.size, tree.leaf(near) == want { return near }
+        var i = tree.size
+        while i > 0 { i -= 1; if tree.leaf(i) == want { return i } }
+        return nil
+    }
+
+    /// The move proof's statement in `scope` from this identity to `to`: the
+    /// succession leaf (this identity, `to`) and `to`'s live leaf, both under
+    /// the local tree's root (verified at the last sync, so one the chain
+    /// recorded; a move goes out within the root window of it).
+    private func moveStatement(scope: Fr, to: Successor) throws -> MoveWitnessSpec {
+        let id = to.identity
+        let newIdc = to.keys.idc
+        try require(newIdc != keys.idc, "a move goes to another identity")
+        let leaf = PrivacyHash.identityLeaf(idc: newIdc, dscKey: id.dscKey, country: id.country, activatedAt: id.activatedAt, predecessorAt: id.predecessorAt)
+        let tree = store.identityTree
+        guard id.leafIndex < tree.size else { throw MoveSyncFirst() }
+        let at = tree.leaf(id.leafIndex)
+        if at.isZero {
+            throw MoveNotPossible(message: "the new identity is no longer the passport's live one (it switched again or lapsed): a move goes only to the live successor")
+        }
+        guard at == leaf else { throw MoveNotPossible(message: "the new wallet's registration record does not match the identity tree; sync it, then try again") }
+        guard let si = successionIndexLocked(idcOld: keys.idc, idcNew: newIdc, near: id.leafIndex &+ 1) else {
+            throw MoveNotPossible(message: "that identity did not directly succeed this one under this passport: a move goes only to the identity the passport registered next")
+        }
+        let root = tree.root()
+        let sp = tree.path(si)
+        let lp = tree.path(id.leafIndex)
+        let oldSecret = keys.idSecret
+        let newSecret = to.keys.idSecret
+        return try MoveWitnessSpec { signal in
+            try MoveWitness(oldSecret: oldSecret, newSecret: newSecret, successionIndex: si, successionSiblings: sp, dscKey: id.dscKey,
+                            country: id.country, activatedAt: id.activatedAt, predecessorAt: id.predecessorAt, leafIndex: id.leafIndex,
+                            siblings: lp, root: root, scope: scope, signal: signal)
+        }
+    }
+
+    /// Hands the live caretaker split (and its expiry) to `to`, the identity
+    /// that succeeded this one under the same passport, once its registration
+    /// has landed and while it is still the passport's live one: how a switch
+    /// keeps its vote. This wallet pays the fee. This identity may never cast
+    /// one again (ErrCaretakerMovedOut, 1126).
+    public func moveCaretaker(to: Successor, recorder: MoveRecorder? = nil) async throws -> TxResult {
         let mx = await maxActions()
         let live = await caretakerLive()
         let exp = await caretakerExpiresAt()
         return try await locked {
             try require(live, "this identity holds no live caretaker vote to move")
-            try require(newOwner != PrivacyHash.scopeNullifier(idSecret: keys.idSecret, scope: PrivacyHash.caretakerScope()), "the new owner is this identity")
-            if let target { try require(newOwner == Self.newOwner(target, scope: PrivacyHash.caretakerScope()), "new_owner is not the target wallet's") }
             try checkNoMove(PendingMove.caretakerKind)
             let st = store.state
             let move = PendingMove(kind: PendingMove.caretakerKind, txHash: "", timeoutHeight: 0, incoming: false, split: st.caretakerSplit,
                                    splitUnknown: st.caretakerSplitUnknown, expiresAt: exp, target: recorder?.targetID ?? "")
             // State records: moved out for this identity, held (split, expiry) for the new one.
-            var outs = [try stateRecord(keys) { WalletSync.caretakerMemo(nk: $0, kind: WalletSync.recordMovedOut) }]
-            if let target {
-                outs.append(try stateRecord(target) {
+            let outs = [
+                try stateRecord(keys) { WalletSync.caretakerMemo(nk: $0, kind: WalletSync.recordMovedOut) },
+                try stateRecord(to.keys) {
                     WalletSync.caretakerMemo(nk: $0, kind: WalletSync.recordHolds, expiresAt: move.expiresAt, split: move.splitUnknown ? [:] : move.split)
-                })
-            }
-            let m = try membership(scope: PrivacyHash.caretakerScope(), excludedDsc: .zero, excludedCountry: .zero,
-                                   maxActivation: PrivacyHash.noBound, maxPredecessor: PrivacyHash.noBound)
+                },
+            ]
+            let mv = try moveStatement(scope: PrivacyHash.caretakerScope(), to: to)
+            let placeholder = MoveProof(proof: Data(), root: Data(), oldNullifier: Data(), newNullifier: Data())
             let r = try await moveRun(move, recorder) { fee in
-                Assembled(bundles: [try self.bundle(outs, release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
-                    MsgMoveCaretaker(fee: bs[0], membership: mem!, newOwner: newOwner.bytes)
+                Assembled(bundles: [try self.bundle(outs, release: [Self.fee: fee], maxActions: mx)], move: mv) { bs, _, _ in
+                    MsgMoveCaretaker(fee: bs[0], move: placeholder)
                 }
             }
             confirmMove(r.hash)
@@ -1245,17 +1308,15 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// Hands this identity's handle (lease unchanged) to `newOwner`, the
-    /// handle-scope nullifier of the identity that is to hold it. This
+    /// Hands this identity's handle (lease unchanged) to `to`, the identity
+    /// that succeeded it under the same passport (see `moveCaretaker`). This
     /// identity may never claim one again (ErrHandleMovedOut, 1125).
-    public func moveHandle(newOwner: Fr, target: PrivacyKeys? = nil, recorder: MoveRecorder? = nil) async throws -> TxResult {
+    public func moveHandle(to: Successor, recorder: MoveRecorder? = nil) async throws -> TxResult {
         let mx = await maxActions()
         let t = await chainNow()
         return try await locked {
             let handle = store.state.handle
             try require(!handle.isEmpty, "this identity holds no handle to move")
-            try require(newOwner != PrivacyHash.scopeNullifier(idSecret: keys.idSecret, scope: PrivacyHash.handleScope()), "the new owner is this identity")
-            if let target { try require(newOwner == Self.newOwner(target, scope: PrivacyHash.handleScope()), "new_owner is not the target wallet's") }
             try checkNoMove(PendingMove.handleKind)
             // MsgMoveHandle refuses a handle that is not live (its renewal period).
             let exp = handleExpiresAtLocked()
@@ -1263,13 +1324,15 @@ public final class PrivacyWallet: @unchecked Sendable {
             let move = PendingMove(kind: PendingMove.handleKind, txHash: "", timeoutHeight: 0, incoming: false, handle: handle,
                                    target: recorder?.targetID ?? "")
             // State records: moved out for this identity, held for the new one.
-            var outs = [try stateRecord(keys) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordMovedOut) }]
-            if let target { outs.append(try stateRecord(target) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordHolds, handle: handle) }) }
-            let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
-                                   maxActivation: PrivacyHash.noBound, maxPredecessor: PrivacyHash.noBound)
+            let outs = [
+                try stateRecord(keys) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordMovedOut) },
+                try stateRecord(to.keys) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordHolds, handle: handle) },
+            ]
+            let mv = try moveStatement(scope: PrivacyHash.handleScope(), to: to)
+            let placeholder = MoveProof(proof: Data(), root: Data(), oldNullifier: Data(), newNullifier: Data())
             let r = try await moveRun(move, recorder) { fee in
-                Assembled(bundles: [try self.bundle(outs, release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
-                    MsgMoveHandle(fee: bs[0], membership: mem!, handle: handle, newOwner: newOwner.bytes)
+                Assembled(bundles: [try self.bundle(outs, release: [Self.fee: fee], maxActions: mx)], move: mv) { bs, _, _ in
+                    MsgMoveHandle(fee: bs[0], move: placeholder, handle: handle)
                 }
             }
             confirmMove(r.hash)

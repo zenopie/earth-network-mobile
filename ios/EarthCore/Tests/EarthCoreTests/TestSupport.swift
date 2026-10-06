@@ -114,6 +114,7 @@ class PrivacyTestCase: XCTestCase {
         for (i, w) in chain.prover.allStakes.enumerated() { write("stake", i, w.proverToml()) }
         for (i, w) in chain.prover.allVotes.enumerated() { write("vote", i, w.proverToml()) }
         for (i, w) in chain.prover.allMemberships.enumerated() { write("membership", i, w.proverToml()) }
+        for (i, w) in chain.prover.allMoves.enumerated() { write("move", i, w.proverToml()) }
     }
 }
 

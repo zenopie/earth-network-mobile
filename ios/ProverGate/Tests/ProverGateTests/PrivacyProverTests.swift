@@ -94,13 +94,17 @@ final class PrivacyProverTests: XCTestCase {
     }
 
     func testMembership() throws { try check(.membership, fixture: "fixture_membership") }
+    /// A move along a succession leaf (the wallet's own witness: the chain has
+    /// no move fixture tool; HandlesTest.theNewIdentityBringsTheHandle... wrote
+    /// it): proved, verified, and its VK the genesis move key.
+    func testMove() throws { try check(.move, fixture: "fixture_move") }
     func testAction() throws {
         for i in 0 ..< 3 { try check(.action, fixture: "fixture_action/action_\(i)") }
     }
 
     /// With PRIVACY_TOML_DIR set to EarthCore's dumped wallet witnesses
     /// (WalletFlowTests with PRIVACY_TOML_OUT: <dir>/{action,stake,
-    /// membership,vote}/<test>_<i>/Prover.toml), proves every one (or the first
+    /// membership,move,vote}/<test>_<i>/Prover.toml), proves every one (or the first
     /// PRIVACY_TOML_LIMIT of each kind) through this prover and verifies it
     /// with the genesis-equal VK. The stake circuit has no chain fixture, so
     /// this is where a stake proof is made and checked.
@@ -114,10 +118,11 @@ final class PrivacyProverTests: XCTestCase {
             .stake: ["anchor", "asset", "nf_0", "nf_1", "cm_out", "v_in", "v_out", "clear_before", "debt_root", "cr_asset", "cr_nf", "cr_cm",
                      "cr_v_in", "cr_move_time", "otag", "sighash"],
             .membership: ["root", "scope", "nullifier", "signal", "excluded_dsc", "excluded_country", "max_activation", "max_predecessor"],
+            .move: ["root", "scope", "old_nullifier", "new_nullifier", "signal"],
             .vote: ["note_root", "nf_root", "debt_root", "asset", "weight", "proposal_id", "vnf", "sighash"],  // vnf: two slots
         ]
         var proved = 0
-        for kind in [PrivacyCircuitProver.Kind.stake, .action, .membership, .vote] {
+        for kind in [PrivacyCircuitProver.Kind.stake, .action, .membership, .move, .vote] {
             let kdir = URL(fileURLWithPath: dir).appendingPathComponent(kind.rawValue)
             let cases = ((try? FileManager.default.contentsOfDirectory(atPath: kdir.path)) ?? []).sorted().prefix(limit)
             for c in cases {

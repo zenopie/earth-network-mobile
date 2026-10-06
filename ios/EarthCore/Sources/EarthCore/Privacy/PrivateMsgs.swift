@@ -175,6 +175,37 @@ public struct Membership: ProtoMessage, Equatable, Sendable {
     }
 }
 
+/// earth.personhood.v1.MoveProof: a move circuit proof (circuits/move). Its
+/// prover knows the identity secrets of an identity and of the identity that
+/// succeeded it under the same passport (the chain's succession leaf
+/// H(TAG_SUCC, idc_old, idc_new) and the successor's live identity leaf are
+/// both in the tree at root). Public inputs, in order: root, scope (the
+/// msg's), old_nullifier, new_nullifier, signal (the msg's sighash).
+public struct MoveProof: ProtoMessage, Equatable, Sendable {
+    public var proof: Data
+    public var root: Data
+    public var oldNullifier: Data
+    public var newNullifier: Data
+
+    public init(proof: Data, root: Data, oldNullifier: Data, newNullifier: Data) {
+        self.proof = proof; self.root = root; self.oldNullifier = oldNullifier; self.newNullifier = newNullifier
+    }
+
+    public func encoded() -> Data {
+        var w = ProtoWriter()
+        w.bytes(1, proof)
+        w.bytes(2, root)
+        w.bytes(3, oldNullifier)
+        w.bytes(4, newNullifier)
+        return w.data
+    }
+
+    public static func decode(_ d: Data) throws -> MoveProof {
+        let f = try ProtoFields(d)
+        return MoveProof(proof: f.bytes(1), root: f.bytes(2), oldNullifier: f.bytes(3), newNullifier: f.bytes(4))
+    }
+}
+
 /// cosmos.gov.v1.WeightedVoteOption. `option` is cosmos.gov.v1.VoteOption
 /// (1 yes, 2 abstain, 3 no, 4 no with veto); `weight` a decimal in (0, 1].
 public struct WeightedVoteOption: ProtoMessage, Equatable, Sendable {
@@ -668,16 +699,17 @@ public struct MsgSetCaretaker: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public func sighashFields() throws -> [Fr] { percentages.flatMap { [PrivateMsgs.u($0.optionID), PrivateMsgs.u($0.percent)] } }
 }
 
-/// Hands the prover's live caretaker split to new_owner, the caretaker-scope
-/// nullifier of the identity that is to hold it. sighash fields: new_owner.
+/// Hands the live caretaker split of move.old_nullifier, percentages and
+/// expiry unchanged, to move.new_nullifier, its successor under the same
+/// passport, in the caretaker scope. sighash fields: none beyond the fee
+/// bundle's (the move proof binds the sighash).
 public struct MsgMoveCaretaker: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public static let typeURL = "/earth.personhood.v1.MsgMoveCaretaker"
     public var fee: ShieldedBundle
-    public var membership: Membership
-    public var newOwner: Data
+    public var move: MoveProof
 
-    public init(fee: ShieldedBundle, membership: Membership, newOwner: Data) {
-        self.fee = fee; self.membership = membership; self.newOwner = newOwner
+    public init(fee: ShieldedBundle, move: MoveProof) {
+        self.fee = fee; self.move = move
     }
 
     public var feeBundle: ShieldedBundle { fee }
@@ -685,17 +717,16 @@ public struct MsgMoveCaretaker: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public func encoded() -> Data {
         var w = ProtoWriter()
         w.message(1, fee)
-        w.message(2, membership)
-        w.bytes(3, newOwner)
+        w.message(2, move)
         return w.data
     }
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode), newOwner: f.bytes(3))
+        return Self(fee: try f.message(1, ShieldedBundle.decode), move: try f.message(2, MoveProof.decode))
     }
 
-    public func sighashFields() throws -> [Fr] { [try PrivateMsgs.f(newOwner)] }
+    public func sighashFields() throws -> [Fr] { [] }
 }
 
 /// Claims, renews, changes or (both empty) releases the prover's handle.
@@ -743,17 +774,17 @@ public struct MsgBindHandle: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     }
 }
 
-/// Hands the prover's handle to new_owner, the handle-scope nullifier of the
-/// identity that is to hold it. sighash fields: Bytes(handle), new_owner.
+/// Hands a live handle, lease unchanged, from move.old_nullifier to
+/// move.new_nullifier, its successor under the same passport, in the handle
+/// scope. sighash fields: Bytes(handle).
 public struct MsgMoveHandle: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public static let typeURL = "/earth.personhood.v1.MsgMoveHandle"
     public var fee: ShieldedBundle
-    public var membership: Membership
+    public var move: MoveProof
     public var handle: String
-    public var newOwner: Data
 
-    public init(fee: ShieldedBundle, membership: Membership, handle: String, newOwner: Data) {
-        self.fee = fee; self.membership = membership; self.handle = handle; self.newOwner = newOwner
+    public init(fee: ShieldedBundle, move: MoveProof, handle: String) {
+        self.fee = fee; self.move = move; self.handle = handle
     }
 
     public var feeBundle: ShieldedBundle { fee }
@@ -761,19 +792,17 @@ public struct MsgMoveHandle: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public func encoded() -> Data {
         var w = ProtoWriter()
         w.message(1, fee)
-        w.message(2, membership)
+        w.message(2, move)
         w.string(3, handle)
-        w.bytes(4, newOwner)
         return w.data
     }
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode),
-                    handle: f.string(3), newOwner: f.bytes(4))
+        return Self(fee: try f.message(1, ShieldedBundle.decode), move: try f.message(2, MoveProof.decode), handle: f.string(3))
     }
 
-    public func sighashFields() throws -> [Fr] { [PrivateMsgs.bytes(handle), try PrivateMsgs.f(newOwner)] }
+    public func sighashFields() throws -> [Fr] { [PrivateMsgs.bytes(handle)] }
 }
 
 public struct MsgVoteProposalPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
@@ -873,12 +902,18 @@ public protocol MembershipMsg: PrivateMsg {
 
 extension MsgClaimAnmlPrivate: MembershipMsg {}
 extension MsgSetCaretaker: MembershipMsg {}
-extension MsgMoveCaretaker: MembershipMsg {}
 extension MsgBindHandle: MembershipMsg {}
-extension MsgMoveHandle: MembershipMsg {}
 extension MsgVoteProposalPrivate: MembershipMsg {}
 extension MsgProposeRemoval: MembershipMsg {}
 extension MsgVoteRemoval: MembershipMsg {}
+
+/// A move msg: its move proof, set by the engine once proven.
+public protocol MoveMsg: PrivateMsg {
+    var move: MoveProof { get set }
+}
+
+extension MsgMoveCaretaker: MoveMsg {}
+extension MsgMoveHandle: MoveMsg {}
 
 // MARK: - x/shieldedstaking
 

@@ -11,6 +11,8 @@ public enum PrivacyHash {
     public static let tagOwner = tag("earth.owner")
     public static let tagLeaf = tag("earth.leaf")
     public static let tagSN = tag("earth.sn")
+    // The identity tree's succession leaf (circuits/move): the chain's record that one identity succeeded another under one passport.
+    public static let tagSucc = tag("earth.succ")
     public static let tagPC = tag("earth.pc")
     public static let tagCM = tag("earth.cm")
     public static let tagNF = tag("earth.nf")
@@ -60,6 +62,12 @@ public enum PrivacyHash {
     public static func identityLeaf(idc: Fr, dscKey: Fr, country: Fr, activatedAt: UInt64, predecessorAt: UInt64) -> Fr {
         h(tagLeaf, idc, dscKey, country, u64(activatedAt), u64(predecessorAt))
     }
+
+    /// H(TAG_SUCC, idc_old, idc_new): the leaf the chain appends right after
+    /// idc_new's identity leaf when a passport last registered to idc_old
+    /// registers to idc_new (a switch, or a re-entry). Never zeroed; a move
+    /// proof (circuits/move) shows one.
+    public static func successionLeaf(idcOld: Fr, idcNew: Fr) -> Fr { h(tagSucc, idcOld, idcNew) }
 
     /// ISO 3166-1 alpha-2 as two big-endian ASCII bytes; anything else is 0 (unknown).
     public static func countryField(_ cc: String) -> Fr {

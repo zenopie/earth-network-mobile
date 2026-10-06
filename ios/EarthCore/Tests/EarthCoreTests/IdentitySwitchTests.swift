@@ -3,12 +3,31 @@ import Foundation
 import XCTest
 @testable import EarthCore
 
-/// Switching identity to another wallet: the handle and caretaker vote move
-/// first, each move recorded in both wallets before its broadcast and
-/// settled only by the chain's word, the target fixed only by a confirmed
-/// move, and the new identity able to renew what moved to it.
+/// Switching identity to another wallet: once the switch lands, the old
+/// identity's wallet moves its handle and caretaker vote to the new identity
+/// with move proofs (both secrets on the phone), each move recorded in both
+/// wallets before its broadcast and settled only by the chain's word, the
+/// target fixed only by a confirmed move, and the new identity able to renew
+/// what moved to it. As IdentitySwitchTest and HandlesTest on Android.
 final class IdentitySwitchTests: PrivacyTestCase {
-    func testASwitchMovesTheHandleAndCaretakerVoteFirst() async throws {
+    let dave = "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong"
+
+    /// A registers `passport` and binds "alice" (and casts a split); B (on
+    /// `bStore`) then switches to the same passport. Returns A (synced past the
+    /// switch), B, and B as the successor a move names.
+    func switched(_ chain: FakeChain, _ passport: String, bStore: PrivacyStore = .memory(), split: Bool = false) async throws
+        -> (PrivacyWallet, PrivacyWallet, PrivacyWallet.Successor) {
+        let a = try wallet(chain, alice)
+        try await register(chain, a, passport: passport)
+        _ = try await a.bindHandle("alice"); try await a.sync()
+        if split { _ = try await a.setCaretaker(split: [1: 100]); try await a.sync() }
+        let b = try wallet(chain, bob, store: bStore)
+        try await register(chain, b, passport: passport)
+        try await a.sync()
+        return (a, b, PrivacyWallet.Successor(keys: b.keys, identity: b.snapshot.identity!))
+    }
+
+    func testTheNewIdentityBringsTheHandleAndCaretakerVoteAfterTheSwitch() async throws {
         let chain = FakeChain()
         let a = try wallet(chain, alice)
         try await register(chain, a, passport: "999")
@@ -20,29 +39,42 @@ final class IdentitySwitchTests: PrivacyTestCase {
         let exp = await a.caretakerExpiresAt()
         let live = await a.caretakerLive()
         XCTAssertTrue(live)
-
-        // The new wallet on this phone: its handle- and caretaker-scope nullifiers.
         let bKeys = try PrivacyKeys.fromMnemonic(bob)
-        _ = try await a.moveHandle(newOwner: PrivacyWallet.newOwner(bKeys, scope: PrivacyHash.handleScope()))
+
+        // The switch: the same passport from the new wallet. Its leaf has a predecessor,
+        // and the chain appended the succession (A, B) right after it.
+        let b = try wallet(chain, bob)
+        try await register(chain, b, passport: "999")
+        let id = b.snapshot.identity!
+        XCTAssertEqual(id.activatedAt, id.predecessorAt)
+        XCTAssertEqual(PrivacyHash.successionLeaf(idcOld: a.keys.idc, idcNew: bKeys.idc), chain.identityTree.leaf(id.leafIndex + 1))
         try await a.sync()
-        _ = try await a.moveCaretaker(newOwner: PrivacyWallet.newOwner(bKeys, scope: PrivacyHash.caretakerScope()))
+        XCTAssertEqual(.zeroed, a.identityStatus())
+        // Both wallets' trees hold it (the identity stream carries it like any leaf).
+        let fromB = await b.successionIndex(idcOld: a.keys.idc, idcNew: bKeys.idc, near: id.leafIndex + 1)
+        let fromA = await a.successionIndex(idcOld: a.keys.idc, idcNew: bKeys.idc, near: 0)
+        XCTAssertEqual(id.leafIndex + 1, fromB)
+        XCTAssertEqual(id.leafIndex + 1, fromA)
+
+        // A (the old identity, which pays) proves the moves with both secrets.
+        let to = PrivacyWallet.Successor(keys: bKeys, identity: id)
+        _ = try await a.moveHandle(to: to)
+        try await a.sync()
+        _ = try await a.moveCaretaker(to: to)
         try await a.sync()
         XCTAssertTrue(a.snapshot.handleMovedOut && a.snapshot.caretakerMovedOut)
         XCTAssertEqual(PrivacyHash.scopeNullifier(idSecret: bKeys.idSecret, scope: PrivacyHash.handleScope()), chain.handles["alice"]?.nullifier)
         XCTAssertEqual(exp, chain.caretakerExpiry[PrivacyHash.scopeNullifier(idSecret: bKeys.idSecret, scope: PrivacyHash.caretakerScope())])
+        XCTAssertEqual(id.leafIndex + 1, chain.prover.allMoves.last?.successionIndex)
+        XCTAssertEqual(id.leafIndex, chain.prover.allMoves.last?.leafIndex)
         // The old identity can never hold them again.
         do { _ = try await a.setCaretaker(split: [2: 100]); XCTFail("moved out") } catch {}
         do { _ = try await a.bindHandle("alice-again"); XCTFail("moved out") } catch {}
 
-        // The switch: the same passport from the new wallet. Its leaf has a predecessor.
-        let b = try wallet(chain, bob)
-        try await b.adoptMoved(handle: "alice", split: split, splitExpiresAt: exp)
-        try await register(chain, b, passport: "999")
-        try await a.sync()
-        XCTAssertEqual(.zeroed, a.identityStatus())
-        let id = b.snapshot.identity!
-        XCTAssertEqual(id.activatedAt, id.predecessorAt)
-        // What moved is renewed and refreshed at once (no bound: it holds them).
+        // B finds both in its state records and renews and refreshes at once (no bound: it holds them).
+        try await b.sync()
+        XCTAssertEqual("alice", b.snapshot.handle)
+        XCTAssertEqual(split, b.snapshot.caretakerSplit)
         _ = try await b.bindHandle("alice")
         let e = try await entry(chain, "alice")
         XCTAssertEqual(b.address.encode(), e?.address)
@@ -53,17 +85,55 @@ final class IdentitySwitchTests: PrivacyTestCase {
         dump(chain, "switchMoves")
     }
 
-    func testAnUnconfirmedMoveStaysPendingInBothWalletsUntilTheChainSays() async throws {
+    func testAMoveGoesOnlyToTheLiveDirectSuccessor() async throws {
         let chain = FakeChain()
         let a = try wallet(chain, alice)
-        try await register(chain, a, passport: "999")
+        try await register(chain, a, passport: "998")
         _ = try await a.bindHandle("alice"); try await a.sync()
-        let bKeys = try PrivacyKeys.fromMnemonic(bob)
+        // Another passport's identity: no succession links A to it.
+        let c = try wallet(chain, carol)
+        try await register(chain, c, passport: "997")
+        try await a.sync()
+        let before = chain.txs.count
+        do {
+            _ = try await a.moveHandle(to: .init(keys: c.keys, identity: c.snapshot.identity!))
+            XCTFail("moved to another passport's identity")
+        } catch let e as PrivacyWallet.MoveNotPossible {
+            XCTAssertTrue(e.message.contains("did not directly succeed"), e.message)
+        }
+        XCTAssertEqual(before, chain.txs.count)
+        // A -> B -> D: B switched on, so B is no longer live and D is not A's direct successor.
+        let b = try wallet(chain, bob)
+        try await register(chain, b, passport: "998")
+        let bID = b.snapshot.identity!
+        chain.now += 86_400
+        let d = try wallet(chain, dave)
+        try await register(chain, d, passport: "998")
+        try await a.sync()
+        let sent = chain.txs.count
+        do {
+            _ = try await a.moveHandle(to: .init(keys: b.keys, identity: bID))
+            XCTFail("moved to a successor that switched on")
+        } catch let e as PrivacyWallet.MoveNotPossible {
+            XCTAssertTrue(e.message.contains("no longer the passport's live one"), e.message)
+        }
+        do {
+            _ = try await a.moveHandle(to: .init(keys: d.keys, identity: d.snapshot.identity!))
+            XCTFail("skipped a successor")
+        } catch let e as PrivacyWallet.MoveNotPossible {
+            XCTAssertTrue(e.message.contains("did not directly succeed"), e.message)
+        }
+        XCTAssertEqual(sent, chain.txs.count)
+        XCTAssertEqual("alice", a.snapshot.handle)
+    }
+
+    func testAnUnconfirmedMoveStaysPendingInBothWalletsUntilTheChainSays() async throws {
+        let chain = FakeChain()
         let bStore = PrivacyStore.memory()
+        let (a, _, to) = try await switched(chain, "999", bStore: bStore)
         chain.unconfirmedNext = 1
         do {
-            _ = try await a.moveHandle(newOwner: PrivacyWallet.newOwner(bKeys, scope: PrivacyHash.handleScope()), target: bKeys,
-                                       recorder: MoveRecorderStub(bStore, now: { chain.now }))
+            _ = try await a.moveHandle(to: to, recorder: MoveRecorderStub(bStore, now: { chain.now }))
             XCTFail("unconfirmed")
         } catch {}
         XCTAssertEqual("alice", a.snapshot.handle)
@@ -87,17 +157,13 @@ final class IdentitySwitchTests: PrivacyTestCase {
 
     func testAMoveThatDidNotHappenIsUndoneInBothWallets() async throws {
         let chain = FakeChain()
-        let a = try wallet(chain, alice)
-        try await register(chain, a, passport: "999")
-        _ = try await a.bindHandle("alice"); try await a.sync()
-        let bKeys = try PrivacyKeys.fromMnemonic(bob)
-        let owner = PrivacyWallet.newOwner(bKeys, scope: PrivacyHash.handleScope())
+        let (a, _, to) = try await switched(chain, "999")
         for mode in ["reject", "fail", "drop"] {
             // Fees of a tx that may have landed stay pending until its timeout: fresh funds each round.
             try await fund(chain, a, 5_000_000)
             let bStore = PrivacyStore.memory()
             switch mode { case "reject": chain.rejectNext = 1; case "fail": chain.failInBlockNext = 1; default: chain.dropNext = 1 }
-            do { _ = try await a.moveHandle(newOwner: owner, target: bKeys, recorder: MoveRecorderStub(bStore, now: { chain.now })); XCTFail(mode) } catch {}
+            do { _ = try await a.moveHandle(to: to, recorder: MoveRecorderStub(bStore, now: { chain.now })); XCTFail(mode) } catch {}
             let b = try wallet(chain, bob, store: bStore)
             if mode == "drop" { chain.tipAhead = 100 }
             _ = await a.resolvePendingMoves(); _ = await b.resolvePendingMoves()
@@ -109,19 +175,16 @@ final class IdentitySwitchTests: PrivacyTestCase {
             XCTAssertTrue(bStore.state.pendingMoves.isEmpty, mode)
             try await a.sync()
         }
-        _ = try await a.moveHandle(newOwner: owner, target: bKeys, recorder: MoveRecorderStub(.memory(), now: { chain.now }))
+        _ = try await a.moveHandle(to: to, recorder: MoveRecorderStub(.memory(), now: { chain.now }))
         XCTAssertTrue(a.snapshot.handleMovedOut)
     }
 
     func testRecordingInTheNewWalletIsRetryableAndItsSyncFindsTheMoveAnyway() async throws {
         let chain = FakeChain()
-        let a = try wallet(chain, alice)
-        try await register(chain, a, passport: "999")
-        _ = try await a.bindHandle("alice"); try await a.sync()
-        let bKeys = try PrivacyKeys.fromMnemonic(bob)
         let bStore = PrivacyStore.memory()
+        let (a, _, to) = try await switched(chain, "999", bStore: bStore)
         let rec = MoveRecorderStub(bStore, now: { chain.now }, failFirst: true)
-        _ = try await a.moveHandle(newOwner: PrivacyWallet.newOwner(bKeys, scope: PrivacyHash.handleScope()), target: bKeys, recorder: rec)
+        _ = try await a.moveHandle(to: to, recorder: rec)
         XCTAssertTrue(a.snapshot.handleMovedOut)
         let p = a.outgoingMoves()[0]
         XCTAssertTrue(p.confirmed && !p.recorded)
@@ -137,14 +200,10 @@ final class IdentitySwitchTests: PrivacyTestCase {
 
     func testARefusedMoveDoesNotFixTheSwitchTarget() async throws {
         let chain = FakeChain()
-        let a = try wallet(chain, alice)
-        try await register(chain, a, passport: "602")
-        _ = try await a.bindHandle("alice"); try await a.sync()
-        let bKeys = try PrivacyKeys.fromMnemonic(bob)
         let bStore = PrivacyStore.memory()
-        let owner = PrivacyWallet.newOwner(bKeys, scope: PrivacyHash.handleScope())
+        let (a, _, to) = try await switched(chain, "602", bStore: bStore)
         chain.rejectNext = 1
-        _ = try? await a.moveHandle(newOwner: owner, target: bKeys, recorder: CheckingMoveRecorder(bStore, now: { chain.now }, targetID: "b"))
+        _ = try? await a.moveHandle(to: to, recorder: CheckingMoveRecorder(bStore, now: { chain.now }, targetID: "b"))
         XCTAssertEqual("", a.store.state.switchTarget)
         XCTAssertEqual("", bStore.state.handle)
         // A target that already holds a handle is refused before anything is laid out.
@@ -152,7 +211,7 @@ final class IdentitySwitchTests: PrivacyTestCase {
         cStore.mutate { $0.handle = "taken" }
         let sent = chain.txs.count
         do {
-            _ = try await a.moveHandle(newOwner: owner, target: bKeys, recorder: CheckingMoveRecorder(cStore, now: { chain.now }, targetID: "c"))
+            _ = try await a.moveHandle(to: to, recorder: CheckingMoveRecorder(cStore, now: { chain.now }, targetID: "c"))
             XCTFail("moved to a target holding a handle")
         } catch let e as PrivacyError {
             XCTAssertTrue(e.description.contains("already holds"), e.description)
@@ -163,27 +222,24 @@ final class IdentitySwitchTests: PrivacyTestCase {
         await a.resolvePendingMoves()
         XCTAssertEqual("", a.store.state.switchTarget)
         // Confirmed: fixed to that target.
-        _ = try await a.moveHandle(newOwner: owner, target: bKeys, recorder: CheckingMoveRecorder(bStore, now: { chain.now }, targetID: "b"))
+        _ = try await a.moveHandle(to: to, recorder: CheckingMoveRecorder(bStore, now: { chain.now }, targetID: "b"))
         XCTAssertEqual("b", a.store.state.switchTarget)
     }
 
     func testARestoredSwitchedIdentityRenewsWhatMovedToIt() async throws {
         let chain = FakeChain()
-        let a = try wallet(chain, alice)
-        try await register(chain, a, passport: "999")
-        _ = try await a.bindHandle("alice"); try await a.sync()
-        _ = try await a.setCaretaker(split: [1: 100]); try await a.sync()
-        let bKeys = try PrivacyKeys.fromMnemonic(bob)
         let bStore = PrivacyStore.memory()
+        let (a, b, to) = try await switched(chain, "999", bStore: bStore, split: true)
+        XCTAssertGreaterThan(b.snapshot.identity?.predecessorAt ?? 0, 0)
         let rec = MoveRecorderStub(bStore, now: { chain.now })
-        _ = try await a.moveHandle(newOwner: PrivacyWallet.newOwner(bKeys, scope: PrivacyHash.handleScope()), target: bKeys, recorder: rec)
+        _ = try await a.moveHandle(to: to, recorder: rec)
         try await a.sync()
-        _ = try await a.moveCaretaker(newOwner: PrivacyWallet.newOwner(bKeys, scope: PrivacyHash.caretakerScope()), target: bKeys, recorder: rec)
+        _ = try await a.moveCaretaker(to: to, recorder: rec)
         try await a.sync()
         XCTAssertTrue(a.outgoingMoves().isEmpty)
-        let b = try wallet(chain, bob, store: bStore)
-        try await register(chain, b, passport: "999")
-        XCTAssertGreaterThan(b.snapshot.identity?.predecessorAt ?? 0, 0)
+        // Recorded in B's store at once.
+        XCTAssertEqual("alice", bStore.state.handle)
+        XCTAssertEqual([1: 100], bStore.state.caretakerSplit)
 
         let b2 = try wallet(chain, bob)
         try await b2.sync()

@@ -384,6 +384,84 @@ public struct MembershipWitness: Sendable {
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
 }
 
+/// circuits/move: a handle or caretaker split passes from the identity behind
+/// `oldSecret` to the one behind `newSecret`, which succeeded it under the
+/// same passport. The succession leaf H(TAG_SUCC, idc_old, idc_new) is at
+/// `successionIndex` and the successor's live identity leaf at `leafIndex`,
+/// both under `root`; `scope` is the msg's (handle or caretaker) and
+/// `signal` its sighash. Public inputs: root, scope, old_nullifier,
+/// new_nullifier, signal.
+public struct MoveWitness: Sendable {
+    public let oldSecret: Fr
+    public let newSecret: Fr
+    public let successionIndex: UInt64
+    public let successionSiblings: [Fr]
+    public let dscKey: Fr
+    public let country: Fr
+    public let activatedAt: UInt64
+    public let predecessorAt: UInt64
+    public let leafIndex: UInt64
+    public let siblings: [Fr]
+    public let root: Fr
+    public let scope: Fr
+    public let signal: Fr
+    public let oldNullifier: Fr
+    public let newNullifier: Fr
+
+    public init(oldSecret: Fr, newSecret: Fr, successionIndex: UInt64, successionSiblings: [Fr], dscKey: Fr, country: Fr, activatedAt: UInt64,
+                predecessorAt: UInt64, leafIndex: UInt64, siblings: [Fr], root: Fr, scope: Fr, signal: Fr) throws {
+        try require(successionSiblings.count == Merkle.depth && siblings.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
+        try require(successionIndex <= 0xffff_ffff && leafIndex <= 0xffff_ffff, "a leaf index is a u32")
+        try require(activatedAt <= PrivacyHash.noBound && predecessorAt <= PrivacyHash.noBound, "a time is a u64 below 2^63")
+        self.oldSecret = oldSecret; self.newSecret = newSecret; self.successionIndex = successionIndex; self.successionSiblings = successionSiblings
+        self.dscKey = dscKey; self.country = country; self.activatedAt = activatedAt; self.predecessorAt = predecessorAt
+        self.leafIndex = leafIndex; self.siblings = siblings; self.root = root; self.scope = scope; self.signal = signal
+        oldNullifier = PrivacyHash.scopeNullifier(idSecret: oldSecret, scope: scope)
+        newNullifier = PrivacyHash.scopeNullifier(idSecret: newSecret, scope: scope)
+    }
+
+    public var succession: Fr { PrivacyHash.successionLeaf(idcOld: PrivacyHash.idc(oldSecret), idcNew: PrivacyHash.idc(newSecret)) }
+
+    public var leaf: Fr {
+        PrivacyHash.identityLeaf(idc: PrivacyHash.idc(newSecret), dscKey: dscKey, country: country, activatedAt: activatedAt, predecessorAt: predecessorAt)
+    }
+
+    /// What the circuit will assert, checked before spending seconds on a proof that cannot verify.
+    public func check() throws {
+        try require(Merkle.rootFromPath(leaf: succession, index: successionIndex, siblings: successionSiblings) == root,
+                    "no succession from this identity to the new one in the tree at this root")
+        try require(Merkle.rootFromPath(leaf: leaf, index: leafIndex, siblings: siblings) == root, "the new identity's leaf is not live in the tree at this root")
+        try require(oldNullifier != newNullifier, "a move needs two identities")
+    }
+
+    public func publicInputs() -> [Fr] { [root, scope, oldNullifier, newNullifier, signal] }
+
+    public func noirInputs() -> [String: Any] {
+        [
+            "old_secret": oldSecret.noir,
+            "new_secret": newSecret.noir,
+            "succession_index": noirHex(successionIndex),
+            "succession_siblings": successionSiblings.map(\.noir),
+            "dsc_key": dscKey.noir,
+            "country": country.noir,
+            "activated_at": noirHex(activatedAt),
+            "predecessor_at": noirHex(predecessorAt),
+            "leaf_index": noirHex(leafIndex),
+            "siblings": siblings.map(\.noir),
+            "root": root.noir,
+            "scope": scope.noir,
+            "old_nullifier": oldNullifier.noir,
+            "new_nullifier": newNullifier.noir,
+            "signal": signal.noir,
+        ]
+    }
+
+    static let inputOrder = ["old_secret", "new_secret", "succession_index", "succession_siblings", "dsc_key", "country", "activated_at",
+                             "predecessor_at", "leaf_index", "siblings", "root", "scope", "old_nullifier", "new_nullifier", "signal"]
+
+    public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
+}
+
 /// One used slot of a vote witness: a derth stake note under the proposal's
 /// snapshot note root, the low leaf proving its spend nullifier absent from
 /// the snapshot stake nullifier tree, and, for a labelled note, the debt tree

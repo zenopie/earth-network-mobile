@@ -94,10 +94,9 @@ public final class AppModel {
     /// The split is held but was restored without its options.
     public private(set) var caretakerSplitUnknown = false
     /// Moves away from this identity not yet confirmed or not yet recorded in the new wallet, and moves to it
-    /// the chain has not confirmed; the store id of the wallet the moves went to ("" none yet).
+    /// the chain has not confirmed.
     public private(set) var outgoingMoves: [PendingMove] = []
     public private(set) var incomingMoves: [PendingMove] = []
-    public private(set) var switchTarget = ""
     /// Undelegations waiting for their payout, from this wallet's own record (nothing asked of the chain).
     public private(set) var pendingUnbonds: [PendingUnbond] = []
 
@@ -846,7 +845,7 @@ public final class AppModel {
         derthRates = [:]
         handle = ""; handleEntry = nil; handleMovedOut = false; handleDirectoryError = nil
         caretakerExpiresAt = 0; caretakerMovedOut = false; predecessorAt = 0; reminders = []
-        addressedHandles = []; caretakerSplitUnknown = false; outgoingMoves = []; incomingMoves = []; switchTarget = ""
+        addressedHandles = []; caretakerSplitUnknown = false; outgoingMoves = []; incomingMoves = []
         PrivacyProving.registrationMayFollow = true
     }
 
@@ -863,7 +862,6 @@ public final class AppModel {
         handle = snap.handle; handleMovedOut = snap.handleMovedOut
         caretakerMovedOut = snap.caretakerMovedOut; caretakerSplitUnknown = snap.caretakerSplitUnknown
         outgoingMoves = snap.pendingMoves.filter { !$0.incoming }; incomingMoves = snap.pendingMoves.filter(\.incoming)
-        switchTarget = snap.switchTarget
         predecessorAt = snap.identity?.predecessorAt ?? 0
         // A registered wallet still may register in this launch if it can
         // switch to another wallet, which may not be.
@@ -934,15 +932,76 @@ public final class AppModel {
             addressed: addressed, ownAddress: w.address.encode()))
     }
 
-    /// Settles moves in flight by their tx and retries recording confirmed ones in the new wallet.
-    func checkMoves() async {
-        guard let w = privacy else { return }
-        await w.resolvePendingMoves()
-        for p in w.outgoingMoves() where !p.recorded && !p.target.isEmpty {
-            var inc = p
-            inc.incoming = true; inc.target = ""; inc.recorded = true
-            if (try? PrivacySession.Recorder(targetID: p.target).record(inc)) != nil { await w.markRecorded(p.txHash) }
+    /// What the identity this wallet's registration succeeded (another wallet
+    /// on this phone, same passport) holds that a move can bring here: shown
+    /// after a switch lands. As PrivacySession.MoveOffer on Android.
+    public struct MoveOffer: Sendable {
+        /// The predecessor's wallet index and name.
+        public let fromIndex: Int
+        public let fromName: String
+        /// Its handle ("" none) and whether it is live (only a live one moves).
+        public let handle: String
+        public let handleLive: Bool
+        /// Whether it holds a live caretaker vote, and until when.
+        public let voteLive: Bool
+        public let voteExpiresAt: Int64
+        /// Its moves already sent and not yet confirmed (or not recorded here).
+        public let inFlight: [PendingMove]
+        /// Its shielded ERTH: the moves' fees come out of it.
+        public let feeErth: UInt64
+        public var anything: Bool { !handle.isEmpty || voteLive || !inFlight.isEmpty }
+    }
+
+    /// Finds the predecessor among this phone's wallets by the succession
+    /// leaf the chain appended for this identity's registration (searched in
+    /// this wallet's own tree: nothing asked names it), syncs that wallet, and
+    /// says what it holds. Nil when this identity is not live or no wallet on
+    /// the phone is its predecessor (a switch from a lost phrase: nothing can
+    /// move, as the move proof needs both identity secrets).
+    func moveOffer() async -> MoveOffer? {
+        guard let w = privacy, let id = w.snapshot.identity, id.verified, w.snapshot.identityStatus == .live else { return nil }
+        for index in wallets.indices where index != selected {
+            guard let keys = try? privacyKeys(ofWallet: index), keys.idc != w.keys.idc else { continue }
+            guard await w.successionIndex(idcOld: keys.idc, idcNew: w.keys.idc, near: id.leafIndex &+ 1) != nil else { continue }
+            guard let p = try? predecessorWallet(index) else { return nil }
+            try? await p.sync()
+            await p.resolvePendingMoves()
+            let snap = p.snapshot
+            let now = Int64(Date().timeIntervalSince1970)
+            let handleExp = await p.handleExpiresAt()
+            return MoveOffer(fromIndex: index, fromName: wallets[index].name, handle: snap.handle,
+                             handleLive: !snap.handle.isEmpty && (handleExp == 0 || handleExp > now),
+                             voteLive: await p.caretakerLive(), voteExpiresAt: await p.caretakerExpiresAt(),
+                             inFlight: p.outgoingMoves(), feeErth: p.poolBalances()[PrivacyWallet.fee] ?? 0)
         }
+        return nil
+    }
+
+    /// The private side of the wallet at `index` (the identity this one replaced): it builds and pays for the moves.
+    func predecessorWallet(_ index: Int) throws -> PrivacyWallet {
+        guard wallets.indices.contains(index) else { throw WalletStore.Error.notFound }
+        return try PrivacySession.open(mnemonic: wallets[index].mnemonic, client: client)
+    }
+
+    /// This (selected) wallet's identity as the successor a move from another wallet names.
+    func selfAsSuccessor() throws -> PrivacyWallet.Successor {
+        guard let w = privacy, let id = w.snapshot.identity, id.verified else {
+            throw PrivacyError("this wallet's registration has not been verified yet; sync, then try again")
+        }
+        return PrivacyWallet.Successor(keys: w.keys, identity: id)
+    }
+
+    /// Settles the predecessor's moves in flight by their tx, retries recording confirmed ones here, then this wallet's own.
+    func checkMoves(from index: Int) async {
+        if let p = try? predecessorWallet(index) {
+            await p.resolvePendingMoves()
+            for m in p.outgoingMoves() where !m.recorded && !m.target.isEmpty {
+                var inc = m
+                inc.incoming = true; inc.target = ""; inc.recorded = true
+                if (try? PrivacySession.Recorder(targetID: m.target).record(inc)) != nil { await p.markRecorded(m.txHash) }
+            }
+        }
+        await privacy?.resolvePendingMoves()
         publishPrivacy()
         await refreshPersonal()
     }
