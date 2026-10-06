@@ -212,8 +212,8 @@ second-preimage literature before relaunches.
   P-256 keeps the std blackbox, which is half the cost). Each returns the bytes
   for the DSC commitment.
 - **Thin mains** (about 25 lines each), generated from one manifest
-  `circuits/variants.json`: id, key, scheme, hash profile, `ec_max`, `sa_max`,
-  dyadic size. The same file is bundled for both wallets and read by the
+  `circuits/variants.json`: id, key, scheme, hash profile, `e_content_max`,
+  `signed_attrs_max`, `log2_circuit_size`. The same file is bundled for both wallets and read by the
   fixture generators. A check fails if the generated mains differ from the
   committed ones.
 - **The public interface is unchanged** for every variant:

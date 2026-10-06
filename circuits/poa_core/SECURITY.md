@@ -94,8 +94,7 @@ chain pins `current_date` to ~today (see finding #7).
    verifier (`verifyRegistrationProof`) now rejects a proof whose public
    `current_date` isn't within `params.current_date_max_skew_seconds` of the block
    time (default 2 days; `current_date_index=0` for this circuit). Without it a
-   holder backdates `current_date` to pass an expired passport. (Same pattern as
-   `registry_root == params.dsc_root`.)
+   holder backdates `current_date` to pass an expired passport.
 9. **Proof replay across addresses — RESOLVED.** `main` takes the registrant's
    account as `address: pub Field` (the twenty address bytes big-endian, one
    field element; 160 bits into a ~254-bit field, so the encoding is injective).
@@ -108,9 +107,10 @@ chain pins `current_date` to ~today (see finding #7).
    wallet you registered from stranded your personhood until the registration
    lapsed. Allowing a re-registration to **move** a registration is what unstrands
    that, and it is safe only because a proof now verifies solely against the
-   address it was made for. The chain requires that address to equal the
-   transaction signer (`verifyRegistrationProof`), and rejects a mismatch for
-   ~12k gas rather than the ~1.03M a verification costs.
+   `address` it was made for. On the privacy chain `address` carries
+   `zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, affiliate)`, which
+   the chain recomputes from the (unsigned) `MsgRegister`, so a proof read out
+   of a block cannot register another identity or pay another wallet's notes.
 
    Demonstrated, not argued: `zk/ultrahonk` `TestProofDoesNotVerifyForAnotherAddress`
    verifies one fixture proof twice, changing only the address in the public
@@ -123,9 +123,11 @@ chain pins `current_date` to ~today (see finding #7).
    is an equally valid signature for the same message/key. (Validated: high-s sigs
    fail, normalized sigs pass. This was the root cause of intermittent
    `Cannot satisfy constraint` at the verify step.)
-3. **Registry freshness / revocation.** `registry_root` must be kept current and
-   support revocation, or a revoked DSC stays valid. Needs a registry update path
-   + the chain pinning a recent root.
+3. **Trust store freshness / revocation.** The circuit commits to the DSC key
+   (`dsc_key`); the chain checks that DSC against its CSCA trust store (x/pki)
+   at registration. The store must be kept current: CSCAs are added and
+   revoked, and DSCs revoked, by governance (`MsgAddCsca`, `MsgRevokeCsca`,
+   `MsgRevokeDsc`), or a compromised signer stays valid.
 4. **eContent structure.** ~~The circuit checks `dg1_hash` sits *at an offset*
    in `e_content` but doesn't fully validate the LDS ASN.1 structure.~~
    **Found exploitable, fixed 2026-09-23 (chain v0.9.1).** The offset was bounded
@@ -138,7 +140,7 @@ chain pins `current_date` to ~today (see finding #7).
    and a whole 93-byte TD3 DG1 with its header. It still does not parse the full
    LDS structure; the prefixes are what pin each hash to its role.
 5. **Under-constrained checks.** Standard ZK audit: confirm every `assert` and the
-   Merkle/hash-at-offset logic is fully constrained (no free witness values).
+   hash-at-offset logic is fully constrained (no free witness values).
 6. **Algorithms — RESOLVED 2026-10-04.** 33 variants cover every scheme
    unexpired passports use (PASSPORT_COVERAGE.md). SHA-1 is accepted: every
    hashed byte is issuer-formed, so a forgery needs a second preimage.

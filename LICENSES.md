@@ -17,9 +17,9 @@ every button variant with its hover and disabled states, every input across nine
 states — and reproducing it from scratch is weeks of work that this already
 solves.
 
-**What remains.** The library was later trimmed to what the app uses: about 60
-files, with the unused components, previews, icons, strings and the dark
-palette removed.
+**What remains.** The library was later trimmed to what the app uses: 57
+files, with the unused components (the modal sheets among them), previews,
+icons, strings and the dark palette removed.
 
 **What was changed.** The package was renamed, `Zashi` became `Earth`, and the
 raw palette was re-skinned to the Sprout ramps: Zcash's gold brand became
@@ -33,14 +33,13 @@ Zcash chain — and are not a better-built version of Earth's screens. Also
 dropped: the four components built on Zcash money types (Balance, SeedText, the
 date wheel, Chip) and the Zatoshi/FiatCurrency members of StringResource.
 
-**What had to be adapted.** Seven of 124 files touched something outside the
+**What had to be adapted.** Seven of the 120 files touched something outside the
 module: their Twig logger became android.util.Log, their AndroidApiVersion
 helper became Build.VERSION, and StringResource lost its Zcash money overloads
 while keeping the abstraction 38 of their components depend on.
 
-**Versions.** The library is built against Material 3 1.4.0 and Compose 1.10.4;
-its modal sheet uses APIs absent from earlier versions, so those are pinned
-rather than taken from a BOM. It also needs compose-shimmer, lottie-compose,
+**Versions.** The library is built against Material 3 1.4.0 and Compose 1.10.4,
+pinned rather than taken from a BOM. It also needs compose-shimmer, lottie-compose,
 kotlinx-collections-immutable and ui-text-google-fonts.
 
 Vendored rather than depended on because `ui-design-lib` declares

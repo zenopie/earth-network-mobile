@@ -20,10 +20,11 @@ privacy core, checked against the same vectors.
 
     android/    the shipping app — Kotlin + Jetpack Compose
     ios/        the port — see ios/README.md
-    circuits/   Noir circuits (nargo workspace) for the personhood proof
-    tools/      registry-builder (DSC trust store), chainverify (proof checking),
-                keycheck + txcheck + certcheck (Go ground truth for the iOS port),
-                privacyvectors (golden vectors from the chain's own code)
+    circuits/   Noir circuits (nargo workspace): the passport register-circuit
+                variants and the privacy circuits (action, stake, vote, membership)
+    tools/      chainverify (proof checking), keycheck + txcheck + certcheck
+                (Go ground truth for the iOS port), privacyvectors (golden
+                vectors from the chain's own code)
 
 Gradle lives in `android/`, so **every `./gradlew` command runs from there**.
 
@@ -74,7 +75,9 @@ For iOS commands see `ios/README.md`. The short version:
 
 Canonical source is `android/.../Constants.kt` — read it rather than copying
 these. Custom chain modules: `x/dex` (hub-and-spoke AMM, every pool pairs ERTH
-with one token), `x/personhood`, `x/allocation`, `x/earth`, `x/pki`.
+with one token), `x/personhood`, `x/allocation`, `x/assembly` (the human
+chamber), `x/shielded` (the note pool), `x/shieldedstaking` (stake notes),
+`x/earth`, `x/pki` (the CSCA trust store).
 
 ## Android layout
 
@@ -91,7 +94,7 @@ Source is under `app/src/main/java/network/erth/wallet/`, package
     referral/           referrer handle from the App Link and the install referrer
     ui/                 MainActivity, UpdateCheckActivity (launcher), EarthApp root
     ui/<feature>/       home, wallet, earn, swap, govern, explore, personhood,
-                        settings, onboarding, unlock, registration
+                        privacy, settings, onboarding, unlock, registration
     ui/tx/              the one confirm → broadcast → result path
     ui/navigation/      routes, tab bar, top bars
     ui/components/      shared Earth composables

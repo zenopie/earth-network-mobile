@@ -2,8 +2,7 @@
 
 The current byte-level and behavioural spec of the Earth Wallet's private
 side (Android, iOS; the web app must match the formats). It describes what
-is true now, against chain privacy/orchard **b46a4bb** (vectors byte-identical
-to dff3a9b). How it got here is in AUDIT_HISTORY.md.
+is true now, against chain privacy/orchard **6d3500a**. How it got here is in AUDIT_HISTORY.md.
 
 **Who defines what.** The chain (x/shielded, x/personhood, x/assembly,
 x/shieldedstaking, x/dex; `zk/privacy`, `zk/orchard`, `zk/indexed`,
@@ -417,7 +416,7 @@ ciphertext. For counter c (a u32):
 A lock takes counter max(next_otag_counter, highest owned counter found + 1,
 closed_otag_max + 1) and advances next_otag_counter; update, vote and unlock
 reuse the position's salt. Every other stake proof (delegate, undelegate,
-restake, redelegate) uses a fresh random salt (circuit audit L-2). Sync
+restake, redelegate) uses a fresh random salt. Sync
 matches the public positions against counters 0 … max(next, closed + 1) +
 1024, extended past every match (OTAG_GAP = 1024: a closed position
 disappears from the chain, so the window must cross a run of closed
@@ -470,8 +469,8 @@ checked against the chain's root.
 
 ## 9. Circuits: public-input order and witnesses
 
-**[chain]** Every privacy circuit is set up at 2^15 (within the bundled
-2^15 + 1 point SRS) and compiled with nargo 1.0.0-beta.22; `bb write_vk` of
+**[chain]** Every privacy circuit is proven with the bundled 2^15 + 1 point
+SRS (circuit sizes 2^13 to 2^15) and compiled with nargo 1.0.0-beta.22; `bb write_vk` of
 every bundled circuit equals the chain genesis's verifying key. Every proof
 is exactly 14,656 bytes. Prover kinds split these public-input counts:
 action 6, stake 16, membership 8, vote 9.
@@ -486,7 +485,7 @@ at s_pos under anchor (not enforced for a dummy, s_value = 0), nf =
 H(TAG_NF, nk, s_rho, s_pos). Output: cm_out = H(TAG_CM, o_asset, o_value,
 o_pc). cv = s_value·G(s_asset) − o_value·G(o_asset) + rcv·R (§10).
 
-**stake** (one owner-locked operation; ORCHARD_DESIGN 13, 20):
+**stake** (one owner-locked operation; ORCHARD_DESIGN 4.1, 8.2):
 
     private: nk, in_amount[2], in_rho[2], in_rcm[2], in_pos[2], in_path[2][32],
              in_move_key[2], in_move_time[2], in_exposed[2],
@@ -512,7 +511,7 @@ publishes 0 or a zero note's commitment. Vectors `public_inputs.delegate`,
 `undelegate`, `redelegate`.
 
 **vote** (MAX_NOTES = 2 stake notes of one validator on one proposal,
-nothing spent; ORCHARD_DESIGN 15, 18, 20):
+nothing spent; ORCHARD_DESIGN 4.2, 8.5):
 
     private: nk, amount[2], rho[2], rcm[2], pos[2], path[2][32],
              move_key[2], move_time[2], exposed[2],
@@ -617,7 +616,7 @@ witness as `<dir>/{action,stake,membership,vote}/<test>_<i>/Prover.toml`
 
 ## 10. Bundles
 
-**[chain]** (zk/orchard, ORCHARD_DESIGN 12-14). A bundle is N ≥ 2 actions,
+**[chain]** (zk/orchard, ORCHARD_DESIGN 2.3-2.5). A bundle is N ≥ 2 actions,
 each proven on its own, a public value balance per denom, and a binding
 signature.
 
@@ -1139,8 +1138,8 @@ records `*_moved_out` and never casts or claims again.
 All staking msgs carry a fee bundle; every stake proof (Delegate, Restake,
 Undelegate, Redelegate, LockPosition, UpdatePosition, UnlockPosition,
 PositionVote) names Query/DebtTree's current `clear_before` and `root`
-(read when the action starts), whether or not it clears a label (circuit
-audit L-1: a proof naming them only to clear would be linkable to the
+(read when the action starts), whether or not it clears a label (a proof
+naming them only to clear would be linkable to the
 public redelegation into that validator). **[chain]** The chain takes
 clear_before within [ClearBefore(now) − 3600, ClearBefore(now)] and the
 current root (a slash changing it between the read and the block refuses
@@ -1410,7 +1409,7 @@ nullifier scope (vectors `proposal_5_0`, `proposal_5_1`).
   ciphertext).
 - **Withdrawals** (MsgRemoveLiquidityShielded; the public MsgRemoveLiquidity
   names a note for its ANML leg): escrowed for the LP unbonding period,
-  then both legs minted to pcs of ours (v2). A leg above 2^64 − 1 is paid as
+  then both legs minted to pcs of ours (v2). A leg above 2^63 − 1 is paid as
   ceil(v / (2^63 − 1)) notes (MintNoteSplit, at most 128) sharing one pc
   and ciphertext (§5). x/dex refuses at start a leg above 32 × (2^63 − 1)
   (dex 1101, "the most one withdrawal pays as notes"), and every client
@@ -1688,8 +1687,7 @@ the fee, ciphertext, canonical-bytes, gas-limit (≤ 5× used) and
 send-disabled rules, handles, leases, moves, predecessors). With
 `PRIVACY_TOML_OUT=<dir>` every witness is written as Prover.toml, and
 `nargo execute` (1.0.0-beta.22) on circuits/action, stake, membership and
-vote accepts all of them: Android 553 (403 action, 100 stake, 36 membership,
-14 vote), iOS 529 (385, 100, 30, 14) at chain dff3a9b/b46a4bb. ProverGate
+vote accepts all of them. ProverGate
 (`PRIVACY_TOML_DIR`) proves and verifies every stake and vote witness of both
 platforms with VKs equal to the chain's genesis keys. Suites: `StakeVoteFlowTest`
 (concurrent proposals, refusals, restored wallets learning votes, the

@@ -43,15 +43,9 @@ This file replaces the per-round `*_PROGRESS.md` files and
   merge headroom); the unlock record costs one more action (the stake
   ciphertext has no memo); "merge notes" after a snapshot cannot reduce
   that proposal's vote parts.
-- **Passport circuits accept one profile per key type** (circuits, not
-  changed): SHA-256 for the DG hash, eContent digest and signed
-  attributes; RSA PKCS#1 v1.5 with e = 65537 (no PSS). The apps refuse an
-  unsupported curve, RSA size or a DG/eContent hash that is not SHA-256 up
-  front, but a SHA-384/512 signature digest, RSA-PSS or another exponent is
-  found only when the witness fails to solve (a generic proving error, no
-  tx sent).
 - **Unmeasured.** Phone prove times for action and stake (Mac through
-  Swoirenberg: about 150 ms each). A restore whose record country hint
+  Swoirenberg: about 150 ms each), and an on-device measurement of the
+  2^19 and 2^20 passport tiers. A restore whose record country hint
   misses scans about 90k timestamps before the full country search (about
   30 s in a debug build).
 

@@ -4,11 +4,12 @@ A native Android wallet for **earth-1**, a Cosmos SDK chain with native bank
 denoms, native staking, and custom modules:
 
 - `x/dex`: hub-and-spoke AMM. Every pool pairs ERTH with one token.
-- `x/allocation`: vote-directed emission streams. The stake-weighted `capital`
-  stream is the Deflation Fund; the one-human-one-vote `human` stream is the
-  Caretaker Fund.
+- `x/allocation`: vote-directed emission streams. The stake-weighted
+  `groundworks` stream is the Deflation Fund; the one-human-one-vote
+  `caretaker` stream is the Caretaker Fund.
 - `x/personhood`: passport proof-of-personhood registration and ANML.
 - `x/assembly`: the human chamber of bicameral governance.
+- `x/shielded`, `x/shieldedstaking`: the note pool and stake notes.
 
 There are no CosmWasm or SNIP-20 tokens in the wallet's path: every asset is a
 bank denom. ERTH and ANML are held as shielded notes (x/shielded, Orchard-style
@@ -37,9 +38,10 @@ backend/         The registration gas grant from api.erth.network (proof-backed)
 referral/        Referrer handle capture from the App Link and the Play install referrer.
 ```
 
-Protobuf definitions for the messages the wallet signs are in
-`app/src/main/proto/` (cosmos bank/staking/distribution/gov/tx, earth
-dex/allocation/personhood/assembly), compiled to javalite.
+Protobuf definitions for the messages the wallet sends are in
+`app/src/main/proto/` (cosmos bank/tx and gov's vote options; earth
+dex/allocation/personhood/assembly/shielded/shieldedstaking), compiled to
+javalite.
 
 ## chain/
 
@@ -50,12 +52,12 @@ dex/allocation/personhood/assembly), compiled to javalite.
 | `Fees.kt` | Gas price and fee for a gas limit. |
 | `Bank.kt` | Balances, supply, `msgSend`. |
 | `Dex.kt` | Pools, LP unbondings, swap fee and simulation; transparent liquidity messages. |
-| `Staking.kt` | Validators, delegations, unbondings, rewards; transparent delegate, undelegate, withdraw. |
+| `Staking.kt` | Bonded validators (explorer), network bonded total, and a validator's own transparent self-bond (delegations, unbondings, pending rewards). Staking itself is private. |
 | `Allocation.kt` | Both allocation streams, selected by `StreamId` (read only). |
 | `Personhood.kt` | Network-wide registration count. Everything per-person is private (`privacy/`). |
 | `Gov.kt`, `Assembly.kt` | Proposals and tallies in both chambers. Votes are private msgs. |
 | `ChainErrors.kt` | Chain error codes explained in plain language. |
-| `Explorer.kt` | Blocks, transactions and validators for the explorer screens. |
+| `Explorer.kt` | Blocks and transactions for the explorer and the activity list. |
 | `math/PoolApr.kt`, `math/SwapQuote.kt` | Must match `x/dex` and the chain's reward maths. |
 
 ## privacy/
