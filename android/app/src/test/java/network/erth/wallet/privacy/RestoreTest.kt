@@ -331,7 +331,7 @@ class RestoreTest : WalletTest() {
         var syncs = 0
         while (true) {
             // A fresh store object each time: what a killed and restarted app reads back from disk.
-            val store = PrivacyStore.open(dir, "w")
+            val store = PrivacyStore.open(dir, "w", testDataKey)
             WalletSync(chain, store, keys, chain.chainId, chain, { chain.now }, searchBudget = budget).sync()
             val rec = store.state.regRecords.single()
             works.add(rec.work)
@@ -339,7 +339,7 @@ class RestoreTest : WalletTest() {
             if (rec.status != network.erth.wallet.privacy.sync.RecordStatus.OPEN) break
             assertTrue(syncs < 20)
         }
-        val store = PrivacyStore.open(dir, "w")
+        val store = PrivacyStore.open(dir, "w", testDataKey)
         assertEquals(network.erth.wallet.privacy.sync.RecordStatus.MATCHED, store.state.regRecords.single().status)
         assertTrue(syncs >= 3)
         // Each sync spent at most its budget (plus one step), and none started over.

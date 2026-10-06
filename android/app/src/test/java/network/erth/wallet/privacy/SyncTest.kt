@@ -81,7 +81,7 @@ class SyncTest : WalletTest() {
                 if (forge) throw java.io.IOException("identity stream broke (test)") else inner.identity(fromIndex, limit)
         }
         val dir = tmp()
-        val a = wallet(chain, indexer = idx, store = PrivacyStore.open(dir, "w"))
+        val a = wallet(chain, indexer = idx, store = PrivacyStore.open(dir, "w", testDataKey))
         funded(chain, a)
         a.sync()
         assertTrue(a.store.state.rootsVerified)
@@ -91,7 +91,7 @@ class SyncTest : WalletTest() {
         assertFalse(a.store.state.rootsVerified)
         assertEquals(WalletSync.SYNC_UNFINISHED, a.store.state.rootsError)
         // Persisted before the first request: a restarted app reads it back unverified.
-        assertFalse(PrivacyStore.open(dir, "w").state.rootsVerified)
+        assertFalse(PrivacyStore.open(dir, "w", testDataKey).state.rootsVerified)
         val before = chain.height
         val e = assertThrows(IllegalStateException::class.java) { a.unshield(receiver, "uerth", 40_000_000) }
         assertEquals(WalletSync.SYNC_UNFINISHED, e.message)

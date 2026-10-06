@@ -43,7 +43,7 @@ object PrivacySession {
         wallets[id]?.let { w -> current = address to w; return w }
         val w = PrivacyWallet(
             keys = keys,
-            store = PrivacyStore.shared(app.filesDir, id),
+            store = PrivacyStore.shared(app.filesDir, id, network.erth.wallet.wallet.SessionManager.dataKey()),
             indexer = HttpPrivacyIndexer(Constants.EARTH_API_URL),
             chain = RestPrivateChain,
             reads = RestChainReads,
@@ -102,11 +102,11 @@ object PrivacySession {
         return object : PrivacyWallet.MoveRecorder {
             override val targetId = targetId
             override fun record(move: network.erth.wallet.privacy.sync.PendingMove) =
-                PrivacyWallet.recordIncoming(PrivacyStore.shared(app.filesDir, targetId), move, System.currentTimeMillis() / 1000)
+                PrivacyWallet.recordIncoming(PrivacyStore.shared(app.filesDir, targetId, dataKey()), move, System.currentTimeMillis() / 1000)
             override fun rollback(move: network.erth.wallet.privacy.sync.PendingMove) =
-                PrivacyWallet.rollbackIncoming(PrivacyStore.shared(app.filesDir, targetId), move, System.currentTimeMillis() / 1000)
+                PrivacyWallet.rollbackIncoming(PrivacyStore.shared(app.filesDir, targetId, dataKey()), move, System.currentTimeMillis() / 1000)
             override fun refusal(move: network.erth.wallet.privacy.sync.PendingMove): String? {
-                val store = PrivacyStore.shared(app.filesDir, targetId)
+                val store = PrivacyStore.shared(app.filesDir, targetId, dataKey())
                 return synchronized(store) { PrivacyWallet.targetRefusal(store.state, move.kind, System.currentTimeMillis() / 1000) }
             }
         }
@@ -134,7 +134,7 @@ object PrivacySession {
     fun targetInfo(context: Context, index: Int): TargetInfo {
         val app = context.applicationContext
         val id = storeIdOf(app, index)
-        val st = runCatching { PrivacyStore.shared(app.filesDir, id).state }.getOrNull()
+        val st = runCatching { PrivacyStore.shared(app.filesDir, id, dataKey()).state }.getOrNull()
         val now = System.currentTimeMillis() / 1000
         return TargetInfo(
             id, st?.identity != null || st?.pendingRegistration != null, st?.handle.orEmpty(),
@@ -142,6 +142,9 @@ object PrivacySession {
             st?.let { PrivacyWallet.targetRefusal(it, network.erth.wallet.privacy.sync.PendingMove.CARETAKER, now) },
         )
     }
+
+    /** The install's data key, which seals every wallet's private store (a session must be open). */
+    private fun dataKey(): ByteArray = network.erth.wallet.wallet.SessionManager.dataKey()
 
     /** Forget the cached wallet (lock, wallet switch). */
     fun clear() {

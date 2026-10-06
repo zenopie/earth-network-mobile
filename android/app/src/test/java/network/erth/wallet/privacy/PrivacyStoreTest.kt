@@ -22,13 +22,13 @@ class PrivacyStoreTest : WalletTest() {
     fun theProcessHoldsOneStorePerWalletDirectory() {
         val dir = java.nio.file.Files.createTempDirectory("a6").toFile()
         try {
-            val s1 = PrivacyStore.shared(dir, "w")
-            assertSame(s1, PrivacyStore.shared(dir, "w"))
+            val s1 = PrivacyStore.shared(dir, "w", testDataKey)
+            assertSame(s1, PrivacyStore.shared(dir, "w", testDataKey))
             s1.state.pendingUnbonds.add(network.erth.wallet.privacy.sync.PendingUnbond("AB", "v", 42, Fr.ONE, 1, 9))
             s1.save()
-            assertEquals(42L, PrivacyStore.shared(dir, "w").state.pendingUnbonds.single().derth)
+            assertEquals(42L, PrivacyStore.shared(dir, "w", testDataKey).state.pendingUnbonds.single().derth)
             PrivacyStore.delete(dir, "w")
-            assertTrue(PrivacyStore.shared(dir, "w") !== s1)
+            assertTrue(PrivacyStore.shared(dir, "w", testDataKey) !== s1)
         } finally {
             dir.deleteRecursively()
         }
@@ -38,10 +38,10 @@ class PrivacyStoreTest : WalletTest() {
     fun forgettingAWalletDeletesItsPrivateData() {
         val dir = tmp()
         val chain = FakeChain()
-        val a = wallet(chain, store = PrivacyStore.open(dir, "w1"))
+        val a = wallet(chain, store = PrivacyStore.open(dir, "w1", testDataKey))
         funded(chain, a)
         a.sync()
-        PrivacyStore.open(dir, "w2").save()
+        PrivacyStore.open(dir, "w2", testDataKey).save()
         assertTrue(File(dir, "privacy/w1/state.json").exists())
         PrivacyStore.delete(dir, "w1")
         assertFalse(File(dir, "privacy/w1").exists())
@@ -53,16 +53,68 @@ class PrivacyStoreTest : WalletTest() {
     @Test
     fun corruptStateIsAnErrorNotAnEmptyWallet() {
         val dir = tmp()
-        PrivacyStore.open(dir, "w").save()
+        PrivacyStore.open(dir, "w", testDataKey).save()
         File(dir, "privacy/w/state.json").writeText("{\"notes\": [")
-        assertThrows(PrivacyStore.CorruptState::class.java) { PrivacyStore.open(dir, "w") }
+        assertThrows(PrivacyStore.CorruptState::class.java) { PrivacyStore.open(dir, "w", testDataKey) }
     }
 
     @Test
     fun aSaveThatFailsThrows() {
         val dir = tmp()
-        val s = PrivacyStore.open(dir, "w")
+        val s = PrivacyStore.open(dir, "w", testDataKey)
         File(dir, "privacy/w/state.json.tmp").mkdirs()
         assertThrows(java.io.IOException::class.java) { s.save() }
+    }
+
+    @Test
+    fun stateIsSealedOnDisk() {
+        val dir = tmp()
+        val s = PrivacyStore.open(dir, "w", testDataKey)
+        s.state.chainId = "earth-1"
+        s.state.handle = "alice"
+        s.save()
+        val raw = File(dir, "privacy/w/state.json").readText()
+        assertFalse(raw.contains("earth-1"))
+        assertFalse(raw.contains("alice"))
+        assertTrue(raw.contains("\"sealed\""))
+        assertEquals("alice", PrivacyStore.open(dir, "w", testDataKey).state.handle)
+    }
+
+    @Test
+    fun plaintextFromBeforeSealingIsReadAndSealed() {
+        val dir = tmp()
+        File(dir, "privacy/w").mkdirs()
+        val legacy = network.erth.wallet.privacy.sync.PrivacyState().apply { handle = "bob" }
+        File(dir, "privacy/w/state.json").writeText(legacy.toJson().toString())
+        assertEquals("bob", PrivacyStore.open(dir, "w", testDataKey).state.handle)
+        assertFalse(File(dir, "privacy/w/state.json").readText().contains("bob"))
+        assertEquals("bob", PrivacyStore.open(dir, "w", testDataKey).state.handle)
+    }
+
+    @Test
+    fun anotherInstallsSealedStateIsDropped() {
+        val dir = tmp()
+        PrivacyStore.open(dir, "w", testDataKey).apply { state.handle = "carol"; save() }
+        val other = ByteArray(32) { 7 }
+        val s = PrivacyStore.open(dir, "w", other)
+        assertEquals("", s.state.handle)
+        assertEquals("", PrivacyStore.open(dir, "w", other).state.handle)
+    }
+
+    @Test
+    fun aDamagedOrMovedSealIsAnError() {
+        val dir = tmp()
+        PrivacyStore.open(dir, "w", testDataKey).apply { state.handle = "dave"; save() }
+        // Another wallet's directory: the wallet id is bound in.
+        File(dir, "privacy/v").mkdirs()
+        File(dir, "privacy/w/state.json").copyTo(File(dir, "privacy/v/state.json"))
+        assertThrows(PrivacyStore.CorruptState::class.java) { PrivacyStore.open(dir, "v", testDataKey) }
+        // A flipped ciphertext byte.
+        val f = File(dir, "privacy/w/state.json")
+        val j = org.json.JSONObject(f.readText())
+        val ct = j.getString("ct")
+        j.put("ct", (if (ct[0] == '0') "1" else "0") + ct.substring(1))
+        f.writeText(j.toString())
+        assertThrows(PrivacyStore.CorruptState::class.java) { PrivacyStore.open(dir, "w", testDataKey) }
     }
 }

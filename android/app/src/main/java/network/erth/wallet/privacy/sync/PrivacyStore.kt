@@ -483,7 +483,12 @@ class PrivacyState {
  * wallets in the same app never share notes. Three trees: the pool's notes,
  * the identity leaves and the stake notes.
  */
-class PrivacyStore private constructor(private val dir: File?) {
+class PrivacyStore private constructor(
+    private val dir: File?,
+    /** The install's data key ([StateSeal]); null only for a store with no file. */
+    private val key: ByteArray? = null,
+    private val walletId: String = "",
+) {
     private val noteNodes: NodeStore = dir?.let { FileNodeStore(File(it, "notes")) } ?: MemNodeStore()
     private val identityNodes: NodeStore = dir?.let { FileNodeStore(File(it, "identity")) } ?: MemNodeStore()
     private val stakeNodes: NodeStore = dir?.let { FileNodeStore(File(it, "stake")) } ?: MemNodeStore()
@@ -491,18 +496,46 @@ class PrivacyStore private constructor(private val dir: File?) {
     /** state.json exists but does not parse: shown as an error, never silently replaced by an empty state. */
     class CorruptState(message: String, cause: Throwable?) : java.io.IOException(message, cause)
 
+    /** What the file held: plaintext from before sealing (sealed on load), or another install's sealed data (dropped). */
+    private var loadedAs: StateSeal.Contents? = null
+
     var state: PrivacyState = dir?.let { File(it, STATE).takeIf(File::exists) }?.let { f ->
-        try {
-            PrivacyState.fromJson(JSONObject(f.readText()))
+        val contents = try {
+            StateSeal.open(f.readBytes(), key, walletId)
         } catch (e: Exception) {
-            throw CorruptState("this wallet's private data (${f.name}) is unreadable: ${e.message}", e)
+            throw CorruptState("this wallet's private data (${f.name}) is unreadable: ${e.javaClass.simpleName}", e)
+        }
+        loadedAs = contents
+        when (contents) {
+            is StateSeal.Contents.OtherKey -> null
+            is StateSeal.Contents.Legacy -> parse(f, contents.json)
+            is StateSeal.Contents.Opened -> parse(f, contents.json)
         }
     } ?: PrivacyState()
         private set
 
+    private fun parse(f: File, json: JSONObject): PrivacyState = try {
+        PrivacyState.fromJson(json)
+    } catch (e: Exception) {
+        throw CorruptState("this wallet's private data (${f.name}) is unreadable: ${e.message}", e)
+    }
+
     val noteTree = MerkleTree(noteNodes, state.notesNext)
     val identityTree = MerkleTree(identityNodes, state.identityNext)
     val stakeTree = MerkleTree(stakeNodes, state.stakeNext)
+
+    init {
+        when (loadedAs) {
+            // Sealed under an earlier install's key (the wallet storage, and
+            // with it the key, was made anew): unreadable, and everything in
+            // it is found again by a sync from the mnemonic. Its trees go too.
+            is StateSeal.Contents.OtherKey -> { noteTree.clear(); identityTree.clear(); stakeTree.clear(); save() }
+            // Plaintext from before sealing: sealed now, not at some later save.
+            is StateSeal.Contents.Legacy -> if (key != null) save()
+            else -> {}
+        }
+        loadedAs = null
+    }
 
     /**
      * Persists state after the trees, so a crash between the two leaves state
@@ -514,9 +547,10 @@ class PrivacyStore private constructor(private val dir: File?) {
     fun save() {
         noteTree.flush(); identityTree.flush(); stakeTree.flush()
         val d = dir ?: return
+        val k = key ?: throw IllegalStateException("a stored wallet's private data needs the data key to be saved")
         val tmp = File(d, "$STATE.tmp")
         java.io.FileOutputStream(tmp).use { out ->
-            out.write(state.toJson().toString().toByteArray(Charsets.UTF_8))
+            out.write(StateSeal.seal(state.toJson().toString().toByteArray(Charsets.UTF_8), k, walletId))
             out.flush()
             out.fd.sync()
         }
@@ -614,7 +648,9 @@ class PrivacyStore private constructor(private val dir: File?) {
 
         fun memory(): PrivacyStore = PrivacyStore(null)
 
-        fun open(root: File, walletId: String): PrivacyStore = PrivacyStore(File(root, "privacy/$walletId").apply { mkdirs() })
+        /** [key]: the install's data key (SessionManager.dataKey), which seals state.json. */
+        fun open(root: File, walletId: String, key: ByteArray): PrivacyStore =
+            PrivacyStore(File(root, "privacy/$walletId").apply { mkdirs() }, key.copyOf(), walletId)
 
         private val sharedStores = HashMap<String, PrivacyStore>()
 
@@ -623,9 +659,9 @@ class PrivacyStore private constructor(private val dir: File?) {
          * two instances on one directory each save their whole state over
          * the other's. Every app path opens stores through this.
          */
-        fun shared(root: File, walletId: String): PrivacyStore = synchronized(sharedStores) {
+        fun shared(root: File, walletId: String, key: ByteArray): PrivacyStore = synchronized(sharedStores) {
             val dir = File(root, "privacy/$walletId").canonicalPath
-            sharedStores.getOrPut(dir) { open(root, walletId) }
+            sharedStores.getOrPut(dir) { open(root, walletId, key) }
         }
 
         /**
