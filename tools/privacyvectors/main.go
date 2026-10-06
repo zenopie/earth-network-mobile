@@ -99,6 +99,10 @@ func membership(seed uint64) personhoodtypes.Membership {
 	return personhoodtypes.Membership{Proof: []byte{0xbe, 0xef, byte(seed)}, Root: fb(seed + 100), Nullifier: fb(seed + 101)}
 }
 
+func moveProof(seed uint64) personhoodtypes.MoveProof {
+	return personhoodtypes.MoveProof{Proof: []byte{0x30, 0x7e, byte(seed)}, Root: fb(seed + 100), OldNullifier: fb(seed + 101), NewNullifier: fb(seed + 102)}
+}
+
 // stakeProof is a well-formed stake proof: spends lane A nullifiers (one or
 // two), creates lane A's output, credits fills the credit lane, clears names
 // a clear_before and debt root. Ciphertexts are 201-byte stand-ins.
@@ -183,7 +187,7 @@ func main() {
 
 	// ---- tags and derivations -----------------------------------------------
 	out["tags"] = map[string]string{
-		"id": hx(privacy.TagID), "owner": hx(privacy.TagOwner), "leaf": hx(privacy.TagLeaf),
+		"id": hx(privacy.TagID), "owner": hx(privacy.TagOwner), "leaf": hx(privacy.TagLeaf), "succ": hx(privacy.TagSucc),
 		"sn": hx(privacy.TagSN), "pc": hx(privacy.TagPC), "cm": hx(privacy.TagCM), "nf": hx(privacy.TagNF),
 		"reg": hx(privacy.TagReg), "asset": hx(privacy.TagAsset), "signal": hx(privacy.TagSignal),
 		"bytes": hx(privacy.TagBytes), "scope": hx(privacy.TagScope), "affiliate": hx(privacy.TagAffiliate), "referral": hx(privacy.TagReferral),
@@ -222,6 +226,9 @@ func main() {
 		"leaf":      hx(privacy.IdentityLeaf(privacy.IDC(idSecret), fe(1005), privacy.CountryField("DE"), 1_790_000_000, 0)),
 		"leaf_pred": hx(privacy.IdentityLeaf(privacy.IDC(idSecret), fe(1005), privacy.CountryField("DE"), 1_790_000_000, 1_790_000_000)),
 		"leaf_dsc":  hx(fe(1005)),
+		// The succession leaf a switch from id_secret's identity to fe(1006)'s appends (circuits/move).
+		"succession_new_secret": hx(fe(1006)),
+		"succession": hx(privacy.SuccessionLeaf(privacy.IDC(idSecret), privacy.IDC(fe(1006)))),
 		"sn":        hx(privacy.ScopeNullifier(idSecret, privacy.ClaimScope(20360))),
 		"pc":        hx(pc),
 		"cm":        hx(privacy.CM(privacy.AssetID("uanml"), 1_000_000, pc)),
@@ -609,10 +616,10 @@ func main() {
 		Percentages: []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 7, Percent: 40}}, MaxPredecessor: 1_750_000_000})
 	add("set_caretaker_no_bound", &personhoodtypes.MsgSetCaretaker{Fee: fee(61, 2000), Membership: membership(61),
 		Percentages: []allocationtypes.AllocationWeight{{OptionId: 2, Percent: 100}}, MaxPredecessor: uint64(personhoodtypes.NoBound)})
-	add("move_caretaker", &personhoodtypes.MsgMoveCaretaker{Fee: fee(62, 2000), Membership: membership(62), NewOwner: fb(63)})
+	add("move_caretaker", &personhoodtypes.MsgMoveCaretaker{Fee: fee(62, 2000), Move: moveProof(62)})
 	add("bind_handle", &personhoodtypes.MsgBindHandle{Fee: fee(70, 2000), Membership: membership(70), Handle: "alice-01", Address: zaddr, MaxPredecessor: 1_750_000_000})
 	add("bind_handle_release", &personhoodtypes.MsgBindHandle{Fee: fee(71, 2000), Membership: membership(71), MaxPredecessor: uint64(personhoodtypes.NoBound)})
-	add("move_handle", &personhoodtypes.MsgMoveHandle{Fee: fee(72, 2000), Membership: membership(72), Handle: "alice-01", NewOwner: fb(73)})
+	add("move_handle", &personhoodtypes.MsgMoveHandle{Fee: fee(72, 2000), Move: moveProof(72), Handle: "alice-01"})
 	out["handle_address"] = zaddr
 	add("vote_proposal", &assemblytypes.MsgVoteProposal{Fee: fee(80, 2000), Membership: membership(80), ProposalId: 5, Option: assemblytypes.VoteOption(1)})
 	add("propose_removal", &assemblytypes.MsgProposeRemoval{Fee: fee(81, 2000), Membership: membership(81), OptionId: 3})
@@ -757,6 +764,20 @@ func main() {
 			"root": hex.EncodeToString(m.Root), "nullifier": hex.EncodeToString(m.Nullifier), "scope": hx(privacy.ClaimScope(20360)),
 			"signal": hx(fe(9)), "excluded_dsc": hx(fe(10)), "excluded_country": hx(privacy.CountryField("FR")),
 			"max_activation": uint64(personhoodtypes.NoBound), "max_predecessor": 1_750_000_000, "inputs": ps,
+		}
+	}
+
+	// ---- move public inputs (circuits/move, 8acf58f) -----------------------
+	{
+		m := moveProof(72)
+		pis := personhoodtypes.MovePublicInputs(m, privacy.HandleScope(), fe(9))
+		ps := make([]string, len(pis))
+		for i := range pis {
+			ps[i] = hex.EncodeToString(pis[i])
+		}
+		out["move_public_inputs"] = map[string]any{
+			"root": hex.EncodeToString(m.Root), "old_nullifier": hex.EncodeToString(m.OldNullifier), "new_nullifier": hex.EncodeToString(m.NewNullifier),
+			"scope": hx(privacy.HandleScope()), "signal": hx(fe(9)), "inputs": ps,
 		}
 	}
 
