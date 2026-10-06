@@ -2,6 +2,7 @@ package network.erth.wallet.ui.tx
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -44,7 +45,17 @@ class TxController : ViewModel() {
     var lastAction: String? by mutableStateOf(null)
         private set
 
+    /**
+     * A signed tx whose messages are being built, before its sheet:
+     * [TxSheets] calls [prepare] for it, and the sheet is then read back
+     * from those messages (SignedSummary).
+     */
+    var preparing: TxConfirmDetails? by mutableStateOf(null)
+        private set
+
     private var build: ((Context) -> List<ProtoAny>)? = null
+    /** The messages the sheet was read from: exactly what a confirm signs. */
+    private var signed: List<ProtoAny>? = null
     private var private: ((Context) -> String)? = null
     private var gasLimit: Long = DEFAULT_GAS_LIMIT
     private var feeUerth: Long = DEFAULT_FEE_UERTH
@@ -54,10 +65,12 @@ class TxController : ViewModel() {
      * Ask for a transaction. Shows the confirmation sheet; nothing is signed
      * until it is confirmed.
      *
-     * [build] runs off the main thread and receives a Context so it can read
-     * the wallet — the messages are built at confirm time rather than at
-     * request time so a stale sequence number cannot be baked in while the
-     * sheet is open.
+     * [build] runs once, off the main thread, before the sheet ([prepare]),
+     * and receives a Context so it can read the wallet. The sheet shows what
+     * those messages say (SignedSummary) and a confirm signs exactly them,
+     * so nothing the screen changes while the sheet is open reaches the tx.
+     * The messages hold no sequence number: that is read when the tx is
+     * signed, so none goes stale while the sheet is open.
      */
     fun request(
         details: TxConfirmDetails,
@@ -73,11 +86,36 @@ class TxController : ViewModel() {
         val fee = feeFor(gasLimit)
 
         this.build = build
+        this.signed = null
         this.private = null
         this.gasLimit = gasLimit
         this.feeUerth = fee
         this.onDone = onSuccess
-        pending = details.copy(feeUerth = fee)
+        pending = null
+        preparing = details.copy(feeUerth = fee)
+    }
+
+    /**
+     * Builds [preparing]'s messages and shows the sheet read back from them;
+     * a build that fails, or messages that are not this wallet's, end there
+     * with nothing signed. Called by [TxSheets], which has the Context.
+     */
+    suspend fun prepare(context: Context) {
+        val details = preparing ?: return
+        val builder = build ?: return
+        val r = runCatching {
+            withContext(Dispatchers.IO) {
+                val msgs = builder(context)
+                msgs to SignedSummary.describe(msgs, details, SecureWalletManager.getWalletAddress(context).orEmpty())
+            }
+        }
+        // Cancelled, or another request took its place, while it was built.
+        if (preparing !== details) return
+        preparing = null
+        r.fold(
+            onSuccess = { (msgs, shown) -> signed = msgs; pending = shown },
+            onFailure = { e -> build = null; outcome = TxOutcome.Failure(details.action, e) },
+        )
     }
 
     /**
@@ -97,6 +135,8 @@ class TxController : ViewModel() {
         run: (Context) -> String,
     ) {
         this.build = null
+        this.signed = null
+        this.preparing = null
         this.private = run
         this.feeUerth = estimatedFee
         this.onDone = onSuccess
@@ -105,10 +145,11 @@ class TxController : ViewModel() {
 
     fun confirm(context: Context) {
         val details = pending ?: return
-        val builder = build
+        val msgs = signed
         val privateRun = private
-        if (builder == null && privateRun == null) return
+        if (msgs == null && privateRun == null) return
         pending = null
+        signed = null
         lastAction = details.action
         submitting = true
 
@@ -121,7 +162,7 @@ class TxController : ViewModel() {
                     } else {
                         SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
                             val key = EarthWallet.deriveKey(mnemonic)
-                            EarthTx.broadcast(key, builder!!(context), gasLimit, feeUerth.toString())
+                            EarthTx.broadcast(key, msgs!!, gasLimit, feeUerth.toString())
                         }
                     }
                 }
@@ -156,7 +197,9 @@ class TxController : ViewModel() {
 
     fun cancel() {
         pending = null
+        preparing = null
         build = null
+        signed = null
         private = null
     }
 
@@ -229,6 +272,9 @@ fun TxSheets(
     balanceUerth: Long,
     context: Context,
 ) {
+    controller.preparing?.let { p ->
+        LaunchedEffect(p) { controller.prepare(context) }
+    }
     controller.pending?.let { details ->
         TxConfirmSheet(
             details = if (details.shielded) details else details.copy(balanceUerth = balanceUerth),

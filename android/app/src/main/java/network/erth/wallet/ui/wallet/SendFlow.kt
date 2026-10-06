@@ -252,6 +252,8 @@ fun SendFlow(
                 )
                 return@SendScreen
             }
+            // Captured now: the build must not read the field as it is later.
+            val to = recipient
             tx.request(
                 details = TxConfirmDetails(
                     action = "Send ${selected.symbol}",
@@ -259,7 +261,7 @@ fun SendFlow(
                     balanceUerth = state.balanceUerth,
                     amountLabel = "Amount",
                     amountValue = "$amount ${selected.symbol}",
-                    recipient = recipient,
+                    recipient = to,
                 ),
                 onSuccess = {
                     recipient = ""
@@ -271,7 +273,7 @@ fun SendFlow(
                     listOf(
                         Bank.msgSend(
                             from,
-                            recipient,
+                            to,
                             selected.denom,
                             amountUerth.toString(),
                         ),
