@@ -578,6 +578,11 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             if !m.affiliateHandle.isEmpty {
                 try need(Handles.valid(m.affiliateHandle), "affiliate_handle")
             }
+            // An idc registers once, ever (ErrIdcUsed, in the ante before the proof).
+            try need(!usedIdcs.contains(try f(m.idc)), "identity commitment has been registered before; register a fresh identity (code 1130)")
+            // The proof's idc output is the msg's (params.idc_index 4).
+            try need(m.publicSignals.count == 5 && (try PrivateMsgs.decimalField(m.publicSignals[4])) == (try f(m.idc)),
+                     "proof's identity commitment is not this msg's idc (code 1103)")
         case let m as MsgBindHandle:
             try only(nil)
             try need(m.handle.isEmpty == m.address.isEmpty, "a bind names a handle and an address; a release neither")
@@ -944,6 +949,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try need(binding == (try m.binding(chainID: chainID)), "binding")
             // A landed binding is never used again.
             try need(usedBindings.insert(binding).inserted, "binding already used (ErrBindingUsed)")
+            usedIdcs.insert(try f(m.idc))
             let dsc = try PrivateMsgs.decimalField(m.publicSignals[3])
             let idc = try f(m.idc)
             // A switch: the holder's old leaf is zeroed, the new one appended.
@@ -1197,6 +1203,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     var registeredIdc: [UInt64: Fr] = [:]
     var usedBindings: Set<Fr> = []
+    /// Every idc ever registered (genesis used_idcs).
+    var usedIdcs: Set<Fr> = []
     var passportOf: [UInt64: String] = [:]
     /// (height, leaf index) of every zeroing.
     var zeroed: [(height: UInt64, index: UInt64)] = []

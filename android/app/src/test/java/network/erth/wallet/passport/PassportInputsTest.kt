@@ -37,7 +37,7 @@ class PassportInputsTest {
             val want = expected.getJSONObject("witness")
             val inputs = PassportInputs.buildInputs(
                 Vectors.resource("${v.id}/dg1.bin"), Vectors.resource("${v.id}/sod.bin"),
-                expected.getInt("current_date"), expected.getString("address"), variants,
+                expected.getInt("current_date"), expected.getString("address"), expected.getString("id_secret"), variants,
             )
             assertEquals(v.id, inputs.variant.id)
             assertEquals(v.id, expected.getString("scheme"), inputs.scheme)
@@ -54,7 +54,7 @@ class PassportInputsTest {
             try {
                 PassportInputs.buildInputs(
                     Vectors.resource("${v.id}/dg1_tampered.bin"), Vectors.resource("${v.id}/sod.bin"),
-                    250101, "0x1", variants,
+                    250101, "0x1", "0x2", variants,
                 )
                 fail("${v.id}: a tampered DG1 was accepted")
             } catch (e: PassportInputs.PassportDataException) {
@@ -74,7 +74,7 @@ class PassportInputsTest {
             try {
                 PassportInputs.buildInputs(
                     Vectors.resource("unsupported/$name/dg1.bin"), Vectors.resource("unsupported/$name/sod.bin"),
-                    250101, "0x1", variants,
+                    250101, "0x1", "0x2", variants,
                 )
                 fail("$name was accepted")
             } catch (e: PassportInputs.UnsupportedPassportException) {
@@ -88,7 +88,7 @@ class PassportInputsTest {
     fun aNonTd3Dg1IsUnsupported() {
         val v = variants.variants.first()
         try {
-            PassportInputs.buildInputs(ByteArray(60), Vectors.resource("${v.id}/sod.bin"), 250101, "0x1", variants)
+            PassportInputs.buildInputs(ByteArray(60), Vectors.resource("${v.id}/sod.bin"), 250101, "0x1", "0x2", variants)
             fail()
         } catch (e: PassportInputs.UnsupportedPassportException) {
             assertEquals("60-byte DG1 (not a TD3 passport)", e.scheme)

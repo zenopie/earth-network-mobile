@@ -41,6 +41,13 @@ object Reminders {
          * wallet points it here.
          */
         data class HandlePaysElsewhere(val handle: String) : Reminder
+
+        /**
+         * After a switch: the time the wallet suggested for bringing the
+         * predecessor's handle and caretaker vote over ([at]) has come.
+         * The move itself is the user's to make.
+         */
+        data class MoveSuggested(val at: Long) : Reminder
     }
 
     /**
@@ -85,6 +92,8 @@ object Reminders {
         val ownAddress: String = "",
         /** This wallet's Groundworks positions' leases (stake, so not tied to a live identity). */
         val groundworks: List<GroundworksLease> = emptyList(),
+        /** PrivacyWallet.moveSuggestionDue: the suggested move time once it has come (0: none). */
+        val moveSuggestedAt: Long = 0,
     )
 
     fun due(i: Inputs): List<Reminder> {
@@ -97,6 +106,7 @@ object Reminders {
         }
         i.groundworks.mapNotNullTo(out) { groundworks(it, i.now) }
         if (!i.identityLive) return out
+        if (i.moveSuggestedAt in 1..i.now) out.add(Reminder.MoveSuggested(i.moveSuggestedAt))
         val held = i.handleEntry?.takeIf { i.handle.isNotEmpty() && it.handle == i.handle }
         val entries = (listOfNotNull(held) + i.addressed).distinctBy { it.handle }
         for (e in entries) {
@@ -138,6 +148,8 @@ object Reminders {
             else "@${r.handle} expires in ${days(Handles.satSub(r.expiresAt, now))}. Renew it to keep it."
         is Reminder.HandlePaysElsewhere ->
             "@${r.handle} still pays the wallet it moved from. Renew it here to point it at this wallet."
+        is Reminder.MoveSuggested ->
+            "The suggested time to bring your handle and caretaker vote from your previous identity has come. Open Identity to move them."
     }
 
     private fun days(seconds: Long): String {

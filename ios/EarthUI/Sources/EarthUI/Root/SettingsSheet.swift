@@ -140,6 +140,7 @@ struct IdentityScreen: View {
     @Environment(TxController.self) private var tx
     @Environment(\.dismiss) private var dismiss
     @State private var registering = false
+    @State private var adding = false
     /// After a switch: what the identity this one replaced can bring here (it syncs that wallet).
     @State private var moveOffer: AppModel.MoveOffer?
 
@@ -176,6 +177,13 @@ struct IdentityScreen: View {
                         Text("Need ERTH in your public account for fees? Unshield some from Portfolio.")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textSecondary)
+                    } else if model.privacy?.identityUsed() == true {
+                        // The chain keeps every identity it ever registered (used_idcs) and
+                        // refuses it again (1130): a return after a switch or a lapse is a new wallet.
+                        Text("Each identity can register only once. To count as a person again, create a new wallet and register your passport there. If this passport's registration is still live in another wallet, registering in the new one switches it there.")
+                            .font(EarthType.bodySmall)
+                            .foregroundStyle(theme.colors.textSecondary)
+                        EarthButton(title: "Create a new wallet") { adding = true }
                     } else {
                         EarthButton(title: "Register with your passport") { registering = true }
                     }
@@ -188,6 +196,7 @@ struct IdentityScreen: View {
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
             .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
+            .sheet(isPresented: $adding) { AddWalletSheet(mode: .create).earthThemed() }
             .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
             .sheet(isPresented: $switching) { SwitchIdentityScreen().earthThemed() }
             .task(id: model.isRegistered) { moveOffer = model.isRegistered ? await model.moveOffer() : nil }
@@ -200,7 +209,7 @@ struct IdentityScreen: View {
     private var subtitle: String {
         switch model.identityStatus {
         case .live: "Your registration is in the identity tree."
-        case .zeroed: "Your registration expired, or moved to another wallet. Register again to take part."
+        case .zeroed: "Your registration expired, or moved to another wallet. This wallet's identity cannot register again: register from a new wallet to take part."
         case .none: "Prove you are a unique human to claim ANML and vote."
         }
     }

@@ -233,6 +233,11 @@ struct SwitchIdentityScreen: View {
     @State private var adding = false
     @State private var registering = false
     @State private var targetWarning: String?
+    /// The chosen target's identity registered before: the chain refuses a switch to it (1130).
+    @State private var targetBlocked: String?
+    /// One step only: what this identity's predecessor still holds that has not moved here.
+    @State private var unmoved: String?
+    @State private var strandAccepted = false
 
     var body: some View {
         NavigationStack {
@@ -250,7 +255,13 @@ struct SwitchIdentityScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button(confirming ? "Cancel" : "Done") { if confirming { confirming = false } else { dismiss() } } } }
             .background(theme.colors.bgPrimary)
-            .task { model.loadWallets(); await model.refreshPersonal() }
+            .task {
+                model.loadWallets(); await model.refreshPersonal()
+                if let o = await model.moveOffer(), o.anything {
+                    let what = [o.handle.isEmpty ? nil : "@\(o.handle)", o.voteLive ? "your caretaker vote" : nil].compactMap { $0 }.joined(separator: " and ")
+                    unmoved = "\(o.fromName), the identity this one replaced, still holds \(what.isEmpty ? "a move still in flight" : what)."
+                }
+            }
             .onChange(of: scenePhase) { if scenePhase != .active { phrase = nil } }
             .onDisappear { phrase = nil }
             .sheet(isPresented: $adding) { AddWalletSheet(mode: .create).earthThemed() }
@@ -260,7 +271,10 @@ struct SwitchIdentityScreen: View {
 
     private func pick(_ index: Int) {
         target = index; phrase = nil; backedUp = false
-        guard let info = model.switchTargetInfo(ofWallet: index) else { targetWarning = nil; return }
+        guard let info = model.switchTargetInfo(ofWallet: index) else { targetWarning = nil; targetBlocked = nil; return }
+        targetBlocked = info.used
+            ? "That wallet's identity has been registered before, and the chain accepts each identity only once. Switch to a wallet that has never registered, or create a new one."
+            : nil
         // What a move after the switch could not bring there, said up front.
         if info.handleRefusal != nil || info.voteRefusal != nil {
             targetWarning = [info.handleRefusal.map { "Your handle cannot be brought there: \($0)." },
@@ -268,7 +282,7 @@ struct SwitchIdentityScreen: View {
                 .compactMap { $0 }.joined(separator: " ")
         } else {
             targetWarning = info.registered
-                ? "That wallet has a registration, or sent one in the last two days that can still land. Switching to it replaces this identity with it; anything it holds stays with it."
+                ? "That wallet sent a registration in the last two days that can still land. If it lands, that wallet's identity is used and the chain refuses this switch to it."
                 : nil
         }
     }
@@ -280,6 +294,11 @@ struct SwitchIdentityScreen: View {
                     .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
                 Text("A switch from a wallet whose recovery phrase is lost cannot move anything: the move needs that wallet's secret. Its handle and caretaker vote wait out their leases. Back up every wallet's recovery phrase.")
                     .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
+                if let unmoved {
+                    Text("\(unmoved) A move goes only from an identity to the one that replaced it, so after another switch it can never move. Bring it here first, from the Identity screen.")
+                        .font(EarthType.bodySmall).foregroundStyle(theme.colors.textError)
+                    Toggle("Switch anyway and leave it where it is", isOn: $strandAccepted)
+                }
                 EarthLabel("Switch to")
                 let others = model.wallets.enumerated().filter { $0.offset != model.selected }
                 if others.isEmpty {
@@ -297,7 +316,11 @@ struct SwitchIdentityScreen: View {
                     }
                     .buttonStyle(.plain)
                 }
-                if let targetWarning { Text(targetWarning).font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary) }
+                if let targetBlocked {
+                    Text(targetBlocked).font(EarthType.bodySmall).foregroundStyle(theme.colors.textError)
+                } else if let targetWarning {
+                    Text(targetWarning).font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
+                }
                 EarthButton(title: "Create a new wallet", role: .secondary) { adding = true }
                 if let phrase {
                     SeedGrid(words: phrase.split(separator: " ").map(String.init))
@@ -317,7 +340,7 @@ struct SwitchIdentityScreen: View {
                     guard let t = target else { return }
                     Task { await model.select(t); registering = true }
                 }
-                .disabled(!(target != nil && backedUp && canTick))
+                .disabled(!(target != nil && backedUp && canTick && targetBlocked == nil && (unmoved == nil || strandAccepted)))
             }
             .padding(theme.space.gutter)
         }
@@ -336,6 +359,8 @@ struct MoveOfferCard: View {
     let offer: AppModel.MoveOffer
     /// Asked to read the offer again (after a move, or a check).
     let refresh: () async -> Void
+    /// A move asked for before the suggested time, waiting for the user's answer.
+    @State private var early: Bool?
 
     private var handleInFlight: Bool { offer.inFlight.contains { $0.kind == PendingMove.handleKind && !$0.confirmed } }
     private var voteInFlight: Bool { offer.inFlight.contains { $0.kind == PendingMove.caretakerKind && !$0.confirmed } }
@@ -344,15 +369,20 @@ struct MoveOfferCard: View {
         VStack(alignment: .leading, spacing: theme.space.x12) {
             EarthLabel("From your previous identity")
             note("This identity replaced the one in \(offer.fromName). You can bring what it holds here with no wait, while this is still the passport's live identity. The fee comes from \(offer.fromName)'s private ERTH.")
+            if offer.suggestedAt > 0 {
+                note(offer.suggestedAt > now
+                     ? "Suggested: move after \(Self.moveTime(offer.suggestedAt)). A move right after a switch can be linked to it by its timing, so the wallet picked a random time for you. Nothing hurries it while this stays your live identity, and the wallet reminds you then; it never moves anything on its own."
+                     : "The suggested time to move has come. Nothing hurries it while this stays your live identity; move before you switch again.")
+            }
             if !offer.handle.isEmpty && !handleInFlight {
                 if offer.handleLive {
-                    EarthButton(title: "Bring your handle @\(offer.handle) to this identity") { bring(handle: true) }
+                    EarthButton(title: "Bring your handle @\(offer.handle) to this identity") { move(handle: true) }
                 } else {
                     note("@\(offer.handle) is in its renewal period: only a live handle can move, and the old identity can no longer renew it.")
                 }
             }
             if offer.voteLive && !voteInFlight {
-                EarthButton(title: "Bring your Caretaker split to this identity") { bring(handle: false) }
+                EarthButton(title: "Bring your Caretaker split to this identity") { move(handle: false) }
             }
             if !offer.inFlight.isEmpty {
                 note(handleInFlight || voteInFlight
@@ -364,6 +394,24 @@ struct MoveOfferCard: View {
             }
             note("Once moved, the previous identity can never hold a handle or caretaker vote again.")
         }
+        // Before the suggested time a move asks first; it is never sent on its own.
+        .alert("Move before the suggested time?", isPresented: Binding(get: { early != nil }, set: { if !$0 { early = nil } })) {
+            Button("Move now") { if let h = early { early = nil; bring(handle: h) } }
+            Button("Wait", role: .cancel) { early = nil }
+        } message: {
+            Text("A move soon after your switch can be linked to it by its timing. The wallet suggests waiting until \(Self.moveTime(offer.suggestedAt)). You can still move now.")
+        }
+    }
+
+    private var now: Int64 { Int64(Date().timeIntervalSince1970) }
+
+    private func move(handle: Bool) {
+        if offer.suggestedAt > now { early = handle } else { bring(handle: handle) }
+    }
+
+    /// A suggested move time, in the phone's time zone.
+    static func moveTime(_ at: Int64) -> String {
+        Date(timeIntervalSince1970: TimeInterval(at)).formatted(date: .abbreviated, time: .shortened)
     }
 
     private func note(_ s: String) -> some View { Text(s).font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary) }

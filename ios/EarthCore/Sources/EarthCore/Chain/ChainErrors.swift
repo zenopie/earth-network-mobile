@@ -40,6 +40,9 @@ public enum ChainErrors {
         // A switch is proven on a strictly later date than the live registration.
         Known(codespace: "personhood", code: 1128, text: "identity switch must be proven on a later date than the live registration",
               explain: "This passport already switched identity today (UTC). A passport can switch once per day: try again tomorrow."),
+        // An idc registers once, ever (used_idcs): a switch back to an earlier wallet, or a re-entry from the old one.
+        Known(codespace: "personhood", code: 1130, text: "identity commitment has been registered before",
+              explain: PrivacyWallet.identityUsedMessage),
         // The signer's (or country's) daily cap; a switch counts against its signer's.
         Known(codespace: "personhood", code: 1113, text: "daily registration limit reached",
               explain: "Today's limit for passports from this issuer has been reached. Try again tomorrow."),

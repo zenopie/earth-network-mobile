@@ -80,7 +80,7 @@ abstract class WalletTest {
         val prep = w.prepareRegistration(null)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         w.sync()
-        val signals = listOf("261001", prep.binding.toBigInteger().toString(), passport, Fr.of(77).toBigInteger().toString())
+        val signals = listOf("261001", prep.binding.toBigInteger().toString(), passport, Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString())
         w.register(prep, ByteArray(14_656), signals, "lean_poa", ByteArray(10))
         w.sync()
         assertEquals(WalletSync.IdentityStatus.LIVE, w.identityStatus())

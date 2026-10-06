@@ -250,6 +250,14 @@ fun SwitchIdentityScreen(
     targetWarning: String?,
     onTargetChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Why the chosen target cannot be switched to (its identity registered before), or null. */
+    targetBlocked: String? = null,
+    /**
+     * What this identity's predecessor (on this phone) still holds that has
+     * not moved here, or null: a move goes one step, so a further switch
+     * strands it there for good.
+     */
+    unmoved: String? = null,
 ) {
     val dimens = EarthTheme.dimens
     var target by remember { mutableStateOf<Int?>(null) }
@@ -257,6 +265,7 @@ fun SwitchIdentityScreen(
     var phrase by remember { mutableStateOf<String?>(null) }
     var revealedFor by remember { mutableStateOf<Int?>(null) }
     var confirming by remember { mutableStateOf(false) }
+    var strandAccepted by remember { mutableStateOf(false) }
     // The phrase lives only while the screen is in front: gone on pause and when left.
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
@@ -293,6 +302,19 @@ fun SwitchIdentityScreen(
                 "that wallet's secret. Its handle and caretaker vote wait out their leases. Back up every " +
                 "wallet's recovery phrase.",
         )
+        if (unmoved != null) {
+            Spacer(Modifier.height(dimens.space8))
+            Text(
+                "$unmoved A move goes only from an identity to the one that replaced it, so after another switch " +
+                    "it can never move. Bring it here first, from the Identity screen.",
+                style = EarthTypography.textSm,
+                color = EarthColors.Utility.ErrorRed.utilityError700,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = strandAccepted, onCheckedChange = { strandAccepted = it })
+                Text("Switch anyway and leave it where it is", style = EarthTypography.textSm, color = EarthColors.Text.textPrimary)
+            }
+        }
         Spacer(Modifier.height(dimens.space16))
         EarthLabel("Switch to")
         val others = wallets.filter { it.index != currentIndex }
@@ -314,7 +336,9 @@ fun SwitchIdentityScreen(
                 }
             }
         }
-        targetWarning?.let { Note(it) }
+        targetBlocked?.let {
+            Text(it, style = EarthTypography.textSm, color = EarthColors.Utility.ErrorRed.utilityError700)
+        } ?: targetWarning?.let { Note(it) }
         EarthButton(
             text = "Create a new wallet",
             onClick = onCreateWallet,
@@ -357,7 +381,7 @@ fun SwitchIdentityScreen(
         EarthButton(
             text = "Switch: register there",
             onClick = { if (t != null) onContinue(t) },
-            enabled = t != null && backedUp && canTick,
+            enabled = t != null && backedUp && canTick && targetBlocked == null && (unmoved == null || strandAccepted),
             modifier = Modifier.fillMaxWidth(),
             colors = brandButtonColors(),
         )
@@ -377,8 +401,26 @@ fun MoveOfferCard(
     onBringVote: () -> Unit,
     onCheckMoves: () -> Unit,
     modifier: Modifier = Modifier,
+    now: Long = System.currentTimeMillis() / 1000,
 ) {
     val dimens = EarthTheme.dimens
+    // Before the suggested time a move asks first; it is never sent on its own.
+    var early by remember { mutableStateOf<(() -> Unit)?>(null) }
+    fun move(go: () -> Unit) { if (offer.suggestedAt > now) early = go else go() }
+    early?.let { go ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { early = null },
+            title = { androidx.compose.material3.Text("Move before the suggested time?") },
+            text = {
+                androidx.compose.material3.Text(
+                    "A move soon after your switch can be linked to it by its timing. The wallet suggests waiting until " +
+                        "${moveTime(offer.suggestedAt)}. You can still move now.",
+                )
+            },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { early = null; go() }) { androidx.compose.material3.Text("Move now") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { early = null }) { androidx.compose.material3.Text("Wait") } },
+        )
+    }
     val handleInFlight = offer.inFlight.any { it.kind == PendingMove.HANDLE && !it.confirmed }
     val voteInFlight = offer.inFlight.any { it.kind == PendingMove.CARETAKER && !it.confirmed }
     Column(modifier.fillMaxWidth()) {
@@ -388,11 +430,24 @@ fun MoveOfferCard(
             "This identity replaced the one in ${offer.fromName}. You can bring what it holds here with no wait, " +
                 "while this is still the passport's live identity. The fee comes from ${offer.fromName}'s private ERTH.",
         )
+        if (offer.suggestedAt > 0) {
+            Spacer(Modifier.height(dimens.space8))
+            Note(
+                if (offer.suggestedAt > now) {
+                    "Suggested: move after ${moveTime(offer.suggestedAt)}. A move right after a switch can be linked to " +
+                        "it by its timing, so the wallet picked a random time for you. Nothing hurries it while this stays " +
+                        "your live identity, and the wallet reminds you then; it never moves anything on its own."
+                } else {
+                    "The suggested time to move has come. Nothing hurries it while this stays your live identity; " +
+                        "move before you switch again."
+                },
+            )
+        }
         Spacer(Modifier.height(dimens.space8))
         if (offer.handle.isNotEmpty() && !handleInFlight) {
             if (offer.handleLive) EarthButton(
                 text = "Bring your handle @${offer.handle} to this identity",
-                onClick = onBringHandle,
+                onClick = { move(onBringHandle) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = brandButtonColors(),
             ) else Note("@${offer.handle} is in its renewal period: only a live handle can move, and the old identity can no longer renew it.")
@@ -401,7 +456,7 @@ fun MoveOfferCard(
         if (offer.voteLive && !voteInFlight) {
             EarthButton(
                 text = "Bring your Caretaker split to this identity",
-                onClick = onBringVote,
+                onClick = { move(onBringVote) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = brandButtonColors(),
             )
@@ -423,3 +478,7 @@ fun MoveOfferCard(
         Note("Once moved, the previous identity can never hold a handle or caretaker vote again.")
     }
 }
+
+/** A suggested move time, in the phone's time zone. */
+private fun moveTime(at: Long): String =
+    java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(at * 1000))

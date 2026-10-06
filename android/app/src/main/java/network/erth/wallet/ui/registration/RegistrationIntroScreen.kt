@@ -48,6 +48,8 @@ import network.erth.wallet.ui.theme.EarthTheme
 fun RegistrationIntroScreen(
     onStart: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Why this wallet cannot register (its identity registered before), or null. */
+    blocked: String? = null,
 ) {
     val dimens = EarthTheme.dimens
 
@@ -107,17 +109,22 @@ fun RegistrationIntroScreen(
         // what the old identity holds stays there unless it was moved first.
         Text(
             text = "Already registered from another wallet? Registering here switches your " +
-                "identity to this wallet. Move your handle and caretaker vote first, from the " +
-                "old wallet's Identity screen (Switch identity), or the new identity waits up " +
-                "to a year before it can hold them. A passport can switch once per day (UTC).",
+                "identity to this wallet. Once the switch lands, bring your handle and caretaker " +
+                "vote over from this wallet's Identity screen, before you switch again. A passport " +
+                "can switch once per day (UTC), and only to a wallet that has never registered.",
             style = EarthTypography.textXs,
             color = EarthColors.Text.textTertiary,
         )
 
+        blocked?.let {
+            Spacer(Modifier.height(dimens.space16))
+            Text(text = it, style = EarthTypography.textSm, color = EarthColors.Utility.ErrorRed.utilityError700)
+        }
         Spacer(Modifier.height(dimens.space24))
         EarthButton(
             text = "Start",
             onClick = onStart,
+            enabled = blocked == null,
             modifier = Modifier.fillMaxWidth(),
             colors = brandButtonColors(),
         )

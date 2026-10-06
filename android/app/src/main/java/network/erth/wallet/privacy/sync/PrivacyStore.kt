@@ -261,6 +261,15 @@ class PrivacyState {
     val pendingMoves: MutableList<PendingMove> = ArrayList()
     /** The store id of the wallet a switch moves to, fixed by its first move. */
     var switchTarget: String = ""
+    /**
+     * After a switch to this identity: when the wallet suggests bringing the
+     * predecessor's handle and split over (a random delay after the switch,
+     * so a move does not link them by timing; 0: none drawn), and the leaf
+     * of the registration it was drawn for. A suggestion only: nothing moves
+     * unasked.
+     */
+    var moveSuggestedAt: Long = 0
+    var moveSuggestedLeaf: Long = -1
     /** Undelegations whose payout has not arrived yet. */
     val pendingUnbonds: MutableList<PendingUnbond> = ArrayList()
     /** Every stake vote cast: (proposal, vote nullifier). */
@@ -329,6 +338,7 @@ class PrivacyState {
         put("void_record_heights", JSONArray(voidRecordHeights.toList()))
         put("pending_moves", JSONArray().apply { pendingMoves.forEach { put(moveJson(it)) } })
         put("switch_target", switchTarget)
+        put("move_suggested_at", moveSuggestedAt); put("move_suggested_leaf", moveSuggestedLeaf)
         put("pending_unbonds", JSONArray().apply {
             pendingUnbonds.forEach { u ->
                 put(JSONObject().put("tx_hash", u.txHash).put("validator", u.validator).put("derth", u.derth).put("pc", u.pc.toHex())
@@ -407,6 +417,7 @@ class PrivacyState {
             voidRecordHeights.addAll(longs(j.optJSONArray("void_record_heights")))
             j.optJSONArray("pending_moves")?.let { a -> for (i in 0 until a.length()) pendingMoves.add(moveFromJson(a.getJSONObject(i))) }
             switchTarget = j.optString("switch_target")
+            moveSuggestedAt = j.optLong("move_suggested_at"); moveSuggestedLeaf = j.optLong("move_suggested_leaf", -1)
             j.optJSONArray("pending_unbonds")?.let { a ->
                 for (i in 0 until a.length()) a.getJSONObject(i).let {
                     pendingUnbonds.add(PendingUnbond(it.getString("tx_hash"), it.getString("validator"), it.getLong("derth"), Fr.fromHex(it.getString("pc")),
@@ -644,6 +655,7 @@ class PrivacyStore private constructor(
         s.voidRecordHeights.addAll(old.voidRecordHeights)
         s.pendingMoves.addAll(old.pendingMoves)
         s.switchTarget = old.switchTarget
+        s.moveSuggestedAt = old.moveSuggestedAt; s.moveSuggestedLeaf = old.moveSuggestedLeaf
         s.verifiedHeight = old.verifiedHeight
     }
 

@@ -357,7 +357,7 @@ class SyncTest : WalletTest() {
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         b.sync()
         idx.freeze()
-        b.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), "1", "77"), "lean_poa", ByteArray(10))
+        b.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), "1", "77", prep.idc.toBigInteger().toString()), "lean_poa", ByteArray(10))
         val r = b.sync()
         assertFalse(r.verified)
         assertTrue(b.store.state.rootsError!!, b.store.state.rootsError!!.contains("could not be read at the indexer's height"))

@@ -52,7 +52,7 @@ class HandlesTest {
         val prep = w.prepareRegistration(referrer)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         w.sync()
-        val signals = listOf("261001", prep.binding.toBigInteger().toString(), passport, Fr.of(77).toBigInteger().toString())
+        val signals = listOf("261001", prep.binding.toBigInteger().toString(), passport, Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString())
         w.register(prep, ByteArray(14_656), signals, "lean_poa", ByteArray(10))
         w.sync()
         assertEquals(WalletSync.IdentityStatus.LIVE, w.identityStatus())
@@ -204,10 +204,12 @@ class HandlesTest {
         chain.shield("uerth", 100_000, cprep.gas.pc, cprep.gas.ciphertext)
         c.sync()
         val refused = runCatching {
-            c.register(cprep, ByteArray(14_656), listOf("261001", cprep.binding.toBigInteger().toString(), "333", Fr.of(77).toBigInteger().toString()), "lean_poa", ByteArray(10))
+            c.register(cprep, ByteArray(14_656), listOf("261001", cprep.binding.toBigInteger().toString(), "333", Fr.of(77).toBigInteger().toString(), cprep.idc.toBigInteger().toString()), "lean_poa", ByteArray(10))
         }.exceptionOrNull()
         assertTrue("$refused", refused?.message.orEmpty().contains("1121"))
-        assertThrows(IllegalArgumentException::class.java) { a.prepareRegistration(PrivacyWallet.Referrer("alice", a.address)) }
+        // (A wallet that never registered: a registered one is refused sooner, its identity used.)
+        val d = wallet(chain, "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong")
+        assertThrows(IllegalArgumentException::class.java) { d.prepareRegistration(PrivacyWallet.Referrer("alice", d.address)) }
     }
 
     @Test

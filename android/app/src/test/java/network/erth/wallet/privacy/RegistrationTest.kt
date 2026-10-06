@@ -23,7 +23,7 @@ import org.junit.Test
  */
 class RegistrationTest : WalletTest() {
     private fun signals(prep: PrivacyWallet.RegistrationPrep, nullifier: String = "123456789") =
-        listOf("261001", prep.binding.toBigInteger().toString(), nullifier, Fr.of(77).toBigInteger().toString())
+        listOf("261001", prep.binding.toBigInteger().toString(), nullifier, Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString())
 
     @Test
     fun registrationBindingNamesTheChain() {
@@ -45,11 +45,11 @@ class RegistrationTest : WalletTest() {
         val chain = FakeChain()
         val a = wallet(chain, alice)
         val prep = a.prepareRegistration(PrivacyWallet.Referrer("bobby", wallet(chain, bob).address))
-        val msg = a.registerMsg(prep, ByteArray(1), listOf("1", "2", "3", "4"), "lean_poa", ByteArray(1))
+        val msg = a.registerMsg(prep, ByteArray(1), listOf("1", "2", "3", "4", "5"), "lean_poa", ByteArray(1))
         assertEquals("bobby", msg.affiliateHandle)
         assertEquals(Privacy.affiliateField("bobby"), network.erth.wallet.privacy.tx.PrivateMsgs.affiliateField(msg))
         // No referrer: 0, and no handle on the wire.
-        val none = a.registerMsg(a.prepareRegistration(null), ByteArray(1), listOf("1", "2", "3", "4"), "lean_poa", ByteArray(1))
+        val none = a.registerMsg(a.prepareRegistration(null), ByteArray(1), listOf("1", "2", "3", "4", "5"), "lean_poa", ByteArray(1))
         assertEquals("", none.affiliateHandle)
         assertEquals(Fr.ZERO, network.erth.wallet.privacy.tx.PrivateMsgs.affiliateField(none))
         assertTrue(NotePlaintext.fresh("uerth", 1).rho != Fr.ZERO)
@@ -64,7 +64,7 @@ class RegistrationTest : WalletTest() {
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         a.sync()
         assertThrows(IllegalArgumentException::class.java) {
-            a.register(prep, ByteArray(14_656), listOf("250231", prep.binding.toBigInteger().toString(), "555", Fr.of(77).toBigInteger().toString()), "lean_poa", ByteArray(10))
+            a.register(prep, ByteArray(14_656), listOf("250231", prep.binding.toBigInteger().toString(), "555", Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString()), "lean_poa", ByteArray(10))
         }
         assertEquals(0, chain.simulated)
     }
@@ -124,7 +124,7 @@ class RegistrationTest : WalletTest() {
         a.sync()
         assertEquals(100_000L, bal(a, "uerth"))
         chain.unconfirmedNext = 1
-        val sigs = listOf("261001", prep.binding.toBigInteger().toString(), "31337", Fr.of(77).toBigInteger().toString())
+        val sigs = listOf("261001", prep.binding.toBigInteger().toString(), "31337", Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString())
         assertThrows(network.erth.wallet.chain.TxUnconfirmedException::class.java) { a.register(prep, ByteArray(14_656), sigs, "lean_poa", ByteArray(10)) }
         val p = store.state.pendingRegistration!!
         assertEquals(chain.txs.keys.single { chain.txs[it]!!.events.any { e -> e.first == "register" } }, p.txHash)
@@ -147,7 +147,7 @@ class RegistrationTest : WalletTest() {
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         a.sync()
         chain.failInBlockNext = 1
-        val sigs = listOf("261001", prep.binding.toBigInteger().toString(), "1", Fr.of(77).toBigInteger().toString())
+        val sigs = listOf("261001", prep.binding.toBigInteger().toString(), "1", Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString())
         assertThrows(java.io.IOException::class.java) { a.register(prep, ByteArray(14_656), sigs, "lean_poa", ByteArray(10)) }
         a.sync()
         assertTrue(a.pendingRegistration!!.failure!!.startsWith(PrivacyWallet.TX_FAILED))
@@ -184,7 +184,7 @@ class RegistrationTest : WalletTest() {
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         a.sync()
         chain.failInBlockNext = 1
-        val sigs = listOf("261001", prep.binding.toBigInteger().toString(), "1", Fr.of(77).toBigInteger().toString())
+        val sigs = listOf("261001", prep.binding.toBigInteger().toString(), "1", Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString())
         assertThrows(java.io.IOException::class.java) { a.register(prep, ByteArray(14_656), sigs, "lean_poa", ByteArray(10)) }
         assertEquals(1_790_812_800L + 5 * 86_400L, a.store.state.registrationKeepUntil)
     }

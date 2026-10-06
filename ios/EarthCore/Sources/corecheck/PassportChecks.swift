@@ -11,6 +11,11 @@ import Foundation
 /// since proving for the account that signs is the invariant worth exercising.
 private let checkAddress = "earth1v4shyarg94nxj7r5w4ex2tthv9kxcet5fft9fs"
 
+/// The identity secret the written witness registers: the circuits' fixture
+/// value ("earth-fixture-id" as one field element), so `progate --witness`
+/// proves an idc the fixtures already pin.
+private let fixtureIDSecret = "0x65617274682d666978747572652d6964"
+
 /// The account the passport checks prove against. Any valid earth address will
 /// do -- the circuit binds whatever it is handed -- but it has to be a real
 /// bech32 one, because the input builder decodes and checksums it.
@@ -62,7 +67,8 @@ private func checkSharedFixtures() {
         do {
             let inputs = try PassportInputs.build(
                 dg1: dg1, efSOD: sod, currentDateYYMMDD: expected["current_date"] as! Int,
-                addressField: expected["address"] as! String, variants: variants)
+                addressField: expected["address"] as! String,
+                idSecretField: expected["id_secret"] as! String, variants: variants)
             Check.equal("\(v.id) selected", inputs.algorithm, v.id)
             Check.equal("\(v.id) scheme", inputs.scheme, expected["scheme"] as? String)
             Check.equal("\(v.id) witness keys", Set(inputs.witness.keys), Set(want.keys))
@@ -77,9 +83,9 @@ private func checkSharedFixtures() {
         if let tampered = try? Data(contentsOf: dir.appendingPathComponent("dg1_tampered.bin")) {
             Check.equal("\(v.id) refuses a DG1 its SOD does not sign",
                         (try? PassportInputs.build(dg1: tampered, efSOD: sod, currentDateYYMMDD: 250101,
-                                                   addressField: "0x1", variants: variants)).map { _ in "built" }
+                                                   addressField: "0x1", idSecretField: "0x2", variants: variants)).map { _ in "built" }
                             ?? errorCode { _ = try PassportInputs.build(dg1: tampered, efSOD: sod, currentDateYYMMDD: 250101,
-                                                                        addressField: "0x1", variants: variants) },
+                                                                        addressField: "0x1", idSecretField: "0x2", variants: variants) },
                         expected["dg1_tampered_error"] as? String)
         }
     }
@@ -95,7 +101,7 @@ private func checkSharedFixtures() {
               let want = (try? JSONSerialization.jsonObject(with: raw) as? [String: Any])?["unsupported"] as? String
         else { continue }
         do {
-            _ = try PassportInputs.build(dg1: dg1, efSOD: sod, currentDateYYMMDD: 250101, addressField: "0x1", variants: variants)
+            _ = try PassportInputs.build(dg1: dg1, efSOD: sod, currentDateYYMMDD: 250101, addressField: "0x1", idSecretField: "0x2", variants: variants)
             Check.that("\(name) is refused", false)
         } catch let PassportInputs.Error.unsupported(scheme) {
             Check.equal("\(name) names its scheme", scheme, want)
@@ -140,20 +146,23 @@ private func checkRegistration() {
 
     var seenAlgorithm: String?
     var seenAddress: String?
+    var seenIDSecret: String?
     let prover: PassportRegistration.Prover = { inputs in
         seenAlgorithm = inputs.algorithm
         seenAddress = inputs.witness["address"] as? String
+        seenIDSecret = inputs.witness["id_secret"] as? String
         return PassportRegistration.Proof(
             proof: Data(repeating: 0xab, count: 14_656),
-            // [current_date, address, nullifier, dsc_key]
-            publicSignals: ["260819", binding.bigUInt.description, "12345", "67890"],
+            // [current_date, address, nullifier, dsc_key, idc]
+            publicSignals: ["260819", binding.bigUInt.description, "12345", "67890", keys.idc.bigUInt.description],
             signatureAlgorithm: inputs.algorithm
         )
     }
 
-    let proof = runBlocking { try await PassportRegistration.prove(scan: scan, binding: binding, using: prover) }
+    let proof = runBlocking { try await PassportRegistration.prove(scan: scan, binding: binding, idSecret: keys.idSecret, using: prover) }
     Check.equal("the prover is handed the circuit the passport selects", seenAlgorithm, "lean_poa_p256_sha256")
     Check.equal("the circuit's address input is the registration binding", seenAddress, binding.noir)
+    Check.equal("the circuit's id_secret input is the registered identity's secret", seenIDSecret, keys.idSecret.noir)
     Check.equal("nullifier is the third public signal", proof?.nullifier, "12345")
 
     // A prover that answered with a different circuit would have the chain
@@ -163,7 +172,7 @@ private func checkRegistration() {
                                    signatureAlgorithm: "lean_poa_rsa2048_sha256")
     }
     Check.that("a proof from the wrong circuit is refused",
-               runBlocking { try await PassportRegistration.prove(scan: scan, binding: binding, using: wrongProver) } == nil)
+               runBlocking { try await PassportRegistration.prove(scan: scan, binding: binding, idSecret: keys.idSecret, using: wrongProver) } == nil)
 
     // The free-gas request carries the message that will be broadcast (less
     // its fee bundle), in the encodings the backend decodes it with:
@@ -397,6 +406,7 @@ private func checkSODAndInputs(writingTo artifacts: URL) {
     let inputs = try! PassportInputs.build(dg1: passport.dg1, efSOD: passport.efSOD,
                                            currentDateYYMMDD: 260819,
                                            addressField: try! PassportInputs.addressField(checkAddress),
+                                           idSecretField: fixtureIDSecret,
                                            variants: variants)
     Check.equal("selects the P-256 SHA-256 circuit", inputs.algorithm, "lean_poa_p256_sha256")
 
@@ -452,7 +462,8 @@ private func checkSODAndInputs(writingTo artifacts: URL) {
     Check.throwsError("a DG1 that does not match the SOD is refused") {
         _ = try PassportInputs.build(dg1: Data(tampered), efSOD: passport.efSOD,
                                      currentDateYYMMDD: 260819,
-                                     addressField: try PassportInputs.addressField(checkAddress), variants: variants)
+                                     addressField: try PassportInputs.addressField(checkAddress),
+                                     idSecretField: fixtureIDSecret, variants: variants)
     }
 
     // Everything above shows the witness has the right shape. Whether it is

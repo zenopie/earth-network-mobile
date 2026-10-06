@@ -146,6 +146,10 @@ object PassportInputs {
      *   block time, so it must be ~now.
      * @param address the circuit's `address` input: the registration binding
      *   (zk/privacy.RegistrationBinding), a "0x" field element.
+     * @param idSecret the circuit's `id_secret` input, a "0x" field element:
+     *   the secret of the identity the registration names. The proof outputs
+     *   its idc = H(TAG_ID, id_secret), which the chain requires to be the
+     *   msg's, so only the holder of an identity's secret can register it.
      * @throws UnsupportedPassportException the scheme has no circuit.
      * @throws PassportDataException the data does not hold together.
      */
@@ -154,10 +158,12 @@ object PassportInputs {
         sodBytes: ByteArray,
         currentDateYymmdd: Int,
         address: String,
+        idSecret: String,
         variants: PassportVariants,
     ): Inputs {
         if (dg1.size != DG1_LEN) throw UnsupportedPassportException("${dg1.size}-byte DG1 (not a TD3 passport)")
         require(address.startsWith("0x")) { "address input is a 0x field element" }
+        require(idSecret.startsWith("0x")) { "id_secret input is a 0x field element" }
 
         val signedData = try {
             CMSSignedData(ContentInfo.getInstance(stripSodTag(sodBytes)))
@@ -257,6 +263,8 @@ object PassportInputs {
                 map["sod_signature_s"] = byteArrayInput(toLen(sLow, c.size), c.size)
             }
         }
+        // ABI order: id_secret comes right before current_date.
+        map["id_secret"] = idSecret
         map["current_date"] = scalarInput(currentDateYymmdd)
         // The registration this proof is for: RegistrationBinding(idc,
         // pc_anml, pc_erth, affiliate), a field element the caller computed.

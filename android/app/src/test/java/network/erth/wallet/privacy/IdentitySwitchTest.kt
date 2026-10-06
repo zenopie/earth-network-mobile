@@ -181,4 +181,43 @@ class IdentitySwitchTest : WalletTest() {
         a.moveHandle(to, CheckingRecorder(bStore, { chain.now }, "b"))
         assertEquals("b", a.store.state.switchTarget)
     }
+
+    /** An identity registers once (personhood 1130): the switched-away wallet cannot register again, restored or not. */
+    @Test
+    fun aSwitchBackToAnEarlierIdentityIsRefused() {
+        val chain = FakeChain()
+        val (a, b, _) = switched(chain, "999")
+        assertTrue(a.identityUsed())
+        assertTrue(b.identityUsed())
+        assertTrue(runCatching { a.prepareRegistration(null) }.exceptionOrNull() is PrivacyWallet.IdentityUsed)
+        // Restored from the phrase: its registration record says the identity is spent.
+        val restored = wallet(chain, alice)
+        restored.sync()
+        assertTrue(restored.identityUsed())
+        assertTrue(runCatching { restored.prepareRegistration(null) }.exceptionOrNull() is PrivacyWallet.IdentityUsed)
+        // A wallet that never registered is a valid target.
+        assertFalse(wallet(chain, "letter advice cage absurd amount doctor acoustic avoid letter advice cage above").identityUsed())
+        assertTrue(chain.usedIdcs.contains(a.keys.idc) && chain.usedIdcs.contains(b.keys.idc))
+    }
+
+    /** After a switch the wallet suggests a random time to move, drawn once; it only reminds, never moves. */
+    @Test
+    fun aSwitchSuggestsARandomDelayBeforeMoving() {
+        val chain = FakeChain()
+        val (a, b, _) = switched(chain, "999")
+        val act = b.store.state.identity!!.activatedAt
+        val at = b.suggestedMoveAt()
+        assertTrue("$at", at in (act + PrivacyWallet.MOVE_DELAY_MIN_SECONDS)..(act + PrivacyWallet.MOVE_DELAY_MAX_SECONDS))
+        assertEquals(at, b.suggestedMoveAt())
+        assertEquals(0L, b.moveSuggestionDue())
+        assertEquals(0L, a.moveSuggestionDue())
+        chain.now = at
+        assertEquals(at, b.moveSuggestionDue())
+        assertTrue(Reminders.due(Reminders.Inputs(now = at, identityLive = true, claimOpensAt = null, claimedToday = false,
+            caretakerExpiresAt = 0, handle = "", handleEntry = null, moveSuggestedAt = b.moveSuggestionDue())).contains(Reminders.Reminder.MoveSuggested(at)))
+        // Nothing moved on its own: A still holds its handle.
+        assertEquals("alice", a.store.state.handle)
+        b.clearMoveSuggestion()
+        assertEquals(0L, b.moveSuggestionDue())
+    }
 }

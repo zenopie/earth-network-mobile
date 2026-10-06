@@ -619,6 +619,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(m.ciphertextAnml.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES && m.ciphertextErth.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
                 // The referral is the handle alone; the chain makes its note.
                 if (m.affiliateHandle.isNotEmpty()) require(network.erth.wallet.privacy.handles.Handles.valid(m.affiliateHandle)) { "affiliate_handle" }
+                // An idc registers once, ever (ErrIdcUsed, in the ante before the proof).
+                require(f(m.idc) !in usedIdcs) { "identity commitment has been registered before; register a fresh identity (code 1130)" }
+                // The proof's idc output is the msg's (params.idc_index 4).
+                require(m.publicSignalsCount == 5 && PrivateMsgs.decimalField(m.publicSignalsList[4]) == f(m.idc)) { "proof's identity commitment is not this msg's idc (code 1103)" }
             }
             is MsgBindHandle -> {
                 only(null)
@@ -1009,6 +1013,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(binding == PrivateMsgs.registrationBinding(m, chainId)) { "binding" }
                 // A landed binding is never used again.
                 require(usedBindings.add(binding)) { "binding already used (ErrBindingUsed)" }
+                usedIdcs.add(f(m.idc))
                 val dsc = PrivateMsgs.decimalField(m.publicSignalsList[3])
                 // A switch: the holder's old leaf is zeroed, the new one appended.
                 val live = registeredIdc.entries.filter { it.value == f(m.idc) || passportOf[it.key] == m.publicSignalsList[2] }
@@ -1266,6 +1271,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     val registeredIdc = HashMap<Long, Fr>()
     val usedBindings = HashSet<Fr>()
+    /** Every idc ever registered (genesis used_idcs). */
+    val usedIdcs = HashSet<Fr>()
     val passportOf = HashMap<Long, String>()
     /** (height, leaf index) of every zeroing. */
     val zeroed = ArrayList<Pair<Long, Long>>()

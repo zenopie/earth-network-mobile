@@ -84,7 +84,7 @@ class WalletFlowTest {
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         a.sync()
         assertEquals(100_000L, bal(a, "uerth"))
-        val signals = listOf("261001", prep.binding.toBigInteger().toString(), "123456789", Fr.of(77).toBigInteger().toString())
+        val signals = listOf("261001", prep.binding.toBigInteger().toString(), "123456789", Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString())
         a.register(prep, ByteArray(14_656), signals, "lean_poa", ByteArray(10))
         a.sync()
         assertEquals(WalletSync.IdentityStatus.LIVE, a.identityStatus())
@@ -171,7 +171,7 @@ class WalletFlowTest {
         val prep = a.prepareRegistration(null)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         a.sync()
-        val signals = listOf("261001", prep.binding.toBigInteger().toString(), "123456789", Fr.of(77).toBigInteger().toString())
+        val signals = listOf("261001", prep.binding.toBigInteger().toString(), "123456789", Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString())
         a.register(prep, ByteArray(14_656), signals, "lean_poa", ByteArray(10))
         chain.now += 2 * 86_400
         a.sync()

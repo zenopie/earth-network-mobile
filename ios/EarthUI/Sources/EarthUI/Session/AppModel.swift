@@ -938,7 +938,8 @@ public final class AppModel {
             now: Int64(Date().timeIntervalSince1970), identityLive: snap.identityStatus == .live, claimOpensAt: w.claimOpensAt(),
             claimedToday: w.claimedToday(), caretakerExpiresAt: caretakerExpiresAt, handle: snap.handle, handleEntry: handleEntry,
             addressed: addressed, ownAddress: w.address.encode(),
-            groundworks: groundworksLeases.values.sorted { $0.positionID < $1.positionID }))
+            groundworks: groundworksLeases.values.sorted { $0.positionID < $1.positionID },
+            moveSuggestedAt: w.moveSuggestionDue()))
     }
 
     /// What the identity this wallet's registration succeeded (another wallet
@@ -958,6 +959,8 @@ public final class AppModel {
         public let inFlight: [PendingMove]
         /// Its shielded ERTH: the moves' fees come out of it.
         public let feeErth: UInt64
+        /// When the wallet suggests moving (PrivacyWallet.suggestedMoveAt; 0 when there is nothing to move).
+        public var suggestedAt: Int64 = 0
         public var anything: Bool { !handle.isEmpty || voteLive || !inFlight.isEmpty }
     }
 
@@ -978,11 +981,16 @@ public final class AppModel {
             let snap = p.snapshot
             let now = Int64(Date().timeIntervalSince1970)
             let handleExp = await p.handleExpiresAt()
-            return MoveOffer(fromIndex: index, fromName: wallets[index].name, handle: snap.handle,
-                             handleLive: !snap.handle.isEmpty && (handleExp == 0 || handleExp > now),
-                             voteLive: await p.caretakerLive(), voteExpiresAt: await p.caretakerExpiresAt(),
-                             inFlight: p.outgoingMoves(), feeErth: p.poolBalances()[PrivacyWallet.fee] ?? 0)
+            var offer = MoveOffer(fromIndex: index, fromName: wallets[index].name, handle: snap.handle,
+                                  handleLive: !snap.handle.isEmpty && (handleExp == 0 || handleExp > now),
+                                  voteLive: await p.caretakerLive(), voteExpiresAt: await p.caretakerExpiresAt(),
+                                  inFlight: p.outgoingMoves(), feeErth: p.poolBalances()[PrivacyWallet.fee] ?? 0)
+            // Something to bring: the suggested time (drawn once). Nothing: its reminder ends.
+            if offer.anything { offer.suggestedAt = await w.suggestedMoveAt() } else { await w.clearMoveSuggestion() }
+            return offer
         }
+        // No predecessor on this phone (a switch from a lost phrase): nothing can move here.
+        await w.clearMoveSuggestion()
         return nil
     }
 

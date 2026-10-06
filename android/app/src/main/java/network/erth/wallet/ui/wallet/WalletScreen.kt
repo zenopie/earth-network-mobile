@@ -11,6 +11,8 @@ data class WalletUiState(
     val stakedUerth: Long,
     val rewardsUerth: Long,
     val registered: Boolean,
+    /** Not registered, and this wallet's identity was registered before: it cannot register again (personhood 1130). */
+    val identityUsed: Boolean = false,
     /** Every denom this wallet holds, ERTH first. */
     val holdings: List<Holding> = emptyList(),
     /**

@@ -138,7 +138,9 @@ enum PrivacySession {
         let t = Int64(Date().timeIntervalSince1970)
         // A registration it sent that can still land counts: one that failed may be replayed.
         let registered = st.map { $0.identity != nil || $0.pendingRegistration != nil || $0.registrationKeepUntil > t } ?? false
-        return TargetInfo(storeID: id, registered: registered, handle: st?.handle ?? "",
+        // Its identity registered before: the chain refuses a switch to it (1130).
+        let used = st.map { $0.identity != nil || !$0.regRecords.isEmpty } ?? false
+        return TargetInfo(storeID: id, registered: registered, used: used, handle: st?.handle ?? "",
                           handleRefusal: st.flatMap { PrivacyWallet.targetRefusal($0, kind: PendingMove.handleKind, now: t) },
                           voteRefusal: st.flatMap { PrivacyWallet.targetRefusal($0, kind: PendingMove.caretakerKind, now: t) })
     }
@@ -146,6 +148,8 @@ enum PrivacySession {
     struct TargetInfo {
         let storeID: String
         let registered: Bool
+        /// Its identity registered before: the chain refuses a switch to it (1130).
+        let used: Bool
         let handle: String
         let handleRefusal: String?
         let voteRefusal: String?

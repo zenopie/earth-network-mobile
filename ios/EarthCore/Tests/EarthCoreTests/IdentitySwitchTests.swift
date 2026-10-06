@@ -258,4 +258,42 @@ final class IdentitySwitchTests: PrivacyTestCase {
         XCTAssertTrue(a2.snapshot.handleMovedOut && a2.snapshot.caretakerMovedOut)
         XCTAssertEqual("", a2.snapshot.handle)
     }
+
+    /// An identity registers once (personhood 1130): the switched-away wallet cannot register again, restored or not.
+    func testASwitchBackToAnEarlierIdentityIsRefused() async throws {
+        let chain = FakeChain()
+        let (a, b, _) = try await switched(chain, "999")
+        XCTAssertTrue(a.identityUsed())
+        XCTAssertTrue(b.identityUsed())
+        await assertThrowsAsync({ try await a.prepareRegistration(referrer: nil) }) { $0 is PrivacyWallet.IdentityUsed }
+        // Restored from the phrase: its registration record says the identity is spent.
+        let restored = try wallet(chain, alice)
+        try await restored.sync()
+        XCTAssertTrue(restored.identityUsed())
+        // A wallet that never registered is a valid target.
+        XCTAssertFalse(try wallet(chain, carol).identityUsed())
+        XCTAssertTrue(chain.usedIdcs.contains(a.keys.idc) && chain.usedIdcs.contains(b.keys.idc))
+    }
+
+    /// After a switch the wallet suggests a random time to move, drawn once; it only reminds, never moves.
+    func testASwitchSuggestsARandomDelayBeforeMoving() async throws {
+        let chain = FakeChain()
+        let (a, b, _) = try await switched(chain, "999")
+        let act = Int64(b.snapshot.identity!.activatedAt)
+        let at = await b.suggestedMoveAt()
+        XCTAssertTrue((act + PrivacyWallet.moveDelayMinSeconds ... act + PrivacyWallet.moveDelayMaxSeconds).contains(at), "\(at)")
+        let again = await b.suggestedMoveAt()
+        XCTAssertEqual(at, again)
+        XCTAssertEqual(0, b.moveSuggestionDue())
+        XCTAssertEqual(0, a.moveSuggestionDue())
+        chain.now = at
+        XCTAssertEqual(at, b.moveSuggestionDue())
+        let due = Reminders.due(Reminders.Inputs(now: at, identityLive: true, claimOpensAt: nil, claimedToday: false, caretakerExpiresAt: 0,
+                                                 handle: "", handleEntry: nil, moveSuggestedAt: b.moveSuggestionDue()))
+        XCTAssertTrue(due.contains(.moveSuggested(at: at)))
+        // Nothing moved on its own: A still holds its handle.
+        XCTAssertEqual("alice", a.snapshot.handle)
+        await b.clearMoveSuggestion()
+        XCTAssertEqual(0, b.moveSuggestionDue())
+    }
 }

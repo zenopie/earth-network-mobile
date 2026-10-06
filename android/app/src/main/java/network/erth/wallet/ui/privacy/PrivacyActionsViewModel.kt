@@ -149,6 +149,7 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                     addressed = addressed,
                     ownAddress = w.address.encode(),
                     groundworks = groundworks,
+                    moveSuggestedAt = w.moveSuggestionDue(),
                 ),
             )
             return PersonalState(

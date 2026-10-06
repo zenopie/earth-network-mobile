@@ -35,6 +35,9 @@ object ChainErrors {
         // A switch is proven on a strictly later date than the live registration.
         Known("personhood", 1128, "identity switch must be proven on a later date than the live registration",
             "This passport already switched identity today (UTC). A passport can switch once per day: try again tomorrow."),
+        // An idc registers once, ever (used_idcs): a switch back to an earlier wallet, or a re-entry from the old one.
+        Known("personhood", 1130, "identity commitment has been registered before",
+            network.erth.wallet.privacy.PrivacyWallet.IDENTITY_USED),
         // The signer's (or country's) daily cap; a switch counts against its signer's.
         Known("personhood", 1113, "daily registration limit reached",
             "Today's limit for passports from this issuer has been reached. Try again tomorrow."),

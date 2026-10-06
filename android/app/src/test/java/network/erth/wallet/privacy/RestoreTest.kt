@@ -26,7 +26,7 @@ import org.junit.Test
  */
 class RestoreTest : WalletTest() {
     private fun signals(prep: PrivacyWallet.RegistrationPrep, nullifier: String = "123456789") =
-        listOf("261001", prep.binding.toBigInteger().toString(), nullifier, Fr.of(77).toBigInteger().toString())
+        listOf("261001", prep.binding.toBigInteger().toString(), nullifier, Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString())
 
     /** With PRIVACY_TOML_OUT set, every witness as a nargo Prover.toml (see WalletFlowTest). */
     private fun dump(chain: FakeChain, test: String) {
@@ -239,7 +239,7 @@ class RestoreTest : WalletTest() {
             val prep = o.prepareRegistration(null)
             chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
             o.sync()
-            o.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), "${1000 + i}", Fr.of(77).toBigInteger().toString()), "lean_poa", ByteArray(10))
+            o.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), "${1000 + i}", Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString()), "lean_poa", ByteArray(10))
         }
         val w = wallet(chain)
         register(chain, w)
@@ -289,7 +289,7 @@ class RestoreTest : WalletTest() {
             sendNote(chain, a.address, forged)
             sendNote(chain, a.address, forged.copyOf().also { it[2] = 1 }.copyOf(45).copyOf(64))
         }
-        a.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), "9", Fr.of(77).toBigInteger().toString()), "lean_poa", ByteArray(10))
+        a.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), "9", Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString()), "lean_poa", ByteArray(10))
         a.sync()
         val restored = wallet(chain)
         val t0 = System.nanoTime()
@@ -321,7 +321,7 @@ class RestoreTest : WalletTest() {
         val prep = skewed.prepareRegistration(null)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         skewed.sync()
-        skewed.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), "9", Fr.of(77).toBigInteger().toString()), "lean_poa", ByteArray(10))
+        skewed.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), "9", Fr.of(77).toBigInteger().toString(), prep.idc.toBigInteger().toString()), "lean_poa", ByteArray(10))
         chain.blockTimesPruned = true
         chain.identityRowTimes = false
         val dir = java.nio.file.Files.createTempDirectory("k1").toFile()

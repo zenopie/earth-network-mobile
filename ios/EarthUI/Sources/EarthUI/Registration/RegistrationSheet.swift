@@ -124,6 +124,9 @@ struct RegistrationSheet: View {
                 unsupported("This build has no prover, so a chip read would have nothing to prove with.")
             } else if !PassportProving.canProveThisLaunch {
                 unsupported(PassportProving.relaunchToRegister)
+            } else if model.privacy?.identityUsed() == true {
+                // The chain registers an identity once (1130): said before the passport is read.
+                unsupported(PrivacyWallet.identityUsedMessage)
             } else {
                 EarthButton(title: "Start") { step = .scan }
             }
@@ -348,7 +351,7 @@ struct RegistrationSheet: View {
                 // peaks a few hundred megabytes, and the screen has a spinner
                 // on it that has to keep turning.
                 let proof = try await Task.detached(priority: .userInitiated) {
-                    try await PassportProving.prove(scan: scan, binding: prep.binding)
+                    try await PassportProving.prove(scan: scan, binding: prep.binding, idSecret: prep.idSecret)
                 }.value
                 self.proof = proof
                 phase = .idle

@@ -19,7 +19,8 @@ import java.math.BigInteger
  *
  * Every register circuit's public inputs are, in order:
  *   [0] current_date, [1] address, [2] nullifier, [3] dsc_key (the DSC
- *   commitment).
+ *   commitment), [4] idc (the identity commitment of the witness's
+ *   id_secret, which the chain requires to equal MsgRegister.idc).
  *
  * VERSION LOCKSTEP: on-device proofs verify on-chain only when noir_android's
  * bundled bb matches the chain verifier's bb (v5.0.0). A nightly bb produces
@@ -27,12 +28,12 @@ import java.math.BigInteger
  */
 object PassportProver {
 
-    // Public signals are [current_date, address, nullifier, dsc_key]:
+    // Public signals are [current_date, address, nullifier, dsc_key, idc]:
     // current_date and address are the declared public inputs, and bb appends
     // the circuit's return values after them. `address` carries
     // zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, affiliate), which
     // binds the proof to the registration it is broadcast in.
-    private const val NUM_PUBLIC_INPUTS = 4
+    private const val NUM_PUBLIC_INPUTS = 5
 
     data class Result(
         val proof: ByteArray,
@@ -46,8 +47,8 @@ object PassportProver {
      * [PassportInputs.UnsupportedPassportException] or
      * [PassportInputs.PassportDataException].
      */
-    fun inputs(context: Context, dg1: ByteArray, sodBytes: ByteArray, currentDateYymmdd: Int, address: String) =
-        PassportInputs.buildInputs(dg1, sodBytes, currentDateYymmdd, address, PassportVariants.get(context))
+    fun inputs(context: Context, dg1: ByteArray, sodBytes: ByteArray, currentDateYymmdd: Int, address: String, idSecret: String) =
+        PassportInputs.buildInputs(dg1, sodBytes, currentDateYymmdd, address, idSecret, PassportVariants.get(context))
 
     /**
      * Proves proof-of-personhood from the scanned passport.
@@ -64,10 +65,12 @@ object PassportProver {
         currentDateYymmdd: Int,
         /** The `address` input: the registration binding as a "0x" field. */
         address: String,
+        /** The `id_secret` input: the registered identity's secret as a "0x" field. */
+        idSecret: String,
     ): Result {
         // Select the variant the passport's key, padding and hashes need, and
         // build its witness.
-        val inputs = inputs(context, dg1, sodBytes, currentDateYymmdd, address)
+        val inputs = inputs(context, dg1, sodBytes, currentDateYymmdd, address, idSecret)
         val variant = inputs.variant
         val circuitJson = PassportCircuits.load(context, variant)
         val srs = PassportSrs.ensure(context, variant.log2CircuitSize)

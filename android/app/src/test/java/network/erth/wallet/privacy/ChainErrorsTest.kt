@@ -36,4 +36,13 @@ class ChainErrorsTest : WalletTest() {
         // The codes mean nothing in another module.
         assertNull(ChainErrors.explain(1127, "dex"))
     }
+
+    /** 1130: an identity registers once; the wallet says to switch to a new one. */
+    @Test
+    fun usedIdentityIsPlain() {
+        val used = ChainErrors.explain(1130, "personhood")!!
+        assertTrue(used, "Switch to a new wallet" in used)
+        assertEquals(used, ChainErrors.explain("rpc error: identity commitment has been registered before; register a fresh identity"))
+        assertNull(ChainErrors.explain(1130, "dex"))
+    }
 }

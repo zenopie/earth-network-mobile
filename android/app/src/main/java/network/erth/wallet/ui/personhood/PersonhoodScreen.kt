@@ -61,6 +61,10 @@ fun PersonhoodScreen(
     onBringHandle: () -> Unit = {},
     onBringVote: () -> Unit = {},
     onCheckMoves: () -> Unit = {},
+    /** Not registered, but this wallet's identity was registered before (switched away or lapsed): the chain refuses it again. */
+    identityUsed: Boolean = false,
+    /** Opens wallet creation: a used identity registers again only as a new wallet. */
+    onNewWallet: () -> Unit = {},
 ) {
     val dimens = EarthTheme.dimens
     val shape = RoundedCornerShape(EarthDimensions.Radius.radius3xl)
@@ -113,6 +117,9 @@ fun PersonhoodScreen(
                 text = if (registered) {
                     "This wallet counts as one person in the human allocation stream, " +
                         "and earns ANML."
+                } else if (identityUsed) {
+                    "This wallet's identity was registered before. Its registration was switched to another " +
+                        "wallet, or has ended."
                 } else {
                     "Register to count as one person in the human allocation stream."
                 },
@@ -185,6 +192,26 @@ fun PersonhoodScreen(
                 onClick = onSwitch,
                 modifier = Modifier.fillMaxWidth(),
                 colors = network.erth.wallet.ui.designsystem.component.EarthButtonDefaults.secondaryColors(),
+            )
+        } else if (identityUsed) {
+            // The chain keeps every identity it ever registered (used_idcs) and
+            // refuses it again (1130), so this wallet cannot register a second
+            // time: a return after a switch or a lapse is a new wallet.
+            Spacer(Modifier.height(dimens.space24))
+            Text(
+                text = "Each identity can register only once. To count as a person again, create a new wallet " +
+                    "and register your passport there. If this passport's registration is still live in " +
+                    "another wallet, registering in the new one switches it there.",
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textSecondary,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(dimens.space16))
+            EarthButton(
+                text = "Create a new wallet",
+                onClick = onNewWallet,
+                modifier = Modifier.fillMaxWidth(),
+                colors = brandButtonColors(),
             )
         } else {
             Spacer(Modifier.height(dimens.space24))

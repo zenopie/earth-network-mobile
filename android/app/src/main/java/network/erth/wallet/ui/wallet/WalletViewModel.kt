@@ -106,6 +106,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                     rewardsUerth = rewards,
                     holdings = holdings,
                     registered = privacy?.let { runCatching { it.identityStatus() }.getOrNull() } == WalletSync.IdentityStatus.LIVE,
+                    identityUsed = privacy?.let { it.identityUsed() && runCatching { it.identityStatus() }.getOrNull() != WalletSync.IdentityStatus.LIVE } == true,
                     // Null without a live registration; otherwise now, or
                     // the next UTC midnight the chain will take a claim.
                     anmlClaimableAt = privacy?.let { runCatching { it.claimOpensAt() }.getOrNull() },

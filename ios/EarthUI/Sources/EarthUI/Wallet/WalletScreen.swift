@@ -22,6 +22,7 @@ struct WalletScreen: View {
     /// Which list is under the cards. The third action toggles it.
     @State private var panel = Panel.activity
     @State private var handleOpen = false
+    @State private var identityOpen = false
 
     enum Panel { case activity, portfolio }
 
@@ -58,6 +59,7 @@ struct WalletScreen: View {
         .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
         .sheet(isPresented: $moving) { MoveSheet(direction: moveDirection).earthThemed() }
         .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
+        .sheet(isPresented: $identityOpen) { IdentityScreen().earthThemed() }
     }
 
     private func open(_ r: Reminders.Reminder) {
@@ -68,6 +70,7 @@ struct WalletScreen: View {
         case .caretakerExpiring: model.governLink = .caretaker; model.tab = .govern
         case .groundworksExpiring: model.governLink = .positions; model.tab = .govern
         case .handleExpiring, .handlePaysElsewhere: handleOpen = true
+        case .moveSuggested: identityOpen = true
         }
     }
 }

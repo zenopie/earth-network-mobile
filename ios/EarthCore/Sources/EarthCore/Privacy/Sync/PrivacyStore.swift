@@ -300,6 +300,13 @@ public struct PrivacyState: Codable, Sendable {
     public var pendingMoves: [PendingMove] = []
     /// The store id of the wallet a switch moves to, fixed by its first move.
     public var switchTarget: String = ""
+    /// After a switch to this identity: when the wallet suggests bringing the
+    /// predecessor's handle and split over (a random delay after the switch,
+    /// so a move does not link them by timing; 0: none drawn, -1: nothing
+    /// left to move), and the leaf of the registration it was drawn for. A
+    /// suggestion only: nothing moves unasked. Android's move_suggested_at.
+    public var moveSuggestedAt: Int64 = 0
+    public var moveSuggestedLeaf: Int64 = -1
     /// Undelegations whose payout has not arrived yet.
     public var pendingUnbonds: [PendingUnbond] = []
     /// Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt).
@@ -335,7 +342,7 @@ public struct PrivacyState: Codable, Sendable {
              pendingUnbonds, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax,
              syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
              handleSetAt, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, voidRecordHeights, pendingMoves, switchTarget,
-             handleExpiresAt, handleExpiresFor, labelWindowSeconds, carriedMarks, registrationKeepUntil, positionLeases
+             moveSuggestedAt, moveSuggestedLeaf, handleExpiresAt, handleExpiresFor, labelWindowSeconds, carriedMarks, registrationKeepUntil, positionLeases
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -365,6 +372,7 @@ public struct PrivacyState: Codable, Sendable {
         handleRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .handleRecordPos)
         caretakerRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .caretakerRecordPos)
         voidRecordHeights = try v(.voidRecordHeights, []); pendingMoves = try v(.pendingMoves, []); switchTarget = try v(.switchTarget, "")
+        moveSuggestedAt = try v(.moveSuggestedAt, 0); moveSuggestedLeaf = try v(.moveSuggestedLeaf, -1)
         handleExpiresAt = try v(.handleExpiresAt, 0); handleExpiresFor = try v(.handleExpiresFor, "")
         labelWindowSeconds = try v(.labelWindowSeconds, 0)
         carriedMarks = try v(.carriedMarks, [:])
@@ -644,6 +652,7 @@ public final class PrivacyStore {
         s.voidRecordHeights = old.voidRecordHeights
         s.pendingMoves = old.pendingMoves
         s.switchTarget = old.switchTarget
+        s.moveSuggestedAt = old.moveSuggestedAt; s.moveSuggestedLeaf = old.moveSuggestedLeaf
         s.verifiedHeight = old.verifiedHeight
     }
 

@@ -39,7 +39,7 @@ public struct PassportRegistration {
     /// stubbed in tests.
     public struct Proof {
         public let proof: Data
-        /// `[current_date, address, nullifier, dsc_key]` as decimal strings.
+        /// `[current_date, address, nullifier, dsc_key, idc]` as decimal strings.
         /// address is the registration binding the proof was made for
         /// (H(TAG_REG, idc, pc_anml, pc_erth, affiliate)); the chain requires it
         /// to match the msg's fields.
@@ -105,9 +105,13 @@ public struct PassportRegistration {
     ///   `PrivacyWallet.prepareRegistration`. The circuit takes it as its
     ///   `address` public input, so the proof registers only the identity
     ///   commitment and notes it names.
+    /// - Parameter idSecret: that identity commitment's secret
+    ///   (`RegistrationPrep.idSecret`), the circuit's `id_secret`: the proof
+    ///   outputs its idc, and the chain refuses a proof whose idc is not the msg's.
     public static func prove(
         scan: Scan,
         binding: Fr,
+        idSecret: Fr,
         now: Date = Date(),
         using prover: Prover
     ) async throws -> Proof {
@@ -115,7 +119,8 @@ public struct PassportRegistration {
             dg1: scan.dg1,
             efSOD: scan.efSOD,
             currentDateYYMMDD: todayYYMMDD(now: now),
-            binding: binding
+            binding: binding,
+            idSecret: idSecret
         )
         let proof = try await prover(inputs)
         guard proof.signatureAlgorithm == inputs.algorithm else {

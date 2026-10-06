@@ -55,6 +55,17 @@ public final class PrivacyWallet: @unchecked Sendable {
     public static let otagGap: UInt32 = 1024
     /// A pending registration whose tx failed in its block.
     public static let txFailed = "the registration tx failed"
+    /// A register proof's public signals: [current_date, address, nullifier, dsc_key, idc].
+    public static let registerSignals = 5
+    /// The idc's index among them (the chain's params.idc_index).
+    public static let idcSignal = 4
+    /// What a wallet says when its identity was registered before (personhood 1130). As Android's IDENTITY_USED.
+    public static let identityUsedMessage = "This identity has been registered before. Switch to a new wallet: "
+        + "the chain accepts each identity once, so a registration, a switch or a return after a lapse "
+        + "goes to a wallet whose identity never registered."
+    /// The suggested wait before a move after a switch: drawn uniformly between these (hours to days).
+    public static let moveDelayMinSeconds: Int64 = 6 * 3600
+    public static let moveDelayMaxSeconds: Int64 = 3 * 86_400
 
     public let keys: PrivacyKeys
     let store: PrivacyStore
@@ -117,6 +128,10 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let saveError: String?
         /// The genesis the synced data is from.
         public let genesis: String?
+        /// A registration of this identity landed (`PrivacyWallet.identityUsed`).
+        public let identityUsed: Bool
+        /// The suggested move time after a switch (`moveSuggestedAt` in the state: 0 none, -1 nothing left).
+        public let moveSuggestedAt: Int64
 
         init(store: PrivacyStore, keys: PrivacyKeys, maxActions: Int, saveError: String? = nil) {
             let s = store.state
@@ -131,6 +146,8 @@ public final class PrivacyWallet: @unchecked Sendable {
             self.maxActions = maxActions
             self.saveError = saveError
             genesis = s.genesis
+            identityUsed = s.identity != nil || !s.regRecords.isEmpty
+            moveSuggestedAt = s.moveSuggestedAt
         }
 
         /// Spendable pool balance per denom (pending spends excluded),
@@ -620,7 +637,27 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let referrer: String
         public let binding: Fr
         public let idc: Fr
+        /// `idc`'s secret: the proof's id_secret witness, which outputs `idc`.
+        /// In memory only, like the keys it comes from.
+        public let idSecret: Fr
     }
+
+    /// This wallet's identity has been registered before (personhood 1130):
+    /// the chain keeps every idc it ever registered and refuses it again, by
+    /// any passport. Its first registration, a switch to it and a re-entry
+    /// all need a fresh identity: another wallet whose identity never
+    /// registered. Nothing was sent.
+    public struct IdentityUsed: Swift.Error, LocalizedError, Equatable {
+        public init() {}
+        public var errorDescription: String? { PrivacyWallet.identityUsedMessage }
+    }
+
+    /// Whether this wallet's identity has been registered before: a
+    /// registration of it landed (its leaf, live or zeroed since, or a
+    /// registration record a restore found). The chain refuses it again
+    /// (1130). A sent registration that has not landed does not count: if it
+    /// never lands the identity is still fresh, and a retry is its own.
+    public func identityUsed() -> Bool { snapshot.identityUsed }
 
     /// A referrer named by handle, resolved from the directory: the handle and the address it names now.
     public struct Referrer: Sendable, Equatable {
@@ -631,6 +668,7 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     public func prepareRegistration(referrer: Referrer?) async throws -> RegistrationPrep {
         try await locked {
+            if store.state.identity != nil || !store.state.regRecords.isEmpty { throw IdentityUsed() }
             let anml = try mint("uanml")
             let erth = try mint("uerth")
             let gas = try mint("uerth")
@@ -643,7 +681,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let binding = PrivacyHash.registrationBinding(chainID: chainID, idc: keys.idc, pcAnml: anml.pc, ctAnml: anml.ciphertext, pcErth: erth.pc,
                                                           ctErth: erth.ciphertext, affiliate: aff)
             return RegistrationPrep(anml: anml, erth: erth, gas: gas, referrer: referrer?.handle ?? "",
-                                    binding: binding, idc: keys.idc)
+                                    binding: binding, idc: keys.idc, idSecret: keys.idSecret)
         }
     }
 
@@ -661,13 +699,17 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// ourselves whose memo lets a wallet restored from the mnemonic find the
     /// leaf), and records the registration as pending before anything else,
     /// then tries to resolve it. `publicSignals` are the passport
-    /// proof's: [current_date, address, nullifier, dsc_key].
+    /// proof's: [current_date, address, nullifier, dsc_key, idc].
     public func register(_ prep: RegistrationPrep, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data) async throws -> TxResult {
         let mx = await maxActions()
         let skewParam = try? await reads.personhoodParams().currentDateMaxSkewSeconds
         let result: TxResult = try await locked {
-            try require(publicSignals.count == 4, "a passport proof has four public signals")
+            try require(publicSignals.count == Self.registerSignals, "a passport proof has \(Self.registerSignals) public signals, not \(publicSignals.count)")
             try require(try PrivateMsgs.decimalField(publicSignals[1]) == prep.binding, "the passport proof is bound to other notes")
+            // The proof's idc output is the chain's check that the registrant holds
+            // the identity's secret; one proven with another's would be refused.
+            try require(try PrivateMsgs.decimalField(publicSignals[Self.idcSignal]) == prep.idc, "the passport proof registers another identity")
+            if store.state.identity != nil || !store.state.regRecords.isEmpty { throw IdentityUsed() }
             try require(PrivateMsgs.isCalendarDate(publicSignals[0]), "the passport proof's current_date \(publicSignals[0]) is not a calendar date")
             let base = registerMsg(prep, proof: proof, publicSignals: publicSignals, signatureAlgorithm: signatureAlgorithm, dscDer: dscDer)
             // Before any byte leaves: a registration that fails or is refused
@@ -702,6 +744,11 @@ public final class PrivacyWallet: @unchecked Sendable {
                 }
             }
             try recordPendingLocked(result)
+            // A switch: the move suggestion is drawn now, so its reminder comes
+            // even if Identity is never opened.
+            if result.attr("register", "switched") == "true", let leaf = result.attr("register", "leaf_index").flatMap(Int64.init) {
+                drawMoveSuggestion(leaf: leaf, activatedAt: result.time)
+            }
             return result
         }
         _ = try? await sync()
@@ -1175,6 +1222,47 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// Moves away from this identity that the chain has not confirmed yet, and confirmed ones not yet recorded in their target.
     public func outgoingMoves() -> [PendingMove] { snapshot.pendingMoves.filter { !$0.incoming } }
+
+    /// When the wallet suggests bringing the predecessor's handle and
+    /// caretaker split to this identity: a delay drawn once per registration,
+    /// uniformly from `moveDelayMinSeconds` to `moveDelayMaxSeconds`, after
+    /// the registration's block time. A move that lands right after a switch
+    /// links the handle, its owner_pk and the split to the passport's public
+    /// registration by timing (ORCHARD_DESIGN 6.6); nothing hurries it while
+    /// this identity stays live. Only a suggestion: the user chooses, and
+    /// nothing is sent unasked. 0 without a verified registration. As Android.
+    public func suggestedMoveAt() async -> Int64 {
+        await locked {
+            guard let id = store.state.identity, id.verified else { return 0 }
+            let s = store.state
+            if s.moveSuggestedLeaf == Int64(id.leafIndex), s.moveSuggestedAt > 0 { return s.moveSuggestedAt }
+            return drawMoveSuggestion(leaf: Int64(id.leafIndex), activatedAt: Int64(id.activatedAt))
+        }
+    }
+
+    @discardableResult
+    private func drawMoveSuggestion(leaf: Int64, activatedAt: Int64) -> Int64 {
+        let at = Handles.satAdd(activatedAt, Int64.random(in: Self.moveDelayMinSeconds ... Self.moveDelayMaxSeconds))
+        store.mutate { $0.moveSuggestedAt = at; $0.moveSuggestedLeaf = leaf }
+        persistNoThrow()
+        return at
+    }
+
+    /// Nothing is left for a move to bring here (the predecessor holds
+    /// nothing, or everything moved): the suggestion and its reminder end.
+    public func clearMoveSuggestion() async {
+        await lockedNoThrow {
+            guard store.state.moveSuggestedAt > 0 else { return }
+            store.mutate { $0.moveSuggestedAt = -1 }
+            persistNoThrow()
+        }
+    }
+
+    /// The suggested move time once it has come, for the reminder (0: none due).
+    public func moveSuggestionDue() -> Int64 {
+        let at = snapshot.moveSuggestedAt
+        return at > 0 && at <= now() ? at : 0
+    }
 
     /// Marks a confirmed move recorded in its target (a retried `MoveRecorder.record` succeeded).
     public func markRecorded(_ hash: String) async {

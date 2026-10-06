@@ -51,7 +51,7 @@ class PrivacyTestCase: XCTestCase {
 
     /// A passport proof's public signals with `nullifier` as the passport nullifier.
     func signals(_ prep: PrivacyWallet.RegistrationPrep, _ nullifier: String) -> [String] {
-        ["261001", prep.binding.bigUInt.description, nullifier, Fr(UInt64(77)).bigUInt.description]
+        ["261001", prep.binding.bigUInt.description, nullifier, Fr(UInt64(77)).bigUInt.description, prep.idc.bigUInt.description]
     }
 
     /// Registers `w` with `passport` (a switch when another wallet holds it), referred by `referrer`, and syncs it live.

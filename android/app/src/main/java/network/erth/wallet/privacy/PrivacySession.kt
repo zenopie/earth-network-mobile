@@ -160,6 +160,8 @@ object PrivacySession {
         val inFlight: List<network.erth.wallet.privacy.sync.PendingMove>,
         /** Its shielded ERTH: the moves' fees come out of it. */
         val feeErth: Long,
+        /** When the wallet suggests moving (PrivacyWallet.suggestedMoveAt; 0 when there is nothing to move). */
+        val suggestedAt: Long = 0,
     ) {
         val anything: Boolean get() = handle.isNotEmpty() || voteLive || inFlight.isNotEmpty()
     }
@@ -187,14 +189,18 @@ object PrivacySession {
             val st = p.store.state
             val now = System.currentTimeMillis() / 1000
             val handleExp = p.handleExpiresAt()
-            return MoveOffer(
+            val offer = MoveOffer(
                 fromIndex = info.index, fromName = info.name,
                 handle = st.handle, handleLive = st.handle.isNotEmpty() && (handleExp == 0L || handleExp > now),
                 voteLive = p.caretakerLive(), voteExpiresAt = p.caretakerExpiresAt(),
                 inFlight = p.outgoingMoves().filter { !it.confirmed || !it.recorded },
                 feeErth = p.poolBalances()[PrivacyWallet.FEE] ?: 0L,
             )
+            // Something to bring: the suggested time (drawn once). Nothing: its reminder ends.
+            return if (offer.anything) offer.copy(suggestedAt = w.suggestedMoveAt()) else offer.also { w.clearMoveSuggestion() }
         }
+        // No predecessor on this phone (a switch from a lost phrase): nothing can move here.
+        w.clearMoveSuggestion()
         return null
     }
 
@@ -209,6 +215,8 @@ object PrivacySession {
     data class TargetInfo(
         val storeId: String,
         val registered: Boolean,
+        /** Its identity registered before: the chain refuses a switch to it (1130). */
+        val used: Boolean,
         val handle: String,
         /** Why it cannot take this identity's handle / caretaker vote, or null. */
         val handleRefusal: String? = null,
@@ -222,7 +230,8 @@ object PrivacySession {
         val now = System.currentTimeMillis() / 1000
         return TargetInfo(
             // A registration it sent that can still land counts: one that failed may be replayed.
-            id, st != null && (st.identity != null || st.pendingRegistration != null || st.registrationKeepUntil > now), st?.handle.orEmpty(),
+            id, st != null && (st.identity != null || st.pendingRegistration != null || st.registrationKeepUntil > now),
+            st != null && (st.identity != null || st.regRecords.isNotEmpty()), st?.handle.orEmpty(),
             st?.let { PrivacyWallet.targetRefusal(it, network.erth.wallet.privacy.sync.PendingMove.HANDLE, now) },
             st?.let { PrivacyWallet.targetRefusal(it, network.erth.wallet.privacy.sync.PendingMove.CARETAKER, now) },
         )

@@ -30,7 +30,7 @@ final class WalletFlowTests: XCTestCase {
     }
 
     func signals(_ prep: PrivacyWallet.RegistrationPrep) -> [String] {
-        ["261001", prep.binding.bigUInt.description, "123456789", Fr(UInt64(77)).bigUInt.description]
+        ["261001", prep.binding.bigUInt.description, "123456789", Fr(UInt64(77)).bigUInt.description, prep.idc.bigUInt.description]
     }
 
     func bal(_ w: PrivacyWallet, _ d: String) -> UInt64 { w.balances()[d] ?? 0 }

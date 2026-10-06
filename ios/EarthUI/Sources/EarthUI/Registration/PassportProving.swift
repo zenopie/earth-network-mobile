@@ -50,11 +50,14 @@ public enum PassportProving {
     /// - Parameter binding: the registration binding from
     ///   `PrivacyWallet.prepareRegistration` — the proof's `address` input, so
     ///   it registers only the identity commitment and notes it names.
+    /// - Parameter idSecret: that identity commitment's secret, the proof's
+    ///   `id_secret`: the proof outputs its idc, which the chain checks.
     static func prove(
         scan: PassportRegistration.Scan,
-        binding: Fr
+        binding: Fr,
+        idSecret: Fr
     ) async throws -> PassportRegistration.Proof {
         guard let prover else { throw Failure.unavailable }
-        return try await PassportRegistration.prove(scan: scan, binding: binding, using: prover)
+        return try await PassportRegistration.prove(scan: scan, binding: binding, idSecret: idSecret, using: prover)
     }
 }

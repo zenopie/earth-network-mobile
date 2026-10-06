@@ -107,11 +107,12 @@ public enum PassportInputs {
         efSOD: Data,
         currentDateYYMMDD: Int,
         binding: Fr,
+        idSecret: Fr,
         variants: PassportVariants? = PassportVariants.installed
     ) throws -> Inputs {
         guard let variants else { throw Error.noManifest }
         return try build(dg1: dg1, efSOD: efSOD, currentDateYYMMDD: currentDateYYMMDD,
-                         addressField: binding.noir, variants: variants)
+                         addressField: binding.noir, idSecretField: idSecret.noir, variants: variants)
     }
 
     /// - Parameters:
@@ -121,11 +122,17 @@ public enum PassportInputs {
     ///     block time within `current_date_max_skew_seconds`, so it must be
     ///     roughly now.
     ///   - addressField: the circuit's `address` input, a "0x" field element.
+    ///   - idSecretField: the circuit's `id_secret` input, a "0x" field
+    ///     element: the secret of the identity the registration names. The
+    ///     proof outputs its idc = H(TAG_ID, id_secret), which the chain
+    ///     requires to be the msg's, so only the holder of an identity's
+    ///     secret can register it.
     public static func build(
         dg1: Data,
         efSOD: Data,
         currentDateYYMMDD: Int,
         addressField: String,
+        idSecretField: String,
         variants: PassportVariants
     ) throws -> Inputs {
         guard dg1.count == dg1Length else { throw Error.unsupported("\(dg1.count)-byte DG1 (not a TD3 passport)") }
@@ -206,6 +213,8 @@ public enum PassportInputs {
             "signed_attrs": byteArray(signedAttributes, variant.signedAttrsMax),
             "signed_attrs_len": scalar(signedAttributes.count),
             "econtent_hash_offset": scalar(ecOffset),
+            // ABI order: id_secret comes right before current_date.
+            "id_secret": idSecretField,
             "current_date": scalar(currentDateYYMMDD),
             "address": addressField,
         ]

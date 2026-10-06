@@ -222,6 +222,7 @@ internal fun EarthContent(
                     is Reminders.Reminder.CaretakerExpiring -> { { nav.push(EarthRoute.Stream(true)) } }
                     is Reminders.Reminder.GroundworksExpiring -> { { nav.push(EarthRoute.Positions) } }
                     is Reminders.Reminder.HandleExpiring, is Reminders.Reminder.HandlePaysElsewhere -> { { nav.push(EarthRoute.Handle) } }
+                    is Reminders.Reminder.MoveSuggested -> { { nav.push(EarthRoute.Personhood) } }
                 }
             },
             // Private stake (derth) is notes, not bank balances, so it joins
@@ -459,6 +460,11 @@ internal fun EarthContent(
                 onClaim = onClaimAnml,
                 onHandle = { nav.push(EarthRoute.Handle) },
                 onSwitch = { nav.push(EarthRoute.SwitchIdentity) },
+                identityUsed = loaded.identityUsed,
+                onNewWallet = {
+                    wallets.beginCreate()
+                    nav.push(EarthRoute.CreateWallet)
+                },
                 handle = personal?.handle.orEmpty(),
                 moveOffer = moveOffer,
                 onBringHandle = { bring(PendingMove.HANDLE) },
@@ -546,16 +552,34 @@ internal fun EarthContent(
             LaunchedEffect(Unit) { privacy.refreshPersonal(); wallets.refresh() }
             // What a chosen target already holds.
             var targetWarning by remember { mutableStateOf<String?>(null) }
+            var targetBlocked by remember { mutableStateOf<String?>(null) }
+            // One step only: what this identity's predecessor still holds that has not moved here.
+            var unmoved by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(Unit) {
+                val o = withContext(Dispatchers.IO) { runCatching { PrivacySession.moveOffer(context) }.getOrNull() }
+                unmoved = o?.takeIf { it.anything }?.let {
+                    val what = listOfNotNull(
+                        it.handle.takeIf { h -> h.isNotEmpty() }?.let { h -> "@$h" },
+                        "your caretaker vote".takeIf { _ -> it.voteLive },
+                    ).joinToString(" and ").ifEmpty { "a move still in flight" }
+                    "${it.fromName}, the identity this one replaced, still holds $what."
+                }
+            }
             val walletList = walletsState?.wallets.orEmpty()
             fun check(idx: Int) {
                 scope.launch {
                     val info = withContext(Dispatchers.IO) { runCatching { PrivacySession.targetInfo(context, idx) }.getOrNull() }
+                    // The chain registers an identity once (1130): a wallet that registered before is no target.
+                    targetBlocked = if (info?.used == true) {
+                        "That wallet's identity has been registered before, and the chain accepts each identity only once. " +
+                            "Switch to a wallet that has never registered, or create a new one."
+                    } else null
                     // What a move after the switch could not bring there, said up front.
                     targetWarning = when {
                         info == null -> null
                         info.handleRefusal != null || info.voteRefusal != null ->
                             listOfNotNull(info.handleRefusal?.let { "Your handle cannot be brought there: $it." }, info.voteRefusal?.let { "Your caretaker vote cannot be brought there: $it." }).joinToString(" ")
-                        info.registered -> "That wallet has a registration, or sent one in the last two days that can still land. Switching to it replaces this identity with it; anything it holds stays with it."
+                        info.registered -> "That wallet sent a registration in the last two days that can still land. If it lands, that wallet's identity is used and the chain refuses this switch to it."
                         else -> null
                     }
                 }
@@ -564,6 +588,8 @@ internal fun EarthContent(
                 wallets = walletList,
                 currentIndex = walletsState?.selectedIndex ?: SecureWalletManager.getSelectedWalletIndex(),
                 targetWarning = targetWarning,
+                targetBlocked = targetBlocked,
+                unmoved = unmoved,
                 onTargetChange = ::check,
                 onContinue = { target ->
                     // The new wallet registers the same passport: the chain

@@ -131,6 +131,15 @@ class RegistrationActivity : ComponentActivity() {
 
                 val ctx = this@RegistrationActivity
 
+                // A wallet whose identity registered before cannot register
+                // again (personhood 1130): said before the passport is read.
+                var blocked: String? by remember { mutableStateOf(null) }
+                LaunchedEffect(Unit) {
+                    blocked = withContext(Dispatchers.IO) {
+                        runCatching { PrivacySession.wallet(ctx).identityUsed() }.getOrDefault(false)
+                    }.let { if (it) PrivacyWallet.IDENTITY_USED else null }
+                }
+
                 // The fee is paid from shielded ERTH, so the balance that
                 // matters is the synced pool's, not the transparent account's.
                 // A new human has none: that is what the gas grant is for.
@@ -186,7 +195,9 @@ class RegistrationActivity : ComponentActivity() {
                             }
                             .onFailure { e ->
                                 val failure = (e as? PassportSession.FailureException)?.failure
-                                stage = when (failure) {
+                                // This wallet's identity registered before (1130): nothing to retry here.
+                                val used = (failure as? PassportSession.Failure.Error)?.cause is PrivacyWallet.IdentityUsed
+                                stage = if (used) NfcStage.Failed(PrivacyWallet.IDENTITY_USED, canRetry = false) else when (failure) {
                                     PassportSession.Failure.WrongMrz -> NfcStage.Failed(
                                         "The chip refused those details. Check the " +
                                             "passport number and dates.",
@@ -368,6 +379,7 @@ class RegistrationActivity : ComponentActivity() {
                     when (step) {
                         Step.Intro -> RegistrationIntroScreen(
                             onStart = { step = Step.Camera },
+                            blocked = blocked,
                             modifier = inset,
                         )
                         Step.Camera -> MrzCameraScreen(

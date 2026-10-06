@@ -135,7 +135,9 @@ object PassportSession {
             // (affiliate binds the referrer's handle and the note made to it),
             // so a proof read out of a block cannot register anyone else's
             // identity or pay anyone else's notes.
-            val proof = PassportProver.prove(context, dg1Bytes, sodBytes, todayYymmddUtc(), prep.binding.toNoir())
+            // id_secret is the registered identity's own: the proof outputs
+            // its idc, and the chain refuses a proof whose idc is not the msg's.
+            val proof = PassportProver.prove(context, dg1Bytes, sodBytes, todayYymmddUtc(), prep.binding.toNoir(), prep.idSecret.toNoir())
 
             Result.success(
                 Scan(

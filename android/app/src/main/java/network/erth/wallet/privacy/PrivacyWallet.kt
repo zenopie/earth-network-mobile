@@ -634,12 +634,35 @@ class PrivacyWallet(
      * H(TAG_AFFILIATE, Bytes(handle)); the chain mints the referrer's half
      * itself, to the address the handle resolves to.
      */
-    class RegistrationPrep(val anml: NoteOut, val erth: NoteOut, val gas: NoteOut, val referrer: String, val binding: Fr, val idc: Fr)
+    class RegistrationPrep(
+        val anml: NoteOut, val erth: NoteOut, val gas: NoteOut, val referrer: String, val binding: Fr, val idc: Fr,
+        /** [idc]'s secret: the proof's id_secret witness, which outputs [idc]. In memory only, like the keys it comes from. */
+        val idSecret: Fr,
+    )
+
+    /**
+     * This wallet's identity has been registered before (personhood 1130):
+     * the chain keeps every idc it ever registered and refuses it again, by
+     * any passport. Its first registration, a switch to it and a re-entry
+     * all need a fresh identity: another wallet whose identity never
+     * registered. Nothing was sent.
+     */
+    class IdentityUsed : IllegalStateException(IDENTITY_USED)
+
+    /**
+     * Whether this wallet's identity has been registered before: a
+     * registration of it landed (its leaf, live or zeroed since, or a
+     * registration record a restore found). The chain refuses it again
+     * (1130). A sent registration that has not landed does not count: if
+     * it never lands the identity is still fresh, and a retry is its own.
+     */
+    fun identityUsed(): Boolean = store.state.let { it.identity != null || it.regRecords.isNotEmpty() }
 
     /** A referrer named by handle, resolved from the directory: the handle and the address it names now. */
     data class Referrer(val handle: String, val address: ShieldedAddress)
 
     fun prepareRegistration(referrer: Referrer?): RegistrationPrep {
+        if (identityUsed()) throw IdentityUsed()
         val anml = mint("uanml")
         val erth = mint(FEE)
         val gas = mint(FEE)
@@ -649,7 +672,7 @@ class PrivacyWallet(
         }
         val aff = if (referrer == null) Fr.ZERO else Privacy.affiliateField(referrer.handle)
         val binding = Privacy.registrationBinding(chainId, keys.idc, anml.pc, anml.ciphertext, erth.pc, erth.ciphertext, aff)
-        return RegistrationPrep(anml, erth, gas, referrer?.handle.orEmpty(), binding, keys.idc)
+        return RegistrationPrep(anml, erth, gas, referrer?.handle.orEmpty(), binding, keys.idc, keys.idSecret)
     }
 
     /** MsgRegister without its fee bundle: what /gas/register checks. */
@@ -674,10 +697,15 @@ class PrivacyWallet(
      * ourselves whose memo lets a wallet restored from the mnemonic find the
      * leaf), and records the registration as pending before anything else,
      * then tries to resolve it. [publicSignals] are the passport
-     * proof's: [current_date, address, nullifier, dsc_key].
+     * proof's: [current_date, address, nullifier, dsc_key, idc].
      */
     fun register(prep: RegistrationPrep, proof: ByteArray, publicSignals: List<String>, signatureAlgorithm: String, dscDer: ByteArray): TxResult {
+        require(publicSignals.size == REGISTER_SIGNALS) { "a passport proof has $REGISTER_SIGNALS public signals, not ${publicSignals.size}" }
         require(PrivateMsgs.decimalField(publicSignals[1]) == prep.binding) { "the passport proof is bound to other notes" }
+        // The proof's idc output is the chain's check that the registrant holds
+        // the identity's secret; one proven with another's would be refused.
+        require(PrivateMsgs.decimalField(publicSignals[IDC_SIGNAL]) == prep.idc) { "the passport proof registers another identity" }
+        if (identityUsed()) throw IdentityUsed()
         require(PrivateMsgs.isCalendarDate(publicSignals[0])) { "the passport proof's current_date ${publicSignals[0]} is not a calendar date" }
         val base = registerMsg(prep, proof, publicSignals, signatureAlgorithm, dscDer)
         // Before any byte leaves: a registration that fails or is refused is
@@ -707,6 +735,11 @@ class PrivacyWallet(
             Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee)))) { bs, _, _ -> base.toBuilder().setFee(bs[0]).build() }
         }
         recordRegistration(result)
+        // A switch: the move suggestion is drawn now, so its reminder comes
+        // even if Identity is never opened.
+        if (result.attr("register", "switched") == "true") {
+            result.attr("register", "leaf_index")?.toLongOrNull()?.let { leaf -> synchronized(this) { drawMoveSuggestion(leaf, result.time) } }
+        }
         return result
     }
 
@@ -1133,6 +1166,48 @@ class PrivacyWallet(
 
     /** Moves away from this identity that the chain has not confirmed yet, and confirmed ones not yet recorded in their target. */
     fun outgoingMoves(): List<PendingMove> = store.state.pendingMoves.filter { !it.incoming }
+
+    /**
+     * When the wallet suggests bringing the predecessor's handle and
+     * caretaker split to this identity: a delay drawn once per registration,
+     * uniformly from [MOVE_DELAY_MIN_SECONDS] to [MOVE_DELAY_MAX_SECONDS],
+     * after the registration's block time. A move that lands right after a
+     * switch links the handle, its owner_pk and the split to the passport's
+     * public registration by timing (ORCHARD_DESIGN 6.6); nothing hurries it
+     * while this identity stays live. Only a suggestion: the user chooses,
+     * and nothing is sent unasked. 0 without a verified registration.
+     */
+    @Synchronized
+    fun suggestedMoveAt(): Long {
+        val id = store.state.identity?.takeIf { it.verified } ?: return 0
+        val s = store.state
+        if (s.moveSuggestedLeaf == id.leafIndex && s.moveSuggestedAt > 0) return s.moveSuggestedAt
+        return drawMoveSuggestion(id.leafIndex, id.activatedAt)
+    }
+
+    private fun drawMoveSuggestion(leaf: Long, activatedAt: Long): Long {
+        val span = (MOVE_DELAY_MAX_SECONDS - MOVE_DELAY_MIN_SECONDS).toInt()
+        val at = Handles.satAdd(activatedAt, MOVE_DELAY_MIN_SECONDS + java.security.SecureRandom().nextInt(span + 1))
+        store.state.moveSuggestedAt = at
+        store.state.moveSuggestedLeaf = leaf
+        store.save()
+        return at
+    }
+
+    /**
+     * Nothing is left for a move to bring here (the predecessor holds
+     * nothing, or everything moved): the suggestion and its reminder end.
+     */
+    @Synchronized
+    fun clearMoveSuggestion() {
+        val s = store.state
+        if (s.moveSuggestedAt <= 0) return
+        s.moveSuggestedAt = -1
+        store.save()
+    }
+
+    /** The suggested move time once it has come, for the reminder (0: none due). */
+    fun moveSuggestionDue(): Long = store.state.moveSuggestedAt.takeIf { it in 1..now() } ?: 0
 
     /** Marks a confirmed move recorded in its target (a retried [MoveRecorder.record] succeeded). */
     @Synchronized
@@ -2700,6 +2775,19 @@ class PrivacyWallet(
         }.getOrNull() ?: ""
 
         const val SECONDS_PER_DAY = 86_400L
+
+        /** The suggested wait before a move after a switch: drawn uniformly between these (hours to days). */
+        const val MOVE_DELAY_MIN_SECONDS = 6 * 3600L
+        const val MOVE_DELAY_MAX_SECONDS = 3 * 86_400L
+
+        /** A register proof's public signals: [current_date, address, nullifier, dsc_key, idc]. */
+        const val REGISTER_SIGNALS = 5
+        /** The idc's index among them (the chain's params.idc_index). */
+        const val IDC_SIGNAL = 4
+        /** What a wallet says when its identity was registered before (personhood 1130). */
+        const val IDENTITY_USED = "This identity has been registered before. Switch to a new wallet: " +
+            "the chain accepts each identity once, so a registration, a switch or a return after a lapse " +
+            "goes to a wallet whose identity never registered."
 
         /**
          * The chain's current_date_max_skew_seconds (48 h): a registration

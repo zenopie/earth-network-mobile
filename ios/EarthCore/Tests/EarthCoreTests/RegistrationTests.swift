@@ -35,10 +35,10 @@ final class RegistrationTests: PrivacyTestCase {
         let chain = FakeChain()
         let a = try wallet(chain, alice)
         let prep = try await a.prepareRegistration(referrer: PrivacyWallet.Referrer(handle: "bobby", address: try wallet(chain, bob).address))
-        let msg = a.registerMsg(prep, proof: Data(count: 1), publicSignals: ["1", "2", "3", "4"], signatureAlgorithm: "lean_poa", dscDer: Data(count: 1))
+        let msg = a.registerMsg(prep, proof: Data(count: 1), publicSignals: ["1", "2", "3", "4", "5"], signatureAlgorithm: "lean_poa", dscDer: Data(count: 1))
         XCTAssertEqual("bobby", msg.affiliateHandle)
         XCTAssertEqual(PrivacyHash.affiliateField(handle: "bobby"), try msg.affiliateField())
-        let none = a.registerMsg(try await a.prepareRegistration(referrer: nil), proof: Data(count: 1), publicSignals: ["1", "2", "3", "4"],
+        let none = a.registerMsg(try await a.prepareRegistration(referrer: nil), proof: Data(count: 1), publicSignals: ["1", "2", "3", "4", "5"],
                                  signatureAlgorithm: "lean_poa", dscDer: Data(count: 1))
         XCTAssertEqual("", none.affiliateHandle)
         XCTAssertEqual(Fr.zero, try none.affiliateField())

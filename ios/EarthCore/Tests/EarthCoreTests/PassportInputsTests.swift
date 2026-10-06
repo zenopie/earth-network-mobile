@@ -27,7 +27,8 @@ final class PassportInputsTests: XCTestCase {
             let want = expected["witness"] as! [String: Any]
             let inputs = try PassportInputs.build(dg1: file(v.id, "dg1.bin"), efSOD: file(v.id, "sod.bin"),
                                                   currentDateYYMMDD: expected["current_date"] as! Int,
-                                                  addressField: expected["address"] as! String, variants: variants)
+                                                  addressField: expected["address"] as! String,
+                idSecretField: expected["id_secret"] as! String, variants: variants)
             XCTAssertEqual(inputs.algorithm, v.id)
             XCTAssertEqual(inputs.scheme, expected["scheme"] as? String, v.id)
             XCTAssertEqual(Set(want.keys), Set(inputs.witness.keys), v.id)
@@ -45,7 +46,7 @@ final class PassportInputsTests: XCTestCase {
         for v in variants.variants {
             let expected = try JSONSerialization.jsonObject(with: file(v.id, "expected.json")) as! [String: Any]
             XCTAssertThrowsError(try PassportInputs.build(dg1: file(v.id, "dg1_tampered.bin"), efSOD: file(v.id, "sod.bin"),
-                                                          currentDateYYMMDD: 250101, addressField: "0x1", variants: variants)) {
+                                                          currentDateYYMMDD: 250101, addressField: "0x1", idSecretField: "0x2", variants: variants)) {
                 XCTAssertEqual($0 as? PassportInputs.Error, .data(expected["dg1_tampered_error"] as! String), v.id)
             }
         }
@@ -59,7 +60,7 @@ final class PassportInputsTests: XCTestCase {
             let want = (try JSONSerialization.jsonObject(with: file("unsupported/\(name)", "expected.json")) as! [String: Any])["unsupported"] as! String
             XCTAssertThrowsError(try PassportInputs.build(dg1: file("unsupported/\(name)", "dg1.bin"),
                                                           efSOD: file("unsupported/\(name)", "sod.bin"),
-                                                          currentDateYYMMDD: 250101, addressField: "0x1", variants: variants)) {
+                                                          currentDateYYMMDD: 250101, addressField: "0x1", idSecretField: "0x2", variants: variants)) {
                 XCTAssertEqual($0 as? PassportInputs.Error, .unsupported(want), name)
                 XCTAssertEqual($0.localizedDescription, "This passport's signature type isn't supported yet (\(want))", name)
             }
@@ -69,7 +70,7 @@ final class PassportInputsTests: XCTestCase {
     func testANonTD3DG1IsUnsupported() throws {
         let v = variants.variants[0]
         XCTAssertThrowsError(try PassportInputs.build(dg1: Data(count: 60), efSOD: file(v.id, "sod.bin"),
-                                                      currentDateYYMMDD: 250101, addressField: "0x1", variants: variants)) {
+                                                      currentDateYYMMDD: 250101, addressField: "0x1", idSecretField: "0x2", variants: variants)) {
             XCTAssertEqual($0 as? PassportInputs.Error, .unsupported("60-byte DG1 (not a TD3 passport)"))
         }
     }
