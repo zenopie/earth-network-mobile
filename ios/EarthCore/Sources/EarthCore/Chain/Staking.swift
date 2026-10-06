@@ -86,7 +86,7 @@ public extension EarthClient {
     /// Total pending uerth rewards across all validators.
     ///
     /// Rewards are DecCoins and may be fractional, so the fraction is dropped
-    /// rather than rounded — the chain pays out the truncated amount.
+    /// rather than rounded.
     func totalRewards(_ delegator: String) async -> String {
         guard let json = try? await rest.get(
             "/cosmos/distribution/v1beta1/delegators/\(delegator)/rewards"
@@ -96,12 +96,5 @@ public extension EarthClient {
             return String(amount.prefix(while: { $0 != "." }))
         }
         return "0"
-    }
-
-    // --- messages ---
-
-    func msgWithdrawReward(delegator: String, validator: String) -> ProtoAny {
-        Msg.WithdrawDelegatorReward(delegator: delegator, validator: validator)
-            .asAny(typeURL: Msg.WithdrawDelegatorReward.typeURL)
     }
 }

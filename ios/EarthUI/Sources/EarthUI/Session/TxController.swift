@@ -31,10 +31,7 @@ public final class TxController {
         public var gasLimit: UInt64 = TransactionSigner.defaultGasLimit
 
         /// Always `Fees.forGas(gasLimit)`. Derived rather than passed so the
-        /// fee shown on the sheet and the fee broadcast cannot diverge — on
-        /// Android they did, and claiming rewards (whose gas scales with the
-        /// validator count) declared the flat default while broadcasting more.
-        /// The sheet then reported the account funded when it was not.
+        /// fee shown on the sheet and the fee broadcast cannot diverge.
         public var feeUerth: String { feeOverride.map(String.init) ?? Fees.forGas(gasLimit) }
 
         /// A private tx's fee as the chain priced it, when that was more than

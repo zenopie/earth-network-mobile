@@ -21,12 +21,10 @@ public enum TransactionSigner {
     ///
     /// Subtracting one minimum fee is not enough. Leaving exactly
     /// ``defaultFeeUerth`` — one 400,000-gas transaction and no more — would
-    /// make the very next thing a staker wants, claiming rewards (2,750 against
-    /// a 2,000 balance), unaffordable the moment it is offered, stranding the
-    /// account.
+    /// make the very next action unaffordable, stranding the account.
     ///
-    /// A million gas covers the realistic follow-ups: claim across a few
-    /// validators, then unstake. 5,000 uerth at 0.005uerth.
+    /// A million gas covers the realistic follow-ups. 5,000 uerth at
+    /// 0.005uerth.
     ///
     /// Deliberately NOT applied to sending: emptying an account on purpose
     /// should be allowed to empty it, less the fee.

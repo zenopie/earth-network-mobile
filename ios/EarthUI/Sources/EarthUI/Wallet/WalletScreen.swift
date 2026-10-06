@@ -469,7 +469,7 @@ struct HomePanel: View {
                             Figures.balance(BigInt(u.value ?? model.derthValue(u.derth, validator: u.validator))) + " ERTH")
             }
             if model.rewards > 0 {
-                positionRow("Rewards", "Claimable", "sparkles",
+                positionRow("Rewards", "Pending", "sparkles",
                             Figures.precise(model.rewards) + " ERTH")
             }
             if model.unbondingTotal > 0 {

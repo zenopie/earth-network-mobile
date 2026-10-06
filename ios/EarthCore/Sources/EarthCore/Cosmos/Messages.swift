@@ -2,7 +2,7 @@ import Foundation
 
 // The transparent messages the wallet signs, and the allocation types the
 // private msgs carry. Field numbers mirror the .proto files under
-// android/app/src/main/proto — cosmos/{bank,distribution,gov} and
+// android/app/src/main/proto — cosmos/{bank,gov} and
 // earth/{dex,allocation}.
 
 public enum Msg {
@@ -22,24 +22,6 @@ public enum Msg {
             w.string(1, from)
             w.string(2, to)
             w.repeatedMessage(3, amount)
-            return w.data
-        }
-    }
-
-    // --- cosmos/distribution ---
-
-    public struct WithdrawDelegatorReward: ProtoMessage {
-        public static let typeURL = "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward"
-        public let delegator: String, validator: String
-
-        public init(delegator: String, validator: String) {
-            self.delegator = delegator; self.validator = validator
-        }
-
-        public func encoded() -> Data {
-            var w = ProtoWriter()
-            w.string(1, delegator)
-            w.string(2, validator)
             return w.data
         }
     }

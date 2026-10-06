@@ -17,11 +17,9 @@ import SwiftUI
 /// one selector apart, and the deposit sheet is a single presentation from a
 /// tab like every other.
 ///
-/// Staked and claimable lead because the common question is how much rather
-/// than with whom. Claim is disabled at zero rather than hidden: a button that
-/// comes and goes as rewards accrue is harder to find than one always in the
-/// same place, and its disabled state answers "is there anything to claim"
-/// without being pressed.
+/// Staked leads because the common question is how much rather than with whom.
+/// There is no claim: private stake compounds into its validator's rate, and a
+/// validator's self-bond rewards compound into the self-bond at the epoch end.
 struct EarnScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
@@ -72,13 +70,6 @@ struct EarnScreen: View {
                 figures
                 Spacer().frame(height: theme.space.x16)
 
-                // Transparent delegations remain only for a validator's own
-                // self-bond; private stake compounds into its rate instead.
-                if !model.delegations.isEmpty {
-                    EarthButton(title: "Claim rewards") { claimAll() }
-                        .disabled(model.rewards <= 0)
-                    Spacer().frame(height: theme.space.x8)
-                }
                 HStack(spacing: theme.space.x12) {
                     EarthButton(title: "Stake", role: .secondary) { staking = .stake }
                     EarthButton(title: "Unstake", role: .secondary) { staking = .unstake }
@@ -196,7 +187,7 @@ struct EarnScreen: View {
                 .minimumScaleFactor(0.6)
 
             Spacer().frame(height: theme.space.x12)
-            EarthLabel("Claimable rewards")
+            EarthLabel("Pending rewards")
             Text("\(Figures.display(model.rewards)) ERTH")
                 .font(EarthType.headline)
                 .foregroundStyle(theme.colors.accentInk)
@@ -255,8 +246,6 @@ struct EarnScreen: View {
         return "\(percent) commission · \(Figures.rate(net)) APR"
     }
 
-    /// One withdraw per validator, so the gas scales with how many you
-    /// delegate to.
     /// Merge a validator's notes into one (MsgRestake), on the user's tap only.
     private func merge(_ validator: String) {
         tx.requestPrivate(.private(
@@ -267,20 +256,6 @@ struct EarnScreen: View {
             ]
         ), onSuccess: { await model.refresh() }) { w in
             try await w.restake(validator: validator)
-        }
-    }
-
-    private func claimAll() {
-        let validators = model.delegations.map(\.validator)
-        tx.request(.init(
-            action: "Claim rewards",
-            rows: [
-                ("Rewards", "\(Figures.balance(model.rewards)) ERTH"),
-                ("From", Figures.count(validators.count, "validator")),
-            ],
-            gasLimit: TransactionSigner.defaultGasLimit + UInt64(150_000 * validators.count)
-        )) { key in
-            validators.map { model.client.msgWithdrawReward(delegator: key.address, validator: $0) }
         }
     }
 }
