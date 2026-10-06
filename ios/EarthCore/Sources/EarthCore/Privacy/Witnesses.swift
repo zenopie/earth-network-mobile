@@ -121,7 +121,7 @@ public struct StakeIn: Sendable, Equatable {
     public static func padding(rho: Fr, rcm: Fr) -> StakeIn { try! StakeIn(amount: 0, rho: rho, rcm: rcm, pos: 0, path: zeroPath, pad: true) }
 }
 
-/// The stake circuit's witness (circuits/stake v2, ORCHARD_DESIGN 20.2).
+/// The stake circuit's witness (circuits/stake v2, ORCHARD_DESIGN 4.1).
 /// Ports `privacy/prove/Witnesses.kt`: two lanes of one owner (nk), every
 /// real input under `anchor`.
 ///
@@ -418,7 +418,7 @@ public struct VoteSlot: Sendable {
     }
 }
 
-/// The vote circuit's witness (circuits/vote v2, ORCHARD_DESIGN 20.4): up to
+/// The vote circuit's witness (circuits/vote v2, ORCHARD_DESIGN 4.2): up to
 /// `maxNotes` derth stake notes of one owner (one nk) at one validator, each
 /// under the proposal's snapshot note root with its spend nullifier absent
 /// from the snapshot stake nullifier tree, and one weight, 0 < weight <= the

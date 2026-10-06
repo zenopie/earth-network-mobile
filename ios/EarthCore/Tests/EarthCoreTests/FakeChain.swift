@@ -40,7 +40,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var stakeRows: [StakeNoteRow] = []
     let stakeTree = MerkleTree(store: MemNodeStore())
     var stakeNullifiers: [Fr: UInt64] = [:]
-    /// The stake nullifier indexed tree's values in insertion order (leaf i + 1), ORCHARD_DESIGN 15.
+    /// The stake nullifier indexed tree's values in insertion order (leaf i + 1), ORCHARD_DESIGN 3.4.
     var stakeNfValues: [Fr] = []
     var stakeRoots: Set<Fr> = []
     /// Proposal snapshots: note root and size, nullifier tree root and size (sentinel included), block.

@@ -993,7 +993,7 @@ public struct MsgShieldedUndelegate: DecodablePrivateMsg, StakingMsg, Equatable 
 }
 
 /// Up to two stake notes of one owner at one validator vote with ONE weight,
-/// without being spent (ORCHARD_DESIGN 20.4): `proof` is circuits/vote
+/// without being spent (ORCHARD_DESIGN 8.5): `proof` is circuits/vote
 /// against the proposal's snapshot and the CURRENT slash debt root (a
 /// labelled note votes its value after slashes); `voteNullifiers` is exactly
 /// two, the used slots' H(TAG_VNF, nk, rho, position, proposal_id) first
@@ -1188,7 +1188,7 @@ public struct MsgPositionVote: DecodablePrivateMsg, StakingMsg, Equatable {
 }
 
 /// Moves `amount` derth/<src> to `dstValidator` with no unbonding gap
-/// (ORCHARD_DESIGN 20.3, 20.5): lane A spends derth/<src> (v_out = amount,
+/// (ORCHARD_DESIGN 8.3, 8.7): lane A spends derth/<src> (v_out = amount,
 /// the change or a zero note back); the credit lane merges `dstDerth` into
 /// the owner's unlabelled derth/<dst> note (or pads), labelled with the move
 /// (move_key = credit_nullifier, move_time, exposed = dst_derth). `moveTime`:

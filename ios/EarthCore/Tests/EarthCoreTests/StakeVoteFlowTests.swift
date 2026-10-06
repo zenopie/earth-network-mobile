@@ -3,7 +3,7 @@ import Foundation
 import XCTest
 @testable import EarthCore
 
-/// Stake votes without spending (ORCHARD_DESIGN 15, 18.2, 20.4) as wallet
+/// Stake votes without spending (ORCHARD_DESIGN 8.5) as wallet
 /// flows against `FakeChain`: one vote per validator carrying up to two notes
 /// with one weight (their rounded value), and one per position, each its own
 /// tx; on two concurrently open proposals; unlinkable vote nullifiers; a
@@ -163,7 +163,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         dump(chain, "stakeVoteSpentBefore")
     }
 
-    /// The snapshot rule (ORCHARD_DESIGN 20.4): a top-up after the snapshot
+    /// The snapshot rule (ORCHARD_DESIGN 8.5): a top-up after the snapshot
     /// spends both notes into one; the old notes still vote the value they
     /// held (their openings kept), the merged note, not under the snapshot
     /// root, cannot. No unit votes twice.

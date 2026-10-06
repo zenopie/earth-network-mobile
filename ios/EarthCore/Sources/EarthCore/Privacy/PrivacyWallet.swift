@@ -1394,7 +1394,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         store.state.stakeNotes.filter { $0.spendable && $0.denom == denom }
     }
 
-    /// The chain's slash debt now (Query/DebtTree, ORCHARD_DESIGN 20.6): its
+    /// The chain's slash debt now (Query/DebtTree, ORCHARD_DESIGN 8.7): its
     /// root and size, the label window and the clear_before a proof may name,
     /// and the rows (`tree`) when a label is cleared or voted, read whole
     /// (the indexer's stream, else the chain's pages) and checked against
@@ -1492,7 +1492,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// When `l`'s exposure may leave its note (unix seconds): after move_time + the label window.
     public static func movableAfter(_ l: StakeLabel, windowSeconds: UInt64) -> UInt64 { PrivateMsgs.saturatingAdd(l.moveTime, windowSeconds) }
 
-    /// What `n` may give up now (ORCHARD_DESIGN 20.6): its amount; for a
+    /// What `n` may give up now (ORCHARD_DESIGN 8.7): its amount; for a
     /// labelled note with its window open, the amount less the exposure (the
     /// exposure stays in place); with the window closed, less the exposure
     /// plus what it retains (the proof clears it).
@@ -1590,7 +1590,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     /// The margin a credit is quoted with for the rate's drift until its
-    /// block (ORCHARD_DESIGN 20.8: ~10 ppm covers minutes on a chain with
+    /// block (ORCHARD_DESIGN 12.2: ~10 ppm covers minutes on a chain with
     /// real stake), in ppm of the derth the value buys. A quote the rate
     /// outran is refused in the ante at no cost, and retried.
     public static let creditMarginPPM: UInt64 = 10
@@ -1628,7 +1628,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     /// derth bought for `value` uerth at `book`'s live rate, less a margin for
-    /// the rate's drift until the tx's block (ORCHARD_DESIGN 20.8): the chain
+    /// the rate's drift until the tx's block (ORCHARD_DESIGN 12.2): the chain
     /// refuses a credit the value does not buy, in its ante, at no cost.
     static func creditFor(_ value: BigUInt, _ book: PrivacyReads.ValidatorQuote) throws -> UInt64 {
         if book.supply == 0 {
@@ -1642,7 +1642,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return UInt64(min(buys - margin, BigUInt(Int64.max)))
     }
 
-    /// A delegation's quote (ORCHARD_DESIGN 20.8), shown on its confirm
+    /// A delegation's quote (ORCHARD_DESIGN 12.2), shown on its confirm
     /// sheet: `derth` credited to our note at `validator` for `amount` uerth,
     /// and the `haircut` a merge clearing a moved-in label takes (0: none).
     public struct DelegateQuote: Sendable, Equatable {
@@ -1667,7 +1667,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// Stakes `q.amount` uerth with its validator (ORCHARD_DESIGN 20): the
+    /// Stakes `q.amount` uerth with its validator (ORCHARD_DESIGN 8.1): the
     /// bundle releases it (and the fee) into the module; the stake proof
     /// merges the quoted derth into our note there (up to two of them, a
     /// labelled one cleared once its window closed), or pads its input when
@@ -1773,7 +1773,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return book
     }
 
-    /// Undelegates `amount` derth/`validator` (ORCHARD_DESIGN 18.1, 20): the
+    /// Undelegates `amount` derth/`validator` (ORCHARD_DESIGN 8.4): the
     /// stake proof spends it (the change, or a zero note when nothing is left,
     /// back to us) and the msg names where the chain pays it out, a fresh pool
     /// note opening of our own (pc and its v2 amount-blind ciphertext). At
@@ -1813,7 +1813,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return r
     }
 
-    /// A move's quote (MsgRedelegate, ORCHARD_DESIGN 19-20), shown on its
+    /// A move's quote (MsgRedelegate, ORCHARD_DESIGN 8.7), shown on its
     /// confirm sheet: `amount` derth/`src` worth `value` uerth at src's live
     /// rate arrives as `dstDerth` derth/`dst` (dst's live rate, less the
     /// margin and what may stay behind in src's book), merged into our
@@ -1987,7 +1987,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
 
-    /// What a note votes (ORCHARD_DESIGN 20.4): its amount, or for a labelled
+    /// What a note votes (ORCHARD_DESIGN 8.5): its amount, or for a labelled
     /// note its amount less the slash cut of its exposure under the CURRENT
     /// debt tree (a slash after the snapshot counts).
     private static func voteValue(_ n: OwnedStakeNote, _ d: DebtView?) -> UInt64 {
@@ -2271,7 +2271,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     static let nfPage = WalletSync.pageSize
     static let lcdNfPage = 1000
 
-    /// The stake nullifier tree at `snap` (ORCHARD_DESIGN 15, wallet format 3):
+    /// The stake nullifier tree at `snap` (ORCHARD_DESIGN 3.4):
     /// its first nf_size - 1 values in insertion order, from the indexer's
     /// stream by leaf index (full ranges only: nothing names a note of ours),
     /// the chain's Query/StakeNullifierTree for whatever the indexer lacks,
@@ -2631,7 +2631,7 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// Closes `position`: the stake proof (its owner tag) merges the
     /// position's derth into our note at its validator, or pads when we hold
-    /// none there (ORCHARD_DESIGN 20.3). The fee bundle carries a value-0
+    /// none there (ORCHARD_DESIGN 8.3). The fee bundle carries a value-0
     /// record note to ourselves naming the closed counter, so no
     /// restore ever locks under its tag again.
     public func unlockPosition(_ position: PrivacyReads.Position, counter: UInt32) async throws -> TxResult {

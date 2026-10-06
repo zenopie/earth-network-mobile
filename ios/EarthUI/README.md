@@ -14,13 +14,16 @@ the iOS platform component as well, which Xcode downloads separately — see
     Theme/         the Sprout palette, type scale, spacing, and the components
                    every screen is built from
     Session/       WalletStore (Keychain), AppModel, TxController
-    Root/          the tab shell and the screen shape
-    Wallet/        balances, send, receive, personhood
+    Root/          the tab shell, settings sheet, handle screens, update banner
+    Wallet/        balances, activity, send, receive, moves between public and private
     Earn/          staking and liquidity
     Swap/          the AMM, quoted the way the chain quotes it
     Govern/        allocation streams and chain proposals
     Registration/  the passport flow, up to the chip read
+    Settings/      explorer, notes, security, wallets
     Setup/         create, restore, unlock
+    Tx/            the confirm, pending and result sheets
+    Resources/     the logo and coin images
 
 ## What is load-bearing
 
@@ -43,7 +46,7 @@ than being recomputed in a view where they could drift from the chain.
 
 ## Design
 
-The Android app vendors Zashi's design system, ~16,000 lines of Compose, and
+The Android app vendors Zashi's design system, ~7,000 lines of Compose, and
 re-skins its palette to the Sprout ramps. Only the ramps come across: SwiftUI
 already carries the general-purpose components that had to be vendored there,
 so what is ported is the token layer — `Theme/Palette.swift` and

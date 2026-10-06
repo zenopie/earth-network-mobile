@@ -5,7 +5,7 @@
 # the Swoirenberg xcframework binary target (0% CPU, no sockets, deadlocked in
 # an async await, no error) — and it hangs for the whole package graph, so
 # `--target` does not dodge it. Everything SwiftPM would have done is
-# mechanical: compile four Swift modules in dependency order and link the
+# mechanical: compile five Swift modules in dependency order and link the
 # framework's static library. That is what this does.
 #
 # Prefer `swift run progate` once a working Xcode is installed. This exists so

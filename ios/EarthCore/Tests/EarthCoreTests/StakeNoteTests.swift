@@ -3,7 +3,7 @@ import Foundation
 import XCTest
 @testable import EarthCore
 
-/// Stake notes (ORCHARD_DESIGN 20): one note per validator (a delegation,
+/// Stake notes (ORCHARD_DESIGN 8.1): one note per validator (a delegation,
 /// an unlock and a move's credit merge into it; a first delegation pads its
 /// input, a full exit creates a zero note), credits quoted at the live rate
 /// with a margin (a refusal costs nothing), moving stake (MsgRedelegate)

@@ -45,7 +45,7 @@ next submission starts from what was actually filed rather than from memory.
     • Claim a daily ANML token, once registered
     • Send and receive ERTH and ANML
     • Swap tokens, and provide liquidity to earn a share of trading fees
-    • Stake ERTH and claim staking rewards
+    • Stake ERTH privately; rewards compound into the stake
     • Vote on proposals, and direct where the network's emissions go
     • Track balances, pools and transaction history
 
@@ -85,7 +85,7 @@ phrase, and the reviewer chooses the PIN during setup.
              abandon abandon abandon about
 
 To use it: open the app → Restore an existing wallet → give it any name →
-choose a PIN (the reviewer's own, any 6 digits) → enter the phrase above.
+choose a PIN (the reviewer's own, any 4 digits) → enter the phrase above.
 
 This is the published BIP-39 all-zero test vector, used deliberately. It is
 public knowledge, so nothing secret is being handed over, and it must never
@@ -118,13 +118,12 @@ hold value — anyone in the world can spend from it.
 
     FREE GAS
 
-    Users with an empty balance can tap "Get free gas" to have the network
-    fee for a transaction covered. For registration, our server checks the
-    same zero-knowledge proof the network will (the proof and the issuing
-    country's signing certificate, which go on the public ledger anyway — no
-    personal passport data) and sends a small amount of ERTH if the network would accept it;
-    after that, registered users can receive a small grant once a day. No
-    device identifiers are used. The app contains no advertising and no
+    Registration's network fee can be covered: on the registration screen,
+    our server checks the same zero-knowledge proof the network will (the
+    proof and the issuing country's signing certificate, which go on the
+    public ledger anyway — no personal passport data) and sends a small
+    amount of ERTH if the network would accept it, once per passport per
+    month. No device identifiers are used. The app contains no advertising and no
     tracking.
 
     CRYPTOCURRENCY

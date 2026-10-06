@@ -116,7 +116,7 @@ final class WalletFlowTests: XCTestCase {
         await assertThrowsAsync({ try await a.unshield(receiver: self.receiver, denom: self.derth, amount: 1) }) { $0 is PrivacyError }
 
         // A stake vote against a snapshot taken right after: the note proves
-        // itself unspent at the snapshot and is not spent (ORCHARD_DESIGN 15).
+        // itself unspent at the snapshot and is not spent (ORCHARD_DESIGN 8.5).
         chain.openProposal(9)
         let fresh = try wallet(chain, alice)
         try await fresh.sync()

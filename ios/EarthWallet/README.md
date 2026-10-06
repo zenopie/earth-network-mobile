@@ -24,7 +24,7 @@ none. Signing in with any Apple ID creates a free Personal Team, which is enough
 for your own phone — profiles expire every 7 days, and up to 3 devices. It is
 *not* enough for the passport chip read: that needs the Near Field Communication
 Tag Reading capability on the App ID, which only a paid account can enable.
-Enable it on `network.erth.wallet` in the developer portal (Identifiers → the
+Enable it on `network.erth.EarthWallet` in the developer portal (Identifiers → the
 App ID → Near Field Communication Tag Reading → Save), or add the capability
 once in Xcode's Signing & Capabilities tab, which registers it for you. Until
 then the build stops at provisioning, before compiling anything.
@@ -43,8 +43,9 @@ Three things, each with a comment saying why it is not in `EarthUI`:
   `Info.plist` next to it; iOS refuses the session if any of the three is
   missing. It also holds `applinks:erth.network`, for referral links.
 - `ChipReader.swift` — the passport dialogue, over `NFCPassportReader`.
-- `DeviceProver.swift` — Barretenberg, over `ProverGate`, against the seven
-  circuits referenced in from the Android tree.
+- `DeviceProver.swift` — Barretenberg, over `ProverGate`, against the
+  circuits referenced in from the Android tree (16 bundled passport variants
+  and the four privacy circuits) and the passport variants fetched on demand.
 
 The last two are installed into `EarthUI`'s seams in `EarthWalletApp.init`.
 See `../README.md` for the packaging reasons and the SRS behaviour.

@@ -28,11 +28,11 @@ public enum PrivacyHash {
     public static let tagSPC = tag("earth.spc")
     public static let tagSNF = tag("earth.snf")
     public static let tagOTag = tag("earth.otag")
-    // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 15).
+    // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 3.4, 8.5).
     public static let tagSNFL = tag("earth.snfl")
     public static let tagVNF = tag("earth.vnf")
     public static let tagVPad = tag("earth.vpad")
-    // Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote; ORCHARD_DESIGN 20).
+    // Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote; ORCHARD_DESIGN 3.3, 3.5).
     public static let tagSLabel = tag("earth.slabel")
     public static let tagDebtL = tag("earth.debtl")
     // Wallet-defined (PRIVACY_FORMATS.md 6): the registration record's and an unlock memo's tags.
@@ -85,7 +85,7 @@ public enum PrivacyHash {
 
     /// A stake note: H(TAG_STAKE, AssetID(stake denom), amount, spc, label),
     /// label 0 for an ordinary note or `stakeLabel` of the redelegation whose
-    /// exposure it holds (ORCHARD_DESIGN 20.2).
+    /// exposure it holds (ORCHARD_DESIGN 3.3).
     public static func stakeCM(asset: Fr, amount: UInt64, spc: Fr, label: Fr) -> Fr { h(tagStake, asset, u64(amount), spc, label) }
 
     /// A stake note's slash label: H(TAG_SLABEL, move_key, move_time,

@@ -82,7 +82,7 @@ public struct OwnedNote: Hashable, Sendable, Codable {
     }
 }
 
-/// A stake note's slash label (ORCHARD_DESIGN 20.6): the note holds
+/// A stake note's slash label (ORCHARD_DESIGN 8.7): the note holds
 /// `exposed` derth a private redelegation credited, the move `moveKey` (its
 /// credit nullifier) named at `moveTime` (unix seconds). Until the move's
 /// window closes (moveTime + the chain's label window) a slash of the move's

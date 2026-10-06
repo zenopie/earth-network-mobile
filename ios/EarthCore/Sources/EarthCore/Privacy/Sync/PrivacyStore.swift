@@ -136,7 +136,7 @@ public struct RegRecord: Codable, Equatable, Sendable {
 public enum RecordStatus: String, Codable, Sendable { case open, matched, exhausted }
 
 /// An undelegation of this wallet whose payout has not arrived
-/// (ORCHARD_DESIGN 18.1): recorded when the node takes the tx
+/// (ORCHARD_DESIGN 8.4): recorded when the node takes the tx
 /// (`until` its timeout_height), confirmed with the committed event's
 /// `epoch`, `value` (uerth) and `payoutID`, dropped once a note to `pc` is
 /// synced (paid) or the tx failed. Local only: what the wallet shows while
@@ -162,7 +162,7 @@ public struct PendingUnbond: Codable, Equatable, Sendable {
     }
 }
 
-/// A stake vote this wallet cast (ORCHARD_DESIGN 15): its proposal and vote
+/// A stake vote this wallet cast (ORCHARD_DESIGN 8.5): its proposal and vote
 /// nullifier, recorded the moment the node accepted the tx (`confirmed`
 /// false, with its hash and timeout_height) and confirmed once committed or
 /// refused as already voted. One note votes once per proposal.

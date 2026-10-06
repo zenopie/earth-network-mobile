@@ -1,7 +1,7 @@
 import BigInt
 import Foundation
 
-/// One stake proof laid out (circuits/stake v2, ORCHARD_DESIGN 20). Ports
+/// One stake proof laid out (circuits/stake v2, ORCHARD_DESIGN 4.1). Ports
 /// `privacy/tx/StakePlan.kt`: lane A spends up to two of this wallet's notes
 /// of `denom` (or pads its first slot) and creates one note back to it (the
 /// merged note, the change, or a zero note), crediting `vIn` and releasing

@@ -4,7 +4,7 @@ import SwiftUI
 ///
 /// The Android app vendors Zashi's design system and re-skins its palette to
 /// the Sprout ramps — Zcash gold becomes Earth green, and the warm olive
-/// neutrals become green-biased ones. Only the ramps come across here: 16,000
+/// neutrals become green-biased ones. Only the ramps come across here: 7,000
 /// lines of Compose components have no SwiftUI equivalent worth transliterating,
 /// but the colours are what make the two apps look like one product.
 enum Palette {

@@ -135,7 +135,7 @@ ASN.1 walking, the hash offsets, the padding, or the low-s normalisation would
 not prove at all.
 
 One last gap closes separately. The circuit returns a DSC commitment as its
-third public signal, and the chain recomputes one from the certificate in
+fourth public signal (index 3), and the chain recomputes one from the certificate in
 `MsgRegister`; if the canonical key encoding differed, a registration would
 fail on chain with nothing in the app to explain it:
 
@@ -205,11 +205,12 @@ mismatch is the unambiguous signature of a bb version difference.
 
 ### Measured
 
-On an M-series Mac, macOS slice, the old `lean_poa` (~130k gates; the
-2^18-tier variants are 139k–255k, see PASSPORT_COVERAGE.md for every tier):
+On an M-series Mac, macOS slice, a ~130k-gate register circuit (the
+2^18-tier variants are 139k–255k gates, see circuits/PASSPORT_COVERAGE.md for
+every tier; larger variants take longer and more memory):
 
     proving key   ~160 ms
-    proof         14788 bytes in 1.5s
+    proof         ~1.5s
     memory        ~320 MiB peak
     public inputs [current_date, address, nullifier, dsc_key]
 
@@ -223,7 +224,7 @@ The gate verifying its own proof is necessary but not sufficient — it only
 shows bb agrees with itself. `tools/chainverify` runs the proof through the
 **chain's** verifier (the vendored `barretenberg-go` at `aztec_tag: v5.0.0`):
 
-    cd tools/chainverify && go run . ../../ios/ProverGate/.artifacts
+    cd tools/chainverify && go run . ../../ios/ProverGate/.artifacts/lean_poa_p256_sha256
     ACCEPTED — the chain verifier accepts the Swift-generated proof
 
 That is the actual result. Everything else is corroboration.
@@ -271,7 +272,7 @@ in the library:
   Mac. Symptom if you try: *"the library 'NFCPassportReader' requires macos
   10.13, but depends on the product 'OpenSSL' which requires macos 10.15"*, on
   an iOS-only build.
-- **Barretenberg** is a ~140MB framework and the circuits are ~14MB of JSON.
+- **Barretenberg** is a ~140MB framework and the bundled circuits are ~16MB of JSON.
   `EarthUI` has to stay typecheckable from the command line.
 
 The circuits are **referenced**, not copied: the folder reference in the Xcode
@@ -281,19 +282,22 @@ recompile cannot leave the two platforms proving against different circuits.
 ### The SRS
 
 `DeviceProver` loads circuits with `size: nil`, so the SRS is provisioned from
-the circuit's own gate count rather than a hardcoded hint. Seven passport
-circuits ship and they are not the same size, and **barretenberg honours only
+the circuit's own gate count rather than a hardcoded hint. The passport
+variants span three size tiers (16 bundled at 2^18, 17 fetched on demand at
+2^19 and 2^20, each pinned by sha256 in `passport_variants.json`), and
+**barretenberg honours only
 the first SRS initialization of a process** — a size too small for the
 circuit a passport selects cannot be corrected afterwards.
 
 - The privacy circuits' SRS (32,769 points, 2 MiB) is bundled: the Android
   asset `srs/bn254_g1_32769.dat`, referenced into the app and checked by hash.
   A private proof never fetches anything.
-- The passport circuits need up to 2^19 + 1 points (32 MiB), too large to
-  bundle. `PassportSRS.prefetch` fetches that prefix of Aztec's transcript
-  once, at launch, checks it against a pinned hash and keeps it in
-  Application Support (excluded from backups). While it is missing, a passport
-  proof downloads its own SRS (registration is public anyway).
+- The passport circuits need 2^18 + 1 points (16 MiB, nearly every
+  passport), 2^19 + 1 (32 MiB) or 2^20 + 1 (64 MiB), too large to bundle.
+  `PassportSRS` fetches each tier as a prefix of Aztec's transcript, checks it
+  against the hash pinned in `passport_variants.json` and keeps it in
+  Application Support (excluded from backups): the 2^18 tier at launch, a
+  larger one before proving a passport whose circuit needs it.
 - A private proof made while a registration may still follow in this launch
   reserves the SRS for the largest passport circuit, from the local file
   only; without the file, a later registration asks for a relaunch.
@@ -301,12 +305,11 @@ circuit a passport selects cannot be corrected afterwards.
 ### Signing
 
 The `TAG` reader-session format needs the **Near Field Communication Tag
-Reading** capability on the App ID (`network.erth.wallet`). Self-service in the
-developer portal, but paid accounts only — a Personal Team cannot enable it,
-which is why `EarthWallet.entitlements` did not exist until enrolment landed.
+Reading** capability on the App ID (`network.erth.EarthWallet`). Self-service in
+the developer portal, but paid accounts only — a Personal Team cannot enable it.
 Without it the build fails before compiling anything:
 
-    error: Provisioning profile "iOS Team Provisioning Profile: network.erth.wallet"
+    error: Provisioning profile "iOS Team Provisioning Profile: network.erth.EarthWallet"
     doesn't include the NFC Tag Reading capability.
 
 Note also that Apple requires crypto wallet apps to be published by an

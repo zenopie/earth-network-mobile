@@ -277,7 +277,7 @@ public enum NoteSelection {
 
 /// Picks stake notes: a stake proof spends at most two.
 /// Picks stake notes for lane A of a stake proof (circuits/stake v2): at most
-/// two inputs, at most one of them labelled (ORCHARD_DESIGN 20.6). `free` is
+/// two inputs, at most one of them labelled (ORCHARD_DESIGN 8.7). `free` is
 /// what a note may give up: its amount, or for a labelled note its amount less
 /// the exposure (the window still open) or less the exposure plus what the
 /// debt tree says it retains (the window closed: the proof clears it). Ports

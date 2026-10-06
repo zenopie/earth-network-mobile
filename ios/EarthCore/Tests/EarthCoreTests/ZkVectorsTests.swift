@@ -123,7 +123,7 @@ final class ZkVectorsTests: XCTestCase {
         XCTAssertEqual(s("stake_nf"), PrivacyHash.stakeNF(nk: nk, rho: rho, position: 4_000_000_000).hex)
         XCTAssertEqual(Vectors.fe(1006), Vectors.fr(s("otag_salt")))
         XCTAssertEqual(s("otag"), PrivacyHash.ownerTag(ownerPK: opk, salt: Vectors.fe(1006)).hex)
-        // Stake votes (ORCHARD_DESIGN 15), and the design's golden values (= Noir test_go_parity).
+        // Stake votes (ORCHARD_DESIGN 8.5), and the design's golden values (= Noir test_go_parity).
         XCTAssertEqual(s("nf_leaf_1_2_3"), PrivacyHash.nfLeaf(value: Fr(UInt64(1)), nextValue: Fr(UInt64(2)), nextIndex: 3).hex)
         XCTAssertEqual("0cdc3a81748c6389efaa3a6c29b7f4609a8e9f860230b70413e8bef512978276", s("nf_leaf_1_2_3"))
         XCTAssertEqual(s("nf_leaf"), PrivacyHash.nfLeaf(value: Vectors.fe(1007), nextValue: Vectors.fe(1008), nextIndex: 4_000_000_000).hex)
