@@ -73,7 +73,7 @@ struct EarnScreen: View {
                 HStack(spacing: theme.space.x12) {
                     EarthButton(title: "Stake", role: .secondary) { staking = .stake }
                     EarthButton(title: "Unstake", role: .secondary) { staking = .unstake }
-                        .disabled(model.privateStake.isEmpty)
+                        .disabled(!model.stakeHoldings.contains { $0.free > 0 })
                 }
                 Spacer().frame(height: theme.space.x8)
                 EarthButton(title: "Move stake", role: .secondary) { staking = .move }

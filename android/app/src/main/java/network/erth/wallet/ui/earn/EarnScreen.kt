@@ -176,7 +176,9 @@ fun EarnScreen(
             EarthButton(
                 text = "Unstake",
                 onClick = onUnstake,
-                enabled = !state?.delegations.isNullOrEmpty(),
+                // Private stake notes, not x/staking delegations: only an
+                // operator's self-bond can be a transparent delegation.
+                enabled = privateStake.any { it.free > 0 },
                 modifier = Modifier.weight(1f),
                 colors = EarthButtonDefaults.secondaryColors(),
             )
