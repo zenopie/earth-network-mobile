@@ -597,9 +597,13 @@ DSC key type (RSA-2048/3072/4096; ECDSA P-224/256/384/521, brainpoolP224r1/
 `circuits/variants.json` and bundled as
 `assets/circuits/passport_variants.json` (PASSPORT_COVERAGE.md). Every
 variant has the same public inputs `current_date` (u32 YYMMDD), `address`
-(the registration binding, §13), then the returned `nullifier` and
-`dsc_key` commitment. The wallet sends them as MsgRegister.public_signals,
-decimal, in that order: [current_date, address, nullifier, dsc_key].
+(the registration binding, §13), then the returned `nullifier`, `dsc_key`
+commitment and `idc`. The wallet sends them as MsgRegister.public_signals,
+decimal, in that order: [current_date, address, nullifier, dsc_key, idc].
+`idc` = H(TAG_ID, id_secret) is computed in the circuit from the private
+witness `id_secret`; the chain (params.idc_index = 4) requires it to equal
+MsgRegister.idc, so a passport is registered only to an identity whose
+secret its prover holds (audit R2-B1).
 `signature_algorithm` is the variant id.
 
 **Proof date [chain + wallet].** The wallet always proves on today's UTC
@@ -651,7 +655,8 @@ PassportInputsTests and corecheck).
 zero-padded to the variant's maxima with their lengths, dg1_hash_offset and
 econtent_hash_offset (the index of the digest right after its DER prefix:
 `30 (H+5) 02 01 01 04 H` and `06 09 2A864886F70D010904 31 (H+2) 04 H`),
-current_date, address, then by key: RSA `dsc_modulus`, `dsc_redc`
+`id_secret` (the identity's secret, "0x" hex: the one whose idc
+MsgRegister names), current_date, address, then by key: RSA `dsc_modulus`, `dsc_redc`
 (floor(2^(2·bits+6) / n)), `sod_signature` as 120-bit little-endian limbs
 (18, 26, 35), `dsc_exponent`, and for PSS `pss_salt_len`; P-256
 `dsc_pubkey_x`, `dsc_pubkey_y`, `sod_signature` r‖s (low s); other curves

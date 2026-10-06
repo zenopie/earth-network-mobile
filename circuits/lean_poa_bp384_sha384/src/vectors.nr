@@ -10,9 +10,11 @@ pub global DG1_HASH_OFFSET: u32 = 0x1f;
 pub global SIGNED_ATTRS_LEN: u32 = 0x78;
 pub global ECONTENT_HASH_OFFSET: u32 = 0x48;
 pub global CURRENT_DATE: u32 = 0x3d0f5;
+pub global ID_SECRET: Field = 0x65617274682d666978747572652d6964;
 pub global ADDRESS: Field = 0x65617274682d666978747572652d77616c6c6574;
 pub global NULLIFIER: Field = 354429298331139115069978586005875590449728385008684286201889183853792996068;
 pub global DSC_KEY: Field = 6255566625354976546087512811912948978985032805419463815418522100000577679979;
+pub global IDC: Field = 5213597131887198631543482144486983131968161188578856586489270406935584847957;
 pub global DSC_PUBKEY_X: [u8; 48] = [0x01, 0x00, 0xdd, 0x3e, 0xcd, 0x31, 0x4e, 0x92, 0x85, 0x60, 0xca, 0x58, 0xa5, 0x3c, 0xae, 0x04, 0xd0, 0x49, 0xa8, 0x4c, 0x52, 0x5a, 0x02, 0xc8, 0x90, 0x29, 0xfb, 0x14, 0xed, 0x18, 0x0a, 0x24, 0x0c, 0xb8, 0xdb, 0xcb, 0x2e, 0xfd, 0xc2, 0x8e, 0xf5, 0xe0, 0xab, 0xf6, 0xd4, 0x67, 0xe9, 0xcf];
 pub global DSC_PUBKEY_Y: [u8; 48] = [0x08, 0xd1, 0x94, 0xf2, 0x74, 0x18, 0x7e, 0xcd, 0x39, 0x93, 0x4b, 0xfa, 0x60, 0x9e, 0x9e, 0xb2, 0xd0, 0xfe, 0xae, 0x44, 0x70, 0xd1, 0x37, 0x78, 0x92, 0x3e, 0xdb, 0x3f, 0x79, 0xf8, 0xe7, 0xf9, 0xda, 0x6d, 0xaa, 0x76, 0xa4, 0xea, 0x0c, 0x4f, 0x60, 0x7d, 0xc7, 0x35, 0x38, 0xcf, 0x64, 0xd2];
 pub global SOD_SIGNATURE_R: [u8; 48] = [0x18, 0x26, 0xfc, 0x1e, 0xa8, 0x73, 0xaf, 0xda, 0x1f, 0x13, 0x4e, 0x61, 0xb4, 0x15, 0x40, 0x87, 0xa2, 0x78, 0x6f, 0x53, 0x72, 0x80, 0x81, 0xd6, 0x49, 0x81, 0x19, 0x0e, 0x82, 0xd8, 0x32, 0xb1, 0x53, 0x58, 0x5c, 0x83, 0x8b, 0x9a, 0x23, 0x7e, 0x60, 0x47, 0xa3, 0xc0, 0x9e, 0x70, 0x25, 0xf9];
@@ -23,16 +25,25 @@ pub global S_HIGH: [u8; 48] = [0x83, 0xab, 0xc8, 0x4d, 0xf9, 0x51, 0x3b, 0x9c, 0
 
 #[test]
 fn accepts_its_fixture() {
-    let (nullifier, dsc_key) = crate::main(DG1, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, DSC_PUBKEY_X, DSC_PUBKEY_Y, SOD_SIGNATURE_R, SOD_SIGNATURE_S, CURRENT_DATE, ADDRESS);
+    let (nullifier, dsc_key, idc) = crate::main(DG1, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, DSC_PUBKEY_X, DSC_PUBKEY_Y, SOD_SIGNATURE_R, SOD_SIGNATURE_S, ID_SECRET, CURRENT_DATE, ADDRESS);
     assert(nullifier == NULLIFIER);
     assert(dsc_key == DSC_KEY);
+    assert(idc == IDC);
+}
+
+#[test(should_fail)]
+fn cannot_register_an_idc_without_its_secret() {
+    // The idc is computed from the prover's secret: any other secret
+    // gives another idc, so no witness registers IDC without ID_SECRET.
+    let (_, _, idc) = crate::main(DG1, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, DSC_PUBKEY_X, DSC_PUBKEY_Y, SOD_SIGNATURE_R, SOD_SIGNATURE_S, ID_SECRET + 1, CURRENT_DATE, ADDRESS);
+    assert(idc == IDC);
 }
 
 #[test(should_fail)]
 fn rejects_a_tampered_dg1() {
     let mut dg1 = DG1;
     dg1[60] = dg1[60] ^ 1;
-    let _ = crate::main(dg1, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, DSC_PUBKEY_X, DSC_PUBKEY_Y, SOD_SIGNATURE_R, SOD_SIGNATURE_S, CURRENT_DATE, ADDRESS);
+    let _ = crate::main(dg1, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, DSC_PUBKEY_X, DSC_PUBKEY_Y, SOD_SIGNATURE_R, SOD_SIGNATURE_S, ID_SECRET, CURRENT_DATE, ADDRESS);
 }
 
 #[test(should_fail)]
@@ -40,15 +51,15 @@ fn rejects_a_tampered_signature() {
     let mut s = SOD_SIGNATURE_S;
     s[47] = s[47] ^ 1;
     let sig = (SOD_SIGNATURE_R, s);
-    let _ = crate::main(DG1, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, DSC_PUBKEY_X, DSC_PUBKEY_Y, sig.0, sig.1, CURRENT_DATE, ADDRESS);
+    let _ = crate::main(DG1, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, DSC_PUBKEY_X, DSC_PUBKEY_Y, sig.0, sig.1, ID_SECRET, CURRENT_DATE, ADDRESS);
 }
 
 #[test(should_fail)]
 fn rejects_a_signature_under_another_hash() {
-    let _ = crate::main(DG1, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, DSC_PUBKEY_X, DSC_PUBKEY_Y, R_OTHER_HASH, S_OTHER_HASH, CURRENT_DATE, ADDRESS);
+    let _ = crate::main(DG1, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, DSC_PUBKEY_X, DSC_PUBKEY_Y, R_OTHER_HASH, S_OTHER_HASH, ID_SECRET, CURRENT_DATE, ADDRESS);
 }
 
 #[test(should_fail)]
 fn rejects_a_high_s_signature() {
-    let _ = crate::main(DG1, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, DSC_PUBKEY_X, DSC_PUBKEY_Y, SOD_SIGNATURE_R, S_HIGH, CURRENT_DATE, ADDRESS);
+    let _ = crate::main(DG1, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, DSC_PUBKEY_X, DSC_PUBKEY_Y, SOD_SIGNATURE_R, S_HIGH, ID_SECRET, CURRENT_DATE, ADDRESS);
 }

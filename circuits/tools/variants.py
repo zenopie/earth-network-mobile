@@ -42,6 +42,9 @@ CURRENT_DATE = 250101
 # The account every fixture proof is bound to: the bytes "earth-fixture-wallet"
 # as one field element, as the chain's own fixtures use (tools/poafixtures).
 ADDRESS = int.from_bytes(b"earth-fixture-wallet", "big")
+# The identity secret every fixture proof registers (its idc is a public
+# output): the bytes "earth-fixture-id" as one field element.
+ID_SECRET = int.from_bytes(b"earth-fixture-id", "big")
 NON_VARIANT_MEMBERS = ["poa_core", "privacy_core", "membership", "move", "action", "stake", "vote"]
 PINS = {
     "rsa": 'rsa = { tag = "v0.12.0", git = "https://github.com/zkpassport/noir_rsa" }',
@@ -159,7 +162,9 @@ def main_nr(v):
 //! edit. Everything but the signature check is poa_core.
 //!
 //! Public input order: current_date, address, then the public return values
-//! (nullifier, dsc_key).
+//! (nullifier, dsc_key, idc). idc = H(TAG_ID, id_secret) is computed from the
+//! prover's private id_secret, so a passport registers only to an identity
+//! whose secret its prover holds.
 
 {uses}use poa_core::hash;
 
@@ -174,9 +179,10 @@ fn main(
     signed_attrs: [u8; {sa}],
     signed_attrs_len: u32,
     econtent_hash_offset: u32,
-{params}    current_date: pub u32,
+{params}    id_secret: Field,
+    current_date: pub u32,
     address: pub Field,
-) -> pub (Field, Field) {{
+) -> pub (Field, Field, Field) {{
     let digest = poa_core::hash_and_bind(
         dg1,
         dg1_len,
@@ -190,7 +196,7 @@ fn main(
         hash::{he},
         hash::{hs},
     );
-{call}    poa_core::finalize(dg1, commitment, current_date, address)
+{call}    poa_core::finalize(dg1, commitment, current_date, address, id_secret)
 }}
 """
 
@@ -203,7 +209,7 @@ def noir_limbs(xs):
     return "[" + ", ".join(xs) + "]"
 
 
-def vectors_nr(v, w, nullifier, dsc_key, alt):
+def vectors_nr(v, w, nullifier, dsc_key, idc, alt):
     """The fixture as Noir globals, and the tests over them."""
     key = v["key"]
     g = []
@@ -213,9 +219,11 @@ def vectors_nr(v, w, nullifier, dsc_key, alt):
         arr(k.upper(), w[k], "u8")
     for k in ("dg1_len", "e_content_len", "dg1_hash_offset", "signed_attrs_len", "econtent_hash_offset", "current_date"):
         g.append(f"pub global {k.upper()}: u32 = {w[k]};")
+    g.append(f"pub global ID_SECRET: Field = {w['id_secret']};")
     g.append(f"pub global ADDRESS: Field = {w['address']};")
     g.append(f"pub global NULLIFIER: Field = {nullifier};")
     g.append(f"pub global DSC_KEY: Field = {dsc_key};")
+    g.append(f"pub global IDC: Field = {idc};")
     if key.startswith("rsa"):
         for k in ("dsc_modulus", "dsc_redc", "sod_signature"):
             arr(k.upper(), w[k], "u128")
@@ -252,7 +260,7 @@ def vectors_nr(v, w, nullifier, dsc_key, alt):
                     ("rejects_a_high_s_signature", "(SOD_SIGNATURE_R, S_HIGH)")]
         sig_default = "(SOD_SIGNATURE_R, SOD_SIGNATURE_S)"
 
-    def call(dg1="DG1", sig=sig_default):
+    def call(dg1="DG1", sig=sig_default, secret="ID_SECRET"):
         if sig.startswith("("):
             r, s = sig[1:-1].split(", ")
             sigs = f"{r}, {s}"
@@ -262,11 +270,15 @@ def vectors_nr(v, w, nullifier, dsc_key, alt):
             sigs = sig
         args = sig_args.replace("{sig}", sigs)
         return (f"crate::main({dg1}, DG1_LEN, E_CONTENT, E_CONTENT_LEN, DG1_HASH_OFFSET, SIGNED_ATTRS, "
-                f"SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, {args}, CURRENT_DATE, ADDRESS)")
+                f"SIGNED_ATTRS_LEN, ECONTENT_HASH_OFFSET, {args}, {secret}, CURRENT_DATE, ADDRESS)")
 
     tests = [
-        "#[test]\nfn accepts_its_fixture() {\n    let (nullifier, dsc_key) = " + call() + ";\n"
-        "    assert(nullifier == NULLIFIER);\n    assert(dsc_key == DSC_KEY);\n}",
+        "#[test]\nfn accepts_its_fixture() {\n    let (nullifier, dsc_key, idc) = " + call() + ";\n"
+        "    assert(nullifier == NULLIFIER);\n    assert(dsc_key == DSC_KEY);\n    assert(idc == IDC);\n}",
+        "#[test(should_fail)]\nfn cannot_register_an_idc_without_its_secret() {\n"
+        "    // The idc is computed from the prover's secret: any other secret\n"
+        "    // gives another idc, so no witness registers IDC without ID_SECRET.\n"
+        "    let (_, _, idc) = " + call(secret="ID_SECRET + 1") + ";\n    assert(idc == IDC);\n}",
         "#[test(should_fail)]\nfn rejects_a_tampered_dg1() {\n    let mut dg1 = DG1;\n    dg1[60] = dg1[60] ^ 1;\n"
         "    let _ = " + call(dg1="dg1") + ";\n}",
         "#[test(should_fail)]\nfn rejects_a_tampered_signature() {\n    " + tamper + "\n    let _ = " + call(sig="sig") + ";\n}",
@@ -335,10 +347,11 @@ def prover_toml(w):
 def fixture(v, m, root):
     spec = spec_for(v)
     p = build(spec)
-    vid, w = reference.witness(p.dg1, p.sod, m, CURRENT_DATE, "0x%x" % ADDRESS)
+    vid, w = reference.witness(p.dg1, p.sod, m, CURRENT_DATE, "0x%x" % ADDRESS, "0x%x" % ID_SECRET)
     assert vid == v["id"], (vid, v["id"])
     dk = reference.parse_dsc_key(p.dsc_der)
     null, commit = reference.nullifier(p.dg1), reference.dsc_commitment(dk)
+    idc = reference.idc(ID_SECRET)
     d = os.path.join(root, "fixtures", v["id"])
     write(os.path.join(d, "dg1.bin"), p.dg1, "wb")
     write(os.path.join(d, "sod.bin"), p.sod, "wb")
@@ -355,11 +368,13 @@ def fixture(v, m, root):
         "address": "0x%x" % ADDRESS,
         "nullifier": str(null),
         "dsc_key": str(commit),
+        "id_secret": "0x%x" % ID_SECRET,
+        "idc": str(idc),
         "dg1_tampered_error": "dg1_hash_not_in_econtent",
         "witness": w,
     }
     write(os.path.join(d, "expected.json"), json.dumps(expected, indent=1) + "\n")
-    return p, spec, w, null, commit
+    return p, spec, w, null, commit, idc
 
 
 # Passports the wallet must turn away with the scheme it could not prove.
@@ -384,7 +399,7 @@ def unsupported_fixtures(m, root):
         spec = Spec(seed="unsupported:" + name, **kw)
         p = build(spec)
         try:
-            reference.witness(p.dg1, p.sod, m, CURRENT_DATE, "0x%x" % ADDRESS)
+            reference.witness(p.dg1, p.sod, m, CURRENT_DATE, "0x%x" % ADDRESS, "0x%x" % ID_SECRET)
         except reference.Unsupported as e:
             scheme = e.scheme
         else:
@@ -402,11 +417,11 @@ def gen(root=CIRCUITS):
     if os.path.isdir(fx):
         shutil.rmtree(fx)
     for v in m["variants"]:
-        p, spec, w, null, commit = fixture(v, m, root)
+        p, spec, w, null, commit, idc = fixture(v, m, root)
         pkg = os.path.join(root, v["id"])
         write(os.path.join(pkg, "Nargo.toml"), nargo_toml(v))
         write(os.path.join(pkg, "src", "main.nr"), main_nr(v))
-        write(os.path.join(pkg, "src", "vectors.nr"), vectors_nr(v, w, null, commit, alt_signatures(v, p, spec)))
+        write(os.path.join(pkg, "src", "vectors.nr"), vectors_nr(v, w, null, commit, idc, alt_signatures(v, p, spec)))
         print("generated", v["id"])
     unsupported_fixtures(m, root)
     members = NON_VARIANT_MEMBERS + [v["id"] for v in m["variants"]]

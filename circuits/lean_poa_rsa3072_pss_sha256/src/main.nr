@@ -5,7 +5,9 @@
 //! edit. Everything but the signature check is poa_core.
 //!
 //! Public input order: current_date, address, then the public return values
-//! (nullifier, dsc_key).
+//! (nullifier, dsc_key, idc). idc = H(TAG_ID, id_secret) is computed from the
+//! prover's private id_secret, so a passport registers only to an identity
+//! whose secret its prover holds.
 
 use bignum::params::BigNumParams;
 use bignum::RuntimeBigNum;
@@ -28,9 +30,10 @@ fn main(
     sod_signature: [u128; 26],
     dsc_exponent: u32,
     pss_salt_len: u32,
+    id_secret: Field,
     current_date: pub u32,
     address: pub Field,
-) -> pub (Field, Field) {
+) -> pub (Field, Field, Field) {
     let digest = poa_core::hash_and_bind(
         dg1,
         dg1_len,
@@ -50,5 +53,5 @@ fn main(
 
     let modulus: [u8; 384] = poa_core::modulus_be_bytes(dsc_modulus);
     let commitment = poa_core::dsc_commitment_rsa(dsc_exponent, modulus);
-    poa_core::finalize(dg1, commitment, current_date, address)
+    poa_core::finalize(dg1, commitment, current_date, address, id_secret)
 }

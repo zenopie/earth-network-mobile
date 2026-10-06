@@ -217,7 +217,8 @@ second-preimage literature before relaunches.
   fixture generators. A check fails if the generated mains differ from the
   committed ones.
 - **The public interface is unchanged** for every variant:
-  `[current_date, address] → (nullifier, dsc_key)`, with the same indices,
+  `[current_date, address] → (nullifier, dsc_key, idc)`, with the same indices,
+  idc = H(TAG_ID, id_secret) from the private `id_secret` (audit R2-B1),
   registration binding, date pin and DSC/country exclusion. The chain keeps
   one path: `params.verifying_keys[signature_algorithm]`.
 

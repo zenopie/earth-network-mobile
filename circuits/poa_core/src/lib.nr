@@ -2,7 +2,8 @@
 //! circuits. Each variant binary (one per DSC key type, signature scheme and
 //! hash profile; see ../variants.json and PASSPORT_COVERAGE.md) only verifies
 //! the SOD signature and names its hash functions; everything else (hash
-//! binding, DSC commitment, expiry, nullifier, address binding) lives here so it
+//! binding, DSC commitment, expiry, nullifier, address binding, and the
+//! identity commitment proven from the prover's id_secret) lives here so it
 //! stays identical across variants.
 //!
 //! The Document Signer that signed the passport is a PUBLIC input: the circuit
@@ -264,13 +265,24 @@ pub fn modulus_be_bytes<let L: u32, let NB: u32>(limbs: [u128; L]) -> [u8; NB] {
     out
 }
 
-/// Expiry + nullifier + DSC commitment, shared by every variant.
+/// Expiry + nullifier + DSC commitment + identity commitment, shared by every
+/// variant.
 ///
-/// Returns `(nullifier, dsc_key)`, both public. `dsc_key` is *returned* rather
+/// Returns `(nullifier, dsc_key, idc)`, all public. `dsc_key` is *returned* rather
 /// than accepted as an input so the prover never has to compute Poseidon2
 /// itself — the circuit derives it from the key the signature was actually
 /// verified against, and the chain recomputes it from the DSC certificate in the
 /// transaction. A prover therefore cannot sign with one key and name another.
+///
+/// `idc` is the identity commitment the registration puts in the identity
+/// tree, `privacy_core::idc(id_secret)` = H(TAG_ID, id_secret), computed here
+/// from the prover's private id_secret. The chain requires it to equal the
+/// msg's idc (and the `address` binding commits to that idc as well), so a
+/// passport can only be registered to an identity whose secret its prover
+/// holds. Without this, a holder could register her passport to an idc
+/// someone else chose and only they can use: a buyer's, so that a move along
+/// the succession the chain writes hands the buyer her handle or caretaker
+/// split, with no way for her to take it back (audit R2-B1).
 ///
 /// Also asserts the passport is unexpired against `current_date` and that the
 /// nullifier is Poseidon2 over the issuing state, the whole document number and
@@ -280,7 +292,8 @@ pub fn finalize(
     dsc_key: Field,
     current_date: u32,
     address: Field,
-) -> (Field, Field) {
+    id_secret: Field,
+) -> (Field, Field, Field) {
     assert(yymmdd(dg1, EXPIRY_OFFSET) >= current_date);
 
     // Bind the proof to the account it was proved for.
@@ -328,7 +341,7 @@ pub fn finalize(
     // collide the same way. Every byte is covered by the SOD hash, so none of it
     // can be chosen.
     let id = nullifier_preimage(dg1);
-    (Poseidon2::hash(id, NULLIFIER_PREIMAGE_LEN), dsc_key)
+    (Poseidon2::hash(id, NULLIFIER_PREIMAGE_LEN), dsc_key, privacy_core::idc(id_secret))
 }
 
 /// Issuing state ‖ document number ‖ check digit ‖ DOB ‖ optional data.
@@ -379,6 +392,36 @@ fn sample_dg1() -> [u8; DG1_MAX] {
     let dob = [0x37, 0x34, 0x30, 0x38, 0x31, 0x32];
     for i in 0..6 {
         dg1[DOB_OFFSET + i] = dob[i];
+    }
+    dg1
+}
+
+#[test]
+fn finalize_returns_the_idc_of_the_provers_secret() {
+    let dg1 = sample_dg1_unexpired();
+    let (_, _, idc) = finalize(dg1, 7, 250101, 1, 0x1234);
+    assert(idc == privacy_core::idc(0x1234));
+    // The idc of the secret the prover holds, never a chosen one: another
+    // secret is another idc.
+    let (_, _, other) = finalize(dg1, 7, 250101, 1, 0x1235);
+    assert(other != idc);
+}
+
+#[test(should_fail)]
+fn finalize_cannot_output_an_idc_whose_secret_the_prover_lacks() {
+    // Someone else's idc (theirs is H(TAG_ID, z)); proving with any other
+    // secret yields a different idc, which the chain refuses.
+    let dg1 = sample_dg1_unexpired();
+    let theirs = privacy_core::idc(0xbeef);
+    let (_, _, idc) = finalize(dg1, 7, 250101, 1, 0x1234);
+    assert(idc == theirs);
+}
+
+fn sample_dg1_unexpired() -> [u8; DG1_MAX] {
+    let mut dg1 = sample_dg1();
+    let expiry = [0x33, 0x30, 0x30, 0x31, 0x30, 0x31]; // 300101
+    for i in 0..6 {
+        dg1[EXPIRY_OFFSET + i] = expiry[i];
     }
     dg1
 }

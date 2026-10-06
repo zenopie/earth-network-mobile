@@ -294,8 +294,9 @@ def ecdsa_rs(sig: bytes, n: int):
     return r, min(s, n - s)
 
 
-def witness(dg1: bytes, sod_bytes: bytes, manifest: dict, current_date: int, address: str):
-    """(variant id, witness map) for a scanned passport."""
+def witness(dg1: bytes, sod_bytes: bytes, manifest: dict, current_date: int, address: str, id_secret: str):
+    """(variant id, witness map) for a scanned passport, registering the
+    identity of id_secret (the circuit outputs its idc)."""
     if len(dg1) != DG1_LEN:
         raise Unsupported(f"{len(dg1)}-byte DG1 (not a TD3 passport)")
     sod = parse_sod(sod_bytes)
@@ -335,6 +336,7 @@ def witness(dg1: bytes, sod_bytes: bytes, manifest: dict, current_date: int, add
         else:
             w["sod_signature_r"] = hexbytes(r.to_bytes(c.size, "big"), c.size)
             w["sod_signature_s"] = hexbytes(s.to_bytes(c.size, "big"), c.size)
+    w["id_secret"] = id_secret
     w["current_date"] = scalar(current_date)
     w["address"] = address
     return v["id"], w
@@ -347,6 +349,16 @@ def dsc_commitment(k: DscKey) -> int:
         return hash_fields([10, k.e] + list(nb))
     c = CURVES[k.curve]
     return hash_fields([c.tag] + list(k.x.to_bytes(c.size, "big") + k.y.to_bytes(c.size, "big")))
+
+
+# "earth.id" as a big-endian integer (privacy_core TAG_ID, zk/privacy.TagID).
+TAG_ID = int.from_bytes(b"earth.id", "big")
+
+
+def idc(id_secret: int) -> int:
+    """The identity commitment H(TAG_ID, id_secret) the circuit outputs."""
+    from .poseidon2 import hash_fields
+    return hash_fields([TAG_ID, id_secret])
 
 
 def nullifier(dg1: bytes) -> int:
