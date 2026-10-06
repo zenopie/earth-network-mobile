@@ -21,9 +21,8 @@ import network.erth.wallet.privacy.handles.Handles
 import network.erth.wallet.privacy.sync.PendingMove
 import network.erth.wallet.privacy.sync.WalletSync
 
-/** One of this wallet's Groundworks positions and the key index that signs for it. */
-/** A position of ours and its owner-tag counter (PrivacyKeys.otagSalt). */
-data class PositionRow(val position: PrivacyChainReads.Position, val keyIndex: Int)
+/** A position of ours, its owner-tag counter (PrivacyKeys.otagSalt) and its split's lease. */
+data class PositionRow(val position: PrivacyChainReads.Position, val keyIndex: Int, val lease: Reminders.GroundworksLease? = null)
 
 data class PrivacyActionsState(
     val positions: List<PositionRow>,
@@ -81,10 +80,14 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refresh(): Job = viewModelScope.launch {
         val ctx = getApplication<Application>()
+        var mine: List<PrivacyChainReads.Position>? = null
         _state.value = withContext(Dispatchers.IO) {
             val w = runCatching { PrivacySession.wallet(ctx) }.getOrNull()
+            val owned = w?.let { runCatching { it.positions() }.getOrNull() }
+            mine = owned?.map { it.first }
+            val leases = w?.let { wl -> mine?.let { wl.groundworksLeases(it) } }.orEmpty().associateBy { it.positionId }
             PrivacyActionsState(
-                positions = w?.let { runCatching { it.positions() }.getOrNull() }.orEmpty().map { (p, k) -> PositionRow(p, k) },
+                positions = owned.orEmpty().map { (p, k) -> PositionRow(p, k, leases[p.id]) },
                 groundworksOptions = runCatching { Allocation.stream(StreamId.STREAM_ID_GROUNDWORKS).options }.getOrDefault(emptyList()),
                 ballots = runCatching { PrivacyQueries.removalBallots() }.getOrDefault(emptyList()),
                 mergeable = w?.let { it.mergeable() + it.stakeMergeable() }.orEmpty(),
@@ -92,7 +95,9 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                 labelWindowSeconds = w?.labelWindowSeconds ?: 0L,
             )
         }
-        refreshPersonal()
+        // The positions just read give the Groundworks reminders: no second download.
+        val read = mine
+        _personal.value = withContext(Dispatchers.IO) { personalOf(ctx, read) }
     }
 
     private val _personal = MutableStateFlow<PersonalState?>(null)
@@ -114,7 +119,8 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
-        fun personalOf(ctx: android.content.Context): PersonalState? {
+        /** [mine]: this wallet's positions as just read (null: read them here, the whole public list as ever). */
+        fun personalOf(ctx: android.content.Context, mine: List<PrivacyChainReads.Position>? = null): PersonalState? {
             val w = runCatching { PrivacySession.wallet(ctx) }.getOrNull() ?: return null
             val now = System.currentTimeMillis() / 1000
             val st = w.store.state
@@ -129,6 +135,8 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
             val addressed = dir?.let { (d, at) -> runCatching { w.reconcileHandle(d, at) }.getOrNull() }.orEmpty()
             val entry = if (st.handle.isEmpty()) null else dir?.first?.get(st.handle)
             val caretakerExp = runCatching { w.caretakerExpiresAt() }.getOrDefault(0L)
+            val positions = mine ?: runCatching { w.positions().map { it.first } }.getOrNull()
+            val groundworks = positions?.let { runCatching { w.groundworksLeases(it) }.getOrNull() }.orEmpty()
             val reminders = Reminders.due(
                 Reminders.Inputs(
                     now = now,
@@ -140,6 +148,7 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                     handleEntry = entry,
                     addressed = addressed,
                     ownAddress = w.address.encode(),
+                    groundworks = groundworks,
                 ),
             )
             return PersonalState(

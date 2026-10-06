@@ -220,6 +220,7 @@ internal fun EarthContent(
                 Reminders.text(r, now) to when (r) {
                     Reminders.Reminder.AnmlReady -> onClaimAnml
                     is Reminders.Reminder.CaretakerExpiring -> { { nav.push(EarthRoute.Stream(true)) } }
+                    is Reminders.Reminder.GroundworksExpiring -> { { nav.push(EarthRoute.Positions) } }
                     is Reminders.Reminder.HandleExpiring, is Reminders.Reminder.HandlePaysElsewhere -> { { nav.push(EarthRoute.Handle) } }
                 }
             },
@@ -587,6 +588,26 @@ internal fun EarthContent(
                 lockable = derthHeld,
                 onLock = { locking = true },
                 onEditSplit = { resplitting = it },
+                now = now,
+                onRenew = { row ->
+                    val split = row.lease?.split.orEmpty()
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Renew position split",
+                            msgTypeUrl = PrivateMsgs.UPDATE_POSITION,
+                            balanceUerth = 0L,
+                            amountLabel = "Split",
+                            amountValue = split.entries.sortedByDescending { it.value }.joinToString(", ") { (id, pct) ->
+                                val name = privacyState?.groundworksOptions?.firstOrNull { it.id == id }?.description?.ifBlank { null } ?: "Option $id"
+                                "$name $pct%"
+                            },
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { privacy.refresh(); allocation.refresh() },
+                        // The same split cast again renews its lease; nothing renews on its own.
+                        run = { ctx -> PrivacySession.wallet(ctx).updatePosition(row.position, row.keyIndex, split).hash },
+                    )
+                },
                 onUnlock = { row ->
                     tx.requestPrivate(
                         details = TxConfirmDetails(
@@ -1355,7 +1376,12 @@ internal fun EarthContent(
         if (groundworks != null) {
             AllocationEditSheet(
                 title = "Position split",
-                stream = groundworks.copy(mine = row.position.splits),
+                // A lapsed position's split is cleared on chain: the last one seen here, its removed options left out.
+                stream = groundworks.copy(
+                    mine = row.position.splits.ifEmpty {
+                        row.lease?.split.orEmpty().filterKeys { id -> groundworks.options.any { it.id == id } }
+                    },
+                ),
                 onDismiss = { resplitting = null },
                 onConfirm = { weights ->
                     resplitting = null
