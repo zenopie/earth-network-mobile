@@ -133,4 +133,30 @@ class FixtureWitnessTest {
     }
 
     private fun bs(b: ByteArray) = com.google.protobuf.ByteString.copyFrom(b)
+
+    /**
+     * The move fixture (a wallet witness: HandlesTest's post-switch handle
+     * move, which nargo executes against circuits/move and bb proves and
+     * verifies with the genesis move key): rebuilt from its own fields, it
+     * checks and lays out the same public inputs.
+     */
+    @Test
+    fun moveFixture() {
+        val t = parseToml(String(Vectors.resource("privacy/fixture_move/Prover.toml")))
+        fun fr(k: String) = Fr.of(t.getValue(k) as BigInteger)
+        fun long(k: String) = (t.getValue(k) as BigInteger).toLong()
+        @Suppress("UNCHECKED_CAST")
+        fun path(k: String) = (t.getValue(k) as List<BigInteger>).map { Fr.of(it) }
+        val w = network.erth.wallet.privacy.prove.MoveWitness(
+            oldSecret = fr("old_secret"), newSecret = fr("new_secret"), successionIndex = long("succession_index"),
+            successionSiblings = path("succession_siblings"), dscKey = fr("dsc_key"), country = fr("country"),
+            activatedAt = long("activated_at"), predecessorAt = long("predecessor_at"), leafIndex = long("leaf_index"),
+            siblings = path("siblings"), root = fr("root"), scope = fr("scope"), signal = fr("signal"),
+        )
+        w.check()
+        assertEquals(Privacy.handleScope(), w.scope)
+        assertEquals(w.leafIndex + 1, w.successionIndex)
+        assertEquals(publicInputs("fixture_move"), w.publicInputs().map { it.toHex() })
+        assertEquals(t, parseToml(w.proverToml()))
+    }
 }

@@ -14,7 +14,9 @@
 # with the binding signature), which FixtureWitnessTest rebuilds in Kotlin,
 # and the dex's swap maths (dexamm_test.go.in,
 # run inside the exported x/dex/keeper) for SwapMath. Nothing in the chain
-# checkout is touched.
+# checkout is touched. fixture_move is the wallet's own (the chain has no move
+# fixture tool): a post-switch handle move from HandlesTest, kept as is and
+# copied to iOS with the rest.
 set -eu
 CHAIN=$(cd "${1:?usage: $0 /path/to/chain-checkout [ref]}" && pwd)
 REF=${2:-HEAD}
