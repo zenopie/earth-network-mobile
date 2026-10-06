@@ -333,9 +333,9 @@ public final class TxController {
         guard let pin = model.pin else { throw WalletStore.Error.notFound }
         let store = model.store
         let wallets = try await Task.detached { try store.unlock(pin: pin) }.value
-        guard let wallet = wallets.first(where: { $0.address == model.address })
-            ?? wallets.first
-        else { throw WalletStore.Error.notFound }
+        // The wallet on screen or nothing: signing with another would send
+        // from an account the sheet never named.
+        guard let wallet = wallets.first(where: { $0.address == model.address }) else { throw WalletStore.Error.notFound }
         let key = try EarthKey(mnemonic: wallet.mnemonic)
         let messages = try await build(key)
         return try await model.client.broadcast(
