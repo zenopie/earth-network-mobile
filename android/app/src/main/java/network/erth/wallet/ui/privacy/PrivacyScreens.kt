@@ -146,14 +146,17 @@ fun PositionsScreen(
             } else if (lease != null && lease.expiresAt > 0) {
                 EarthDetailRow("Split counts until", date(lease.expiresAt))
             }
+            // A split naming an option the fund has since removed cannot be
+            // cast again as it is: the banner and Renew open the split instead.
+            val removed = state.groundworksOptions.isNotEmpty() &&
+                (lease?.split ?: p.splits).keys.any { id -> state.groundworksOptions.none { it.id == id } }
             // The reminder, as on Home, and the renewal it asks for: the same
             // split cast again, sent only on the owner's confirmation.
             Reminders.groundworks(lease ?: Reminders.GroundworksLease(p.id, 0, true, p.splits), now)?.let { r ->
                 Spacer(Modifier.height(dimens.space8))
-                ReminderBanner(Reminders.text(r, now), onClick = { if (r.lapsed) onEditSplit(row) else onRenew(row) })
+                ReminderBanner(Reminders.text(r, now), onClick = { if (r.lapsed || removed) onEditSplit(row) else onRenew(row) })
             }
             if (lease != null && lease.renewalDue(now)) {
-                val removed = state.groundworksOptions.isNotEmpty() && lease.split.keys.any { id -> state.groundworksOptions.none { it.id == id } }
                 Spacer(Modifier.height(dimens.space8))
                 if (removed) {
                     Note("An option in this split has been removed from the fund, so it cannot be renewed as it is. Change the split to keep it counted.")

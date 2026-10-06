@@ -93,9 +93,13 @@ struct PositionsView: View {
                             EarthDetailRow(label: "Split counts until", value: Self.date(lease.expiresAt))
                         }
                         // The reminder, as on Home, and the renewal it asks for: the same
-                        // split cast again, sent only on the owner's confirmation.
+                        // split cast again, sent only on the owner's confirmation. A split
+                        // naming an option the fund has since removed cannot be cast again
+                        // as it is: the banner opens the split instead.
                         if let lease, let r = Reminders.groundworks(lease, now: now) {
-                            ReminderBanner(text: Reminders.text(r, now: now)) { if lapsed { resplitting = row } else { renew(row, lease) } }
+                            ReminderBanner(text: Reminders.text(r, now: now)) {
+                                if lapsed || removedOption(lease.split) { resplitting = row } else { renew(row, lease) }
+                            }
                         }
                         if let lease, lease.renewalDue(now) {
                             if removedOption(lease.split) {
