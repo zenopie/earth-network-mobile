@@ -54,8 +54,10 @@ object PrivacyQueries {
      * by the shielded pool's module account, so they count here too.
      */
     fun lpShareSupply(poolId: Long): java.math.BigInteger =
+        // A missing or unreadable amount is a failed read, not a zero supply:
+        // zero prices a deposit with no bound at all.
         get("/cosmos/bank/v1beta1/supply/by_denom?denom=dexlp/$poolId").optJSONObject("amount")?.optString("amount")
-            ?.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
+            ?.toBigIntegerOrNull()?.takeIf { it.signum() >= 0 } ?: throw IOException("the node did not say pool $poolId's share supply")
 
     fun shieldedMinFee(): Long = get("/earth/shielded/v1/params").getJSONObject("params").optString("min_fee", "1000").let {
         network.erth.wallet.privacy.Amounts.parseU64(it) ?: throw IOException("x/shielded min_fee $it is not a fee")

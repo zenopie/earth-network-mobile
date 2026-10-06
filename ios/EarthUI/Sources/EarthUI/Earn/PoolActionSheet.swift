@@ -293,7 +293,10 @@ struct PoolActionSheet: View {
         }
         let raw = try await PrivacyQueries(rest: client.rest).lpShareSupply(poolID: poolID)
         guard let supply = BigInt(raw) else { throw PrivacyError("could not read pool \(poolID)'s share supply; try again") }
-        return SwapMath.minShares(erthIn: erthIn, tokenIn: tokenIn, re: re, rt: rt, supply: supply, bps: 100)
+        // Priced off the ERTH reserve the deposit will meet, pending LP
+        // rewards settled in; the stored one when the node cannot simulate.
+        let settled = await client.settledErthReserve(pool) ?? re
+        return SwapMath.minShares(erthIn: erthIn, tokenIn: tokenIn, re: settled, rt: rt, supply: supply, bps: 100)
     }
 
     private func reviewWithdraw() {

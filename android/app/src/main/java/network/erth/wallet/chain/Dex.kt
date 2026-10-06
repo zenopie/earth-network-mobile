@@ -120,6 +120,33 @@ object Dex {
         return parseSimulated(body)
     }
 
+    /**
+     * [pool]'s ERTH reserve as a deposit into it will see it. x/dex settles
+     * the pool's pending LP rewards into the ERTH reserve before it prices a
+     * deposit, and GetPool / ListPool return the stored reserve without them,
+     * so a deposit bound priced off the stored one fails once enough reward
+     * has accrued. SimulateSwapExactIn settles first too: a token -> ERTH
+     * simulation reveals the settled reserve (the token reserve and share
+     * supply are untouched by settling). Never below the stored reserve;
+     * null when the node does not serve the simulation.
+     */
+    fun settledErthReserve(pool: Pool): java.math.BigInteger? {
+        val rt = pool.tokenReserve.toBigIntegerOrNull()?.takeIf { it.signum() > 0 } ?: return null
+        val re = pool.erthReserve.toBigIntegerOrNull() ?: return null
+        val sim = simulateSwapExactIn(pool.tokenDenom, rt, network.erth.wallet.Constants.UERTH_DENOM) ?: return null
+        return settledReserveFrom(sim.amountOut + sim.feeErth, rt, rt).max(re)
+    }
+
+    /**
+     * The largest ERTH reserve R a token -> ERTH swap of [offered] against
+     * token reserve [rt] prices at [gross] uerth (out + fee):
+     * gross = floor(R * offered / (rt + offered)) (x/dex swapTokenForHub), so
+     * R < (gross + 1) * (rt + offered) / offered. The largest, so the bound
+     * it prices can only be looser (by at most 2 uerth for offered = rt), never refuse a fair deposit.
+     */
+    internal fun settledReserveFrom(gross: java.math.BigInteger, rt: java.math.BigInteger, offered: java.math.BigInteger): java.math.BigInteger =
+        ((gross + java.math.BigInteger.ONE) * (rt + offered) - java.math.BigInteger.ONE) / offered
+
     /** The REST response body of SimulateSwapExactIn, or null if it is not one. */
     fun parseSimulated(body: String): Simulated? = runCatching {
         val o = JSONObject(body)

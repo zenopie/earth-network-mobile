@@ -56,6 +56,16 @@ public enum Dex {
     /// (MsgNoteSwap, MsgAddLiquidityShielded).
     public static let shieldedOnly = "uanml"
 
+    /// The largest ERTH reserve R a token -> ERTH swap of `offered` against
+    /// token reserve `rt` prices at `gross` uerth (out + fee):
+    /// gross = floor(R * offered / (rt + offered)) (x/dex swapTokenForHub),
+    /// so R < (gross + 1) * (rt + offered) / offered. The largest, so the
+    /// bound it prices can only be looser (by at most 2 uerth for
+    /// offered = rt), never refuse a fair deposit. Mirrors Dex.kt.
+    public static func settledReserve(gross: BigInt, rt: BigInt, offered: BigInt) -> BigInt {
+        ((gross + 1) * (rt + offered) - 1) / offered
+    }
+
     /// The REST response body of SimulateSwapExactIn, or nil if it is not one.
     public static func parseSimulated(_ j: JSON) -> Simulated? {
         guard let out = j.token_out.amount.string.flatMap({ BigInt($0) }),
@@ -152,6 +162,20 @@ public extension EarthClient {
             "/earth/dex/v1/simulate_swap_exact_in?offer_denom=\(enc(offerDenom))&offer_amount=\(offerAmount)&ask_denom=\(enc(askDenom))"
         ) else { return nil }
         return Dex.parseSimulated(j)
+    }
+
+    /// `pool`'s ERTH reserve as a deposit into it will see it. x/dex settles
+    /// the pool's pending LP rewards into the ERTH reserve before it prices a
+    /// deposit, and GetPool / ListPool return the stored reserve without
+    /// them; SimulateSwapExactIn settles first too, so a token -> ERTH
+    /// simulation reveals the settled reserve (the token reserve and share
+    /// supply are untouched by settling). Never below the stored reserve; nil
+    /// when the node does not serve the simulation.
+    public func settledErthReserve(_ pool: Dex.Pool) async -> BigInt? {
+        guard let rt = BigInt(pool.tokenReserve), rt > 0, let re = BigInt(pool.erthReserve),
+              let sim = await simulateSwapExactIn(offerDenom: pool.tokenDenom, offerAmount: rt, askDenom: Constants.gasDenom)
+        else { return nil }
+        return Swift.max(Dex.settledReserve(gross: sim.amountOut + sim.feeErth, rt: rt, offered: rt), re)
     }
 
     /// `pc` (pool 1 only): the note the ANML leg is minted to at maturity

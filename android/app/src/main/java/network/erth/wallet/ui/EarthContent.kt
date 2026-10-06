@@ -1401,7 +1401,10 @@ internal fun EarthContent(
 private fun minShares(poolId: Long, erthIn: java.math.BigInteger, tokenIn: java.math.BigInteger): String {
     val pool = Dex.pools().firstOrNull { it.id == poolId } ?: throw IllegalStateException("could not read pool $poolId to bound the deposit; try again")
     val supply = network.erth.wallet.privacy.chain.PrivacyQueries.lpShareSupply(poolId)
-    return SwapMath.minShares(erthIn, tokenIn, pool.erthReserve.toBigInteger(), pool.tokenReserve.toBigInteger(), supply, 100)
+    // Priced off the ERTH reserve the deposit will meet, pending LP rewards
+    // settled in; the stored one when the node cannot simulate.
+    val erthReserve = Dex.settledErthReserve(pool) ?: pool.erthReserve.toBigInteger()
+    return SwapMath.minShares(erthIn, tokenIn, erthReserve, pool.tokenReserve.toBigInteger(), supply, 100)
 }
 
 /** Which direction the stake sheet was opened in. */

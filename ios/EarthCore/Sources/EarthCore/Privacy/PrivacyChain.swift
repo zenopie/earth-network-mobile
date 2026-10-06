@@ -280,8 +280,12 @@ public struct PrivacyQueries: PrivacyChainReads {
     }
 
     /// LP share supply of `poolID` (bank supply of dexlp/<id>).
+    /// A missing or unreadable amount is a failed read, not a zero supply:
+    /// zero prices a deposit with no bound at all.
     public func lpShareSupply(poolID: UInt64) async throws -> String {
-        try await rest.get("/cosmos/bank/v1beta1/supply/by_denom?denom=dexlp/\(poolID)").amount.amount.string(default: "0")
+        guard let s = try await rest.get("/cosmos/bank/v1beta1/supply/by_denom?denom=dexlp/\(poolID)").amount.amount.string,
+              let v = BigInt(s), v >= 0 else { throw PrivacyError("the node did not say pool \(poolID)'s share supply") }
+        return v.description
     }
 
     public func shieldedMinFee() async throws -> UInt64 {

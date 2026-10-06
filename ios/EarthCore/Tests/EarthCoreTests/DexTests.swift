@@ -116,4 +116,18 @@ final class DexTests: XCTestCase {
                                                   erthNote: false, tokenNote: true)
         XCTAssertEqual(PrivacyWallet.maxWithdrawalNoteLeg, BigInt(Int64.max) * 32)
     }
+
+    /// The settled ERTH reserve recovered from a token -> ERTH simulation of
+    /// the token reserve (x/dex swapTokenForHub): never below, at most 2 above.
+    func testSettledReserveFromSimulation() {
+        var rng = SystemRandomNumberGenerator()
+        for _ in 0 ..< 5_000 {
+            let re = BigInt(UInt64.random(in: 1 ... UInt64(Int64.max / 4), using: &rng))
+            let rt = BigInt(UInt64.random(in: 1 ... UInt64(Int64.max / 4), using: &rng))
+            let gross = re * rt / (rt + rt)
+            let got = Dex.settledReserve(gross: gross, rt: rt, offered: rt)
+            XCTAssert(got >= re && got - re <= 2, "re=\(re) rt=\(rt) got=\(got)")
+            XCTAssertEqual(got * rt / (rt + rt), gross)
+        }
+    }
 }
