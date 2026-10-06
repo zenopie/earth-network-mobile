@@ -20,6 +20,8 @@ struct GovernScreen: View {
     @Environment(AppModel.self) private var model
     @State private var streams = StreamsModel()
     @State private var route: Route?
+    /// The Groundworks sheet opens on Positions (a lease reminder's tap).
+    @State private var openPositions = false
 
     enum Route: Hashable, Identifiable {
         case stream(caretaker: Bool)
@@ -102,7 +104,14 @@ struct GovernScreen: View {
             await streams.load(model: model)
             await ballots
         }
-        .sheet(item: $route) { route in
+        // A reminder's tap on Home: straight to where it is done.
+        .onChange(of: model.governLink, initial: true) { _, link in
+            guard let link else { return }
+            model.governLink = nil
+            openPositions = link == .positions
+            route = .stream(caretaker: link == .caretaker)
+        }
+        .sheet(item: $route, onDismiss: { openPositions = false }) { route in
             switch route {
             case let .stream(caretaker):
                 StreamDetailScreen(
@@ -115,7 +124,8 @@ struct GovernScreen: View {
                     eligibility: caretaker
                         ? (model.isRegistered ? nil : "Register with your passport to vote here.")
                         : (model.privateStakeTotal > 0 ? nil : "Stake ERTH privately, then lock it in a position, to take part."),
-                    onChanged: { Task { await streams.load(model: model) } }
+                    onChanged: { Task { await streams.load(model: model) } },
+                    openPositions: !caretaker && openPositions
                 )
                 .earthThemed()
             case .proposals:

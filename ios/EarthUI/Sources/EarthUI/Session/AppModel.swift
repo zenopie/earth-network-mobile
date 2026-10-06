@@ -62,6 +62,8 @@ public final class AppModel {
     public private(set) var unshieldableErth: UInt64 = 0
     /// This wallet's Groundworks positions (public positions whose key is ours).
     public private(set) var positions: [OwnedPosition] = []
+    /// Each of those positions' split lease, by position id (PrivacyWallet.groundworksLeases).
+    public private(set) var groundworksLeases: [UInt64: Reminders.GroundworksLease] = [:]
     /// This wallet's private stake per validator: what may move now, what waits for its window.
     public private(set) var stakeHoldings: [PrivacyWallet.StakeHolding] = []
     /// The chain's label window as last read (0: never): how long moved stake stays put.
@@ -150,6 +152,9 @@ public final class AppModel {
     /// you elsewhere — the home screen's Earn card is a link to a tab, and a
     /// card that cannot reach the selection is a button that does nothing.
     public var tab: Tab = .wallet
+    /// Where in Govern a reminder asked to go; GovernScreen opens it and clears it.
+    public var governLink: GovernLink?
+    public enum GovernLink: Equatable, Sendable { case caretaker, positions }
 
     public private(set) var balancesVisible = true
 
@@ -840,6 +845,7 @@ public final class AppModel {
         mergeable = [:]
         unshieldableErth = 0
         positions = []
+        groundworksLeases = [:]
         stakeHoldings = []
         labelWindowSeconds = 0
         derthRates = [:]
@@ -886,6 +892,7 @@ public final class AppModel {
         let queries = PrivacyQueries(rest: client.rest)
         if let mine = try? await w.positions() {
             positions = mine.map { OwnedPosition(position: $0.position, counter: $0.counter) }
+            groundworksLeases = Dictionary(uniqueKeysWithValues: await w.groundworksLeases(mine.map(\.position)).map { ($0.positionID, $0) })
         }
         await refreshStakeHoldings()
         await refreshRemovalBallots()
@@ -929,7 +936,8 @@ public final class AppModel {
         reminders = Reminders.due(Reminders.Inputs(
             now: Int64(Date().timeIntervalSince1970), identityLive: snap.identityStatus == .live, claimOpensAt: w.claimOpensAt(),
             claimedToday: w.claimedToday(), caretakerExpiresAt: caretakerExpiresAt, handle: snap.handle, handleEntry: handleEntry,
-            addressed: addressed, ownAddress: w.address.encode()))
+            addressed: addressed, ownAddress: w.address.encode(),
+            groundworks: groundworksLeases.values.sorted { $0.positionID < $1.positionID }))
     }
 
     /// What the identity this wallet's registration succeeded (another wallet

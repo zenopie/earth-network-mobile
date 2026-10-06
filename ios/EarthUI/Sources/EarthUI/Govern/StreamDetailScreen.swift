@@ -21,15 +21,19 @@ struct StreamDetailScreen: View {
     /// Non-nil when this wallet cannot vote here, and why.
     let eligibility: String?
     let onChanged: () -> Void
+    /// Opens on Positions (a lease reminder's tap on Home).
+    var openPositions = false
 
     /// Which split the chart is showing.
     enum Lens: String, CaseIterable { case actual = "Actual", preferred = "Preferred" }
 
     @State private var lens = Lens.actual
     @State private var editing = false
+    @State private var path: [String] = []
+    @State private var openedPositions = false
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     Spacer().frame(height: theme.space.x8)
@@ -91,6 +95,10 @@ struct StreamDetailScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: String.self) { _ in
                 PositionsView(groundworks: state, onChanged: onChanged)
+            }
+            .onAppear {
+                // Once: back from Positions stays here.
+                if openPositions, !openedPositions { openedPositions = true; path = ["positions"] }
             }
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)

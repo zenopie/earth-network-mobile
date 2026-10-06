@@ -28,6 +28,12 @@ func positionSplit(_ positions: [PrivacyReads.Position]) -> [UInt64: UInt64] {
 /// not. The stake keeps earning while locked, and unlocking returns
 /// it as staked ERTH. Ports PositionsScreen (PrivacyScreens.kt).
 ///
+/// A split counts for a lease (a year by default) from when it was cast or
+/// last renewed, then lapses and the position directs nothing until a split
+/// is chosen again. The card shows the lease end; from a month before it a
+/// reminder and a Renew (the same split, cast again) appear. Renewing costs a
+/// fee, so it is only ever the owner's tap and confirmation.
+///
 /// Pushed inside the stream sheet, so its confirmations draw on that sheet's
 /// overlay (host `.allocation`).
 struct PositionsView: View {
@@ -52,7 +58,7 @@ struct PositionsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: theme.space.x12) {
-                Text("Lock staked ERTH in a position to direct the Groundworks Fund. The split and the amount are public; nothing links the position to you. Locked stake keeps earning, and unlocking returns it as staked ERTH.")
+                Text("Lock staked ERTH in a position to direct the Groundworks Fund. The split and the amount are public; nothing links the position to you. Locked stake keeps earning, and unlocking returns it as staked ERTH. A split counts for a year from when it was chosen or renewed and never renews on its own; the app reminds you before it lapses.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
 
@@ -73,8 +79,35 @@ struct PositionsView: View {
                         ForEach(row.position.splits.sorted { $0.value > $1.value }, id: \.key) { id, pct in
                             EarthDetailRow(label: optionName(id), value: "\(pct)%")
                         }
+                        let lease = model.groundworksLeases[row.id]
+                        let lapsed = lease?.lapsed(now) == true
+                        if let lease, lapsed {
+                            Text("Lapsed — choose a split again")
+                                .font(EarthType.bodySmall).fontWeight(.semibold)
+                                .foregroundStyle(theme.colors.textPrimary)
+                            Text((lease.expiresAt > 0 ? "Its split stopped counting on \(Self.date(lease.expiresAt)). " : "Its split no longer counts. ") +
+                                 "The stake keeps earning; choosing a split counts it again for another year.")
+                                .font(EarthType.bodySmall)
+                                .foregroundStyle(theme.colors.textTertiary)
+                        } else if let lease, lease.expiresAt > 0 {
+                            EarthDetailRow(label: "Split counts until", value: Self.date(lease.expiresAt))
+                        }
+                        // The reminder, as on Home, and the renewal it asks for: the same
+                        // split cast again, sent only on the owner's confirmation.
+                        if let lease, let r = Reminders.groundworks(lease, now: now) {
+                            ReminderBanner(text: Reminders.text(r, now: now)) { if lapsed { resplitting = row } else { renew(row, lease) } }
+                        }
+                        if let lease, lease.renewalDue(now) {
+                            if removedOption(lease.split) {
+                                Text("An option in this split has been removed from the fund, so it cannot be renewed as it is. Change the split to keep it counted.")
+                                    .font(EarthType.bodySmall)
+                                    .foregroundStyle(theme.colors.textTertiary)
+                            } else {
+                                EarthButton(title: "Renew") { renew(row, lease) }
+                            }
+                        }
                         HStack(spacing: theme.space.x8) {
-                            EarthButton(title: "Change split", role: .secondary) { resplitting = row }
+                            EarthButton(title: lapsed ? "Choose split" : "Change split", role: .secondary) { resplitting = row }
                             EarthButton(title: "Unlock", role: .secondary) { unlock(row) }
                         }
                     }
@@ -95,8 +128,12 @@ struct PositionsView: View {
         .background(theme.colors.bgPrimary)
         .scrollContentBackground(.hidden)
         .sheet(item: $resplitting) { row in
+            // A lapsed position's split is cleared on chain: the last one seen here, its removed options left out.
             AllocationEditSheet(stream: .groundworks, state: groundworks, onChanged: onChanged,
-                                initial: row.position.splits, title: "Position split") { split in
+                                initial: row.position.splits.isEmpty
+                                    ? (model.groundworksLeases[row.id]?.split ?? [:]).filter { id, _ in groundworks.stream.options.contains { $0.id == id } }
+                                    : row.position.splits,
+                                title: "Position split") { split in
                 update(row, split)
             }
             .earthThemed()
@@ -119,6 +156,18 @@ struct PositionsView: View {
 
     private func moniker(_ op: String) -> String {
         model.moniker(of: op)
+    }
+
+    private var now: Int64 { Int64(Date().timeIntervalSince1970) }
+
+    private static func date(_ t: Int64) -> String {
+        Date(timeIntervalSince1970: TimeInterval(t)).formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// The split names an option the fund no longer has: the chain refuses it as it is.
+    private func removedOption(_ split: [UInt64: UInt64]) -> Bool {
+        let options = groundworks.stream.options
+        return !options.isEmpty && split.keys.contains { id in !options.contains { $0.id == id } }
     }
 
     private func optionName(_ id: UInt64) -> String {
@@ -148,6 +197,17 @@ struct PositionsView: View {
         tx.requestPrivate(.private(
             action: "Change position split",
             rows: split.sorted { $0.key < $1.key }.map { (optionName($0.key), "\($0.value)%") }
+        ), host: .allocation, onSuccess: { await done() }) { w in
+            try await w.updatePosition(row.position, counter: row.counter, splits: split)
+        }
+    }
+
+    /// The same split cast again renews its lease; nothing renews on its own.
+    private func renew(_ row: AppModel.OwnedPosition, _ lease: Reminders.GroundworksLease) {
+        let split = lease.split
+        tx.requestPrivate(.private(
+            action: "Renew position split",
+            rows: split.sorted { $0.value > $1.value }.map { (optionName($0.key), "\($0.value)%") }
         ), host: .allocation, onSuccess: { await done() }) { w in
             try await w.updatePosition(row.position, counter: row.counter, splits: split)
         }
