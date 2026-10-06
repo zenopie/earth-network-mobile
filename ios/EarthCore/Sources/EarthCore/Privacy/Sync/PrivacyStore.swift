@@ -451,7 +451,15 @@ public final class PrivacyStore {
 
     public static func memory() -> PrivacyStore { try! PrivacyStore(dir: nil) } // no file: nothing to fail
 
+    private final class WeakStore { weak var store: PrivacyStore?; init(_ s: PrivacyStore) { store = s } }
+
+    /// Open stores by directory. `sharedStores` holds them while a session
+    /// is open; `lockAll` lets go of it, and only `liveStores` (weak) still
+    /// finds one a task finishing after the lock holds, so the next unlock
+    /// reopens that same instance and never a second one beside it. One
+    /// nothing holds is gone, key copy and decrypted state with it.
     nonisolated(unsafe) private static var sharedStores: [String: PrivacyStore] = [:]
+    nonisolated(unsafe) private static var liveStores: [String: WeakStore] = [:]
     private static let sharedLock = NSLock()
 
     /// The process's one store for a wallet's directory: two
@@ -461,9 +469,50 @@ public final class PrivacyStore {
         let key = root.appendingPathComponent("privacy").appendingPathComponent(walletID).standardizedFileURL.path
         sharedLock.lock(); defer { sharedLock.unlock() }
         if let s = sharedStores[key] { return s }
-        let s = try open(root: root, walletID: walletID, key: dataKey)
+        let s = try liveStores[key]?.store ?? open(root: root, walletID: walletID, key: dataKey)
         sharedStores[key] = s
+        liveStores[key] = WeakStore(s)
         return s
+    }
+
+    /// At lock: the process stops holding any store (see `sharedStores`).
+    public static func lockAll() {
+        sharedLock.lock(); defer { sharedLock.unlock() }
+        sharedStores = [:]
+        liveStores = liveStores.filter { $0.value.store != nil }
+    }
+
+    /// Seals every wallet's plaintext state.json from before sealing under
+    /// `key`, not just the stores the user opens again: a wallet never
+    /// selected after the upgrade would otherwise keep its notes,
+    /// registration and handle in plaintext. The store id (the directory
+    /// name) is all the seal's AAD needs. A store open in this process is
+    /// skipped (opening one seals it); the lock is held per directory, so
+    /// none opens mid-seal. The plaintext is replaced atomically: its file
+    /// is unlinked under its per-file Data Protection key, which is what
+    /// erases it. Returns how many were sealed; one that fails is left for
+    /// the next unlock.
+    @discardableResult
+    public static func sealLegacy(root: URL, key: Data) -> Int {
+        let top = root.appendingPathComponent("privacy")
+        let fm = FileManager.default
+        guard let dirs = try? fm.contentsOfDirectory(at: top, includingPropertiesForKeys: [.isDirectoryKey]) else { return 0 }
+        var sealed = 0
+        for d in dirs where (try? d.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            let url = d.appendingPathComponent(stateFile)
+            guard fm.fileExists(atPath: url.path) else { continue }
+            sharedLock.lock()
+            defer { sharedLock.unlock() }
+            let path = d.standardizedFileURL.path
+            if sharedStores[path] != nil || liveStores[path]?.store != nil { continue }
+            let id = d.lastPathComponent
+            guard let plain = try? Data(contentsOf: url), case .legacy(_)? = (try? StateSeal.open(plain, key: key, walletID: id)),
+                  let data = try? StateSeal.seal(plain, key: key, walletID: id),
+                  (try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])) != nil
+            else { continue }
+            sealed += 1
+        }
+        return sealed
     }
 
     /// `key`: the install's data key (WalletStore.Opened.dataKey), which seals state.json.
@@ -490,6 +539,7 @@ public final class PrivacyStore {
         sharedLock.lock()
         let prefix = target.standardizedFileURL.path
         sharedStores = sharedStores.filter { $0.key != prefix && !$0.key.hasPrefix(prefix + "/") }
+        liveStores = liveStores.filter { $0.key != prefix && !$0.key.hasPrefix(prefix + "/") }
         sharedLock.unlock()
         let fm = FileManager.default
         guard fm.fileExists(atPath: target.path) else { return }

@@ -558,8 +558,9 @@ class PrivacyStore private constructor(
             // with it the key, was made anew): unreadable, and everything in
             // it is found again by a sync from the mnemonic. Its trees go too.
             is StateSeal.Contents.OtherKey -> { noteTree.clear(); identityTree.clear(); stakeTree.clear(); save() }
-            // Plaintext from before sealing: sealed now, not at some later save.
-            is StateSeal.Contents.Legacy -> if (key != null) save()
+            // Plaintext from before sealing: sealed now, not at some later save,
+            // and the plaintext's blocks overwritten.
+            is StateSeal.Contents.Legacy -> if (key != null) save(scrubOld = true)
             else -> {}
         }
         loadedAs = null
@@ -572,18 +573,14 @@ class PrivacyStore private constructor(
      * and any failure throws (never silent).
      */
     @Synchronized
-    fun save() {
+    fun save() = save(scrubOld = false)
+
+    @Synchronized
+    private fun save(scrubOld: Boolean) {
         noteTree.flush(); identityTree.flush(); stakeTree.flush()
         val d = dir ?: return
         val k = key ?: throw IllegalStateException("a stored wallet's private data needs the data key to be saved")
-        val tmp = File(d, "$STATE.tmp")
-        java.io.FileOutputStream(tmp).use { out ->
-            out.write(StateSeal.seal(state.toJson().toString().toByteArray(Charsets.UTF_8), k, walletId))
-            out.flush()
-            out.fd.sync()
-        }
-        // rename(2): atomic within one filesystem (java.nio.file needs API 26; minSdk is 24).
-        if (!tmp.renameTo(File(d, STATE))) throw java.io.IOException("could not save this wallet's private data")
+        writeState(d, StateSeal.seal(state.toJson().toString().toByteArray(Charsets.UTF_8), k, walletId), scrubOld)
     }
 
     /**
@@ -683,7 +680,53 @@ class PrivacyStore private constructor(
         fun open(root: File, walletId: String, key: ByteArray): PrivacyStore =
             PrivacyStore(File(root, "privacy/$walletId").apply { mkdirs() }, key.copyOf(), walletId)
 
+        /**
+         * [bytes] (sealed) as dir/state.json: a temp file, fsynced, then
+         * renamed over it (rename(2) is atomic within one filesystem;
+         * java.nio.file needs API 26, minSdk is 24); any failure throws.
+         * [scrubOld]: the file replaced is plaintext from before sealing, so
+         * it is held open across the rename and its blocks overwritten with
+         * zeros through that descriptor before it is let go. A crash before
+         * the rename leaves the plaintext to migrate again, never a zeroed
+         * state. Best effort: on flash the FTL may write the zeros elsewhere
+         * and keep the old blocks until they are erased, and file-based
+         * encryption is what really covers them.
+         */
+        private fun writeState(d: File, bytes: ByteArray, scrubOld: Boolean) {
+            val tmp = File(d, "$STATE.tmp")
+            java.io.FileOutputStream(tmp).use { out ->
+                out.write(bytes)
+                out.flush()
+                out.fd.sync()
+            }
+            val target = File(d, STATE)
+            val old = if (scrubOld && target.exists()) runCatching { java.io.RandomAccessFile(target, "rw") }.getOrNull() else null
+            try {
+                if (!tmp.renameTo(target)) throw java.io.IOException("could not save this wallet's private data")
+                old?.let { r -> runCatching { zeroFill(r) } }
+            } finally {
+                old?.let { runCatching { it.close() } }
+            }
+        }
+
+        private fun zeroFill(r: java.io.RandomAccessFile) {
+            val zeros = ByteArray(64 * 1024)
+            var left = r.length()
+            r.seek(0)
+            while (left > 0) { val n = minOf(left, zeros.size.toLong()).toInt(); r.write(zeros, 0, n); left -= n }
+            r.fd.sync()
+        }
+
+        /**
+         * Open stores by directory. [sharedStores] holds them while a
+         * session is open; [lockAll] lets go of it, and only [liveStores]
+         * (weak) still finds one that a tx finishing after the lock
+         * holds, so the next unlock reopens that same instance and never a
+         * second one beside it. One nothing holds is gone, key copy and
+         * decrypted state with it.
+         */
         private val sharedStores = HashMap<String, PrivacyStore>()
+        private val liveStores = HashMap<String, java.lang.ref.WeakReference<PrivacyStore>>()
 
         /**
          * The process's one store for a wallet's directory:
@@ -692,7 +735,50 @@ class PrivacyStore private constructor(
          */
         fun shared(root: File, walletId: String, key: ByteArray): PrivacyStore = synchronized(sharedStores) {
             val dir = File(root, "privacy/$walletId").canonicalPath
-            sharedStores.getOrPut(dir) { open(root, walletId, key) }
+            sharedStores[dir]?.let { return it }
+            val s = liveStores[dir]?.get() ?: open(root, walletId, key)
+            sharedStores[dir] = s
+            liveStores[dir] = java.lang.ref.WeakReference(s)
+            s
+        }
+
+        /** At lock: the process stops holding any store (see [sharedStores]). */
+        fun lockAll() = synchronized(sharedStores) {
+            sharedStores.clear()
+            liveStores.values.removeAll { it.get() == null }
+        }
+
+        /**
+         * Seals every wallet's plaintext state.json from before sealing
+         * under [key], not just the stores the user opens again: a wallet
+         * never selected after the upgrade would otherwise keep its notes,
+         * registration and handle in plaintext. The store id (the directory
+         * name) is all the seal's AAD needs. A store open in this process is
+         * skipped (opening one seals it); the lock is held per directory,
+         * so none opens mid-seal. Returns how many were sealed; one that
+         * fails is left for the next unlock.
+         */
+        fun sealLegacy(root: File, key: ByteArray): Int {
+            val dirs = File(root, "privacy").listFiles { f -> f.isDirectory } ?: return 0
+            var sealed = 0
+            for (d in dirs) {
+                val f = File(d, STATE)
+                if (!f.isFile) continue
+                synchronized(sharedStores) {
+                    val path = d.canonicalPath
+                    if (sharedStores.containsKey(path) || liveStores[path]?.get() != null) return@synchronized
+                    runCatching {
+                        val plain = f.readBytes()
+                        val c = StateSeal.open(plain, key, d.name)
+                        if (c is StateSeal.Contents.Legacy) {
+                            writeState(d, StateSeal.seal(plain, key, d.name), scrubOld = true)
+                            plain.fill(0)
+                            sealed++
+                        }
+                    }
+                }
+            }
+            return sealed
         }
 
         /**
@@ -707,18 +793,11 @@ class PrivacyStore private constructor(
             synchronized(sharedStores) {
                 val prefix = target.canonicalPath
                 sharedStores.keys.removeAll { it == prefix || it.startsWith(prefix + File.separator) }
+                liveStores.keys.removeAll { it == prefix || it.startsWith(prefix + File.separator) }
             }
             if (!target.exists()) return
             target.walkBottomUp().forEach { f ->
-                if (f.isFile) runCatching {
-                    java.io.RandomAccessFile(f, "rw").use { r ->
-                        val zeros = ByteArray(64 * 1024)
-                        var left = r.length()
-                        r.seek(0)
-                        while (left > 0) { val n = minOf(left, zeros.size.toLong()).toInt(); r.write(zeros, 0, n); left -= n }
-                        r.fd.sync()
-                    }
-                }
+                if (f.isFile) runCatching { java.io.RandomAccessFile(f, "rw").use { zeroFill(it) } }
                 if (!f.delete() && f.exists()) throw java.io.IOException("could not delete ${f.name}")
             }
         }

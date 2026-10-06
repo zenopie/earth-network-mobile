@@ -25,12 +25,15 @@ object PrivacySession {
     @Volatile private var current: Pair<String, PrivacyWallet>? = null
 
     /**
-     * One [PrivacyWallet] per wallet per process, by store id, kept across
-     * lock and unlock: a tx still finishing when the app locks writes to the
-     * same wallet and store the next unlock reads, and the wallet's lock
-     * orders them. Dropped only when its private data is forgotten.
+     * One [PrivacyWallet] per wallet per process, by store id. [wallets]
+     * holds them while a session is open and is emptied at [lock], so a
+     * locked app keeps no decrypted state or key copy reachable from here.
+     * A tx still finishing when the app locks keeps its own wallet; [live]
+     * (weak) finds that one again, so the next unlock reuses it and the
+     * wallet's lock still orders its writes against the new session's.
      */
     private val wallets = HashMap<String, PrivacyWallet>()
+    private val live = HashMap<String, java.lang.ref.WeakReference<PrivacyWallet>>()
 
     /** The selected wallet's private side. Blocking (derives keys, opens the store). */
     @Synchronized
@@ -52,6 +55,7 @@ object PrivacySession {
     private fun walletFor(app: Context, keys: PrivacyKeys): PrivacyWallet {
         val id = storeId(keys)
         wallets[id]?.let { return it }
+        live[id]?.get()?.let { wallets[id] = it; return it }
         val w = PrivacyWallet(
             keys = keys,
             store = PrivacyStore.shared(app.filesDir, id, network.erth.wallet.wallet.SessionManager.dataKey()),
@@ -63,6 +67,7 @@ object PrivacySession {
             roots = network.erth.wallet.privacy.chain.LcdChainRoots,
         )
         wallets[id] = w
+        live[id] = java.lang.ref.WeakReference(w)
         return w
     }
 
@@ -88,6 +93,7 @@ object PrivacySession {
         synchronized(this) {
             clear()
             wallets.remove(storeId(keys))
+            live.remove(storeId(keys))
             PrivacyStore.delete(app.filesDir, storeId(keys))
         }
     }
@@ -228,6 +234,31 @@ object PrivacySession {
     /** Forget the cached wallet (lock, wallet switch). */
     fun clear() {
         current = null
+    }
+
+    /**
+     * At lock: lets go of every wallet and store (see [wallets]). The data
+     * key itself is zeroed by SessionManager.
+     */
+    @Synchronized
+    fun lock() {
+        current = null
+        wallets.clear()
+        live.values.removeAll { it.get() == null }
+        PrivacyStore.lockAll()
+    }
+
+    /**
+     * After an unlock, off the main thread: seals the plaintext stores
+     * from before sealing of every wallet on the phone (PrivacyStore.sealLegacy).
+     * A failure waits for the next unlock.
+     */
+    fun sealLegacyStores(context: Context) {
+        val app = context.applicationContext
+        val key = runCatching { dataKey() }.getOrNull() ?: return
+        Thread {
+            try { runCatching { PrivacyStore.sealLegacy(app.filesDir, key) } } finally { key.fill(0) }
+        }.apply { name = "seal-legacy-stores"; isDaemon = true }.start()
     }
 
     private class AndroidProver(private val context: Context) : Prover {

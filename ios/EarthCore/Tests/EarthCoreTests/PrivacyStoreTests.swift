@@ -120,6 +120,29 @@ final class PrivacyStoreTests: PrivacyTestCase {
         XCTAssertEqual("bob", try PrivacyStore.open(root: root, walletID: "w", key: testDataKey).state.handle)
     }
 
+    /// R2-MK-02: every wallet's plaintext store is sealed after unlock, not only the ones opened.
+    func testEveryWalletsPlaintextIsSealedNotJustTheOpenedOnes() throws {
+        let root = try tmp()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for id in ["a1", "b2"] {
+            let d = root.appendingPathComponent("privacy/\(id)")
+            try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+            var legacy = PrivacyState()
+            legacy.handle = "h\(id)"
+            try JSONEncoder().encode(legacy).write(to: d.appendingPathComponent("state.json"))
+        }
+        let c = try PrivacyStore.open(root: root, walletID: "c3", key: testDataKey)
+        c.mutate { $0.handle = "hc3" }
+        try c.save()
+        XCTAssertEqual(2, PrivacyStore.sealLegacy(root: root, key: testDataKey))
+        for id in ["a1", "b2", "c3"] {
+            let raw = String(decoding: try Data(contentsOf: root.appendingPathComponent("privacy/\(id)/state.json")), as: UTF8.self)
+            XCTAssertFalse(raw.contains("h\(id)"))
+            XCTAssertEqual("h\(id)", try PrivacyStore.open(root: root, walletID: id, key: testDataKey).state.handle)
+        }
+        XCTAssertEqual(0, PrivacyStore.sealLegacy(root: root, key: testDataKey))
+    }
+
     func testAnotherInstallsSealedStateIsDropped() throws {
         let root = try tmp()
         defer { try? FileManager.default.removeItem(at: root) }

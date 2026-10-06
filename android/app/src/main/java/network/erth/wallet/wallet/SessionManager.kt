@@ -127,6 +127,7 @@ object SessionManager {
 
             isSessionActive = true
             _active.value = true
+            network.erth.wallet.privacy.PrivacySession.sealLegacyStores(context)
         } catch (e: WrongSecretException) {
             clearSession()
             throw e
@@ -141,8 +142,9 @@ object SessionManager {
     @Synchronized
     fun endSession() {
         clearSession()
-        // The privacy keys are derived from the mnemonic; they go with it.
-        network.erth.wallet.privacy.PrivacySession.clear()
+        // The privacy keys are derived from the mnemonic; they go with it,
+        // and so do the opened stores (their key copies, the decrypted state).
+        network.erth.wallet.privacy.PrivacySession.lock()
     }
 
     /**
@@ -185,7 +187,10 @@ object SessionManager {
 
     /**
      * The key every wallet's private data store is sealed with
-     * (PrivacyStore): a copy, available only while a session is open.
+     * (PrivacyStore): a copy, handed out only while a session is open.
+     * Each opened store keeps its own copy, which goes when the store does:
+     * at lock (PrivacySession.lock), or for a tx still finishing then, when
+     * that tx is done.
      */
     @Synchronized
     fun dataKey(): ByteArray {

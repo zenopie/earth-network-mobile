@@ -91,6 +91,35 @@ class PrivacyStoreTest : WalletTest() {
         assertEquals("bob", PrivacyStore.open(dir, "w", testDataKey).state.handle)
     }
 
+    /** R2-MK-02: every wallet's plaintext store is sealed after unlock, not only the ones opened. */
+    @Test
+    fun everyWalletsPlaintextIsSealedNotJustTheOpenedOnes() {
+        val dir = tmp()
+        for (id in listOf("a1", "b2")) {
+            File(dir, "privacy/$id").mkdirs()
+            File(dir, "privacy/$id/state.json").writeText(network.erth.wallet.privacy.sync.PrivacyState().apply { handle = "h$id" }.toJson().toString())
+        }
+        PrivacyStore.open(dir, "c3", testDataKey).apply { state.handle = "hc3" }.save()
+        assertEquals(2, PrivacyStore.sealLegacy(dir, testDataKey))
+        for (id in listOf("a1", "b2", "c3")) {
+            assertFalse(File(dir, "privacy/$id/state.json").readText().contains("h$id"))
+            assertEquals("h$id", PrivacyStore.open(dir, id, testDataKey).state.handle)
+        }
+        assertFalse(File(dir, "privacy/a1/state.json.tmp").exists())
+        assertEquals(0, PrivacyStore.sealLegacy(dir, testDataKey))
+    }
+
+    /** A store open in the process is left to itself (opening one sealed it). */
+    @Test
+    fun theSweepSkipsAStoreTheProcessHolds() {
+        val dir = tmp()
+        val s = PrivacyStore.shared(dir, "o1", testDataKey)
+        File(dir, "privacy/o1/state.json").writeText(network.erth.wallet.privacy.sync.PrivacyState().apply { handle = "x" }.toJson().toString())
+        assertEquals(0, PrivacyStore.sealLegacy(dir, testDataKey))
+        PrivacyStore.delete(dir, "o1")
+        assertTrue(s !== PrivacyStore.shared(dir, "o1", testDataKey))
+    }
+
     @Test
     fun anotherInstallsSealedStateIsDropped() {
         val dir = tmp()

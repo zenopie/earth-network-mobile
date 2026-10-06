@@ -44,25 +44,44 @@ enum PrivacySession {
     /// Deletes every wallet's private data (notes, identity, records, trees):
     /// forgetting the wallets forgets what they held privately too.
     static func forgetAll() throws {
-        lock.lock(); wallets = [:]; lock.unlock()
+        lock.lock(); wallets = [:]; live = [:]; lock.unlock()
         try PrivacyStore.delete(root: try dataRoot())
     }
 
-    /// One `PrivacyWallet` (and its one store) per wallet per
-    /// process, by store id, kept across lock and unlock: a cast still
-    /// finishing in a task the lock suspended writes to the same wallet and
-    /// store a resumed run reads, and the wallet's lock orders them. Dropped
-    /// only when the private data is forgotten.
+    /// One `PrivacyWallet` (and its one store) per wallet per process, by
+    /// store id. `wallets` holds them while the wallet is unlocked and is
+    /// emptied at lock, so a locked app keeps no decrypted state or key
+    /// copy reachable from here. A cast still finishing in a task the lock
+    /// suspended keeps its own wallet; `live` (weak) finds that one again,
+    /// so the next unlock reuses it and the wallet's lock still orders its
+    /// writes against the new session's.
     nonisolated(unsafe) private static var wallets: [String: PrivacyWallet] = [:]
+    nonisolated(unsafe) private static var live: [String: WeakWallet] = [:]
     private static let lock = NSLock()
+
+    private final class WeakWallet { weak var wallet: PrivacyWallet?; init(_ w: PrivacyWallet) { wallet = w } }
 
     /// The install's data key, which seals every wallet's private store:
     /// set from the opened vault at unlock, dropped at lock (AppModel).
     nonisolated(unsafe) private static var openKey: Data?
 
+    /// At unlock (a key): also seals, off the main actor, every wallet's
+    /// plaintext store from before sealing (PrivacyStore.sealLegacy), not
+    /// only the ones opened again. At lock (nil): lets go of every wallet
+    /// and store (see `wallets`).
     static func setDataKey(_ key: Data?) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         openKey = key
+        if key == nil {
+            wallets = [:]
+            live = live.filter { $0.value.wallet != nil }
+        }
+        lock.unlock()
+        guard let key else { PrivacyStore.lockAll(); return }
+        Task.detached(priority: .utility) {
+            guard let root = try? PrivacySession.dataRoot() else { return }
+            PrivacyStore.sealLegacy(root: root, key: key)
+        }
     }
 
     struct Locked: LocalizedError {
@@ -138,6 +157,7 @@ enum PrivacySession {
         let key = try dataKey()
         lock.lock(); defer { lock.unlock() }
         if let w = wallets[id] { return w }
+        if let w = live[id]?.wallet { wallets[id] = w; return w }
         let w = PrivacyWallet(
             keys: keys,
             // An unreadable store is an error the user sees, never an empty wallet.
@@ -151,6 +171,7 @@ enum PrivacySession {
             roots: LCDChainRoots(rest: client.rest)
         )
         wallets[id] = w
+        live[id] = WeakWallet(w)
         return w
     }
 }

@@ -1869,7 +1869,10 @@ refused by the chain only while the old leaf is live).
   method. A state sealed under another `kid` (an earlier install's vault) is
   dropped, trees included, and resynced from the mnemonic; a failed tag
   under the current key is an error. Plaintext from before sealing is read
-  once and sealed. The trees (the chain's public leaves) are not sealed.
+  once and sealed, and after every unlock each wallet's plaintext store on
+  the install is sealed too, opened or not (Android overwrites the old file's
+  blocks through a descriptor held across the rename, best effort on flash;
+  iOS relies on the unlinked file's per-file key). The trees (the chain's public leaves) are not sealed.
 - **Vault key derivation.** The wallet vault records how its key was
   derived (Android format 2: `kdf` = `pbkdf2-hmac-sha256`, `kdf_iterations`
   600,000; iOS format 2: `kdf` = `pbkdf2-hmac-sha512`, `rounds` 200,000).
@@ -1877,7 +1880,9 @@ refused by the chain only while the old leaf is live).
   outside [100,000, 10,000,000] and newer formats are refused; a vault at
   other than the current parameters is re-sealed at them on unlock.
 - **One store per wallet.** The app keeps one wallet object and one store
-  per wallet per process, across lock and unlock.
+  per wallet per process. Lock lets go of all of them (and of their copies
+  of the data key and the decrypted state); one a tx still finishing holds
+  is found again (weakly) by the next unlock, never opened twice.
 - **Forgetting a wallet** deletes its `privacy/<id>/` directory (notes,
   identity, records, trees): every file overwritten with zeros, synced, then
   unlinked. Android offers it as Settings → "Forget private data"; iOS on
