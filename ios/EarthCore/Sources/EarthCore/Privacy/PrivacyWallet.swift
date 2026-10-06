@@ -2694,11 +2694,40 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
         let found = out.map(\.counter).max().map { $0 == UInt32.max ? $0 : $0 + 1 } ?? 0
         let newNext = max(next, found)
-        if newNext > store.state.nextOtagCounter {
-            store.mutate { $0.nextOtagCounter = newNext }
-            persistNoThrow()
-        }
+        var dirty = newNext > store.state.nextOtagCounter
+        if dirty { store.mutate { $0.nextOtagCounter = newNext } }
+        if rememberLeases(out.map(\.position)) { dirty = true }
+        if dirty { persistNoThrow() }
         return out.sorted { $0.position.id < $1.position.id }
+    }
+
+    /// Keeps each of our positions' split and lease end as last seen, so a lapse (which the chain
+    /// records by clearing both) is still known: when, and which split to cast again. Closed
+    /// positions are forgotten. True when anything changed. Under `locked`.
+    private func rememberLeases(_ mine: [PrivacyReads.Position]) -> Bool {
+        let cap = Handles.satAdd(now(), Handles.maxAheadSeconds)
+        let ids = Set(mine.map(\.id))
+        return store.mutate { s -> Bool in
+            let before = s.positionLeases
+            s.positionLeases = s.positionLeases.filter { ids.contains($0.key) }
+            for p in mine where !p.splits.isEmpty && p.splitExpiresAt > 0 {
+                s.positionLeases[p.id] = PositionLease(expiresAt: min(p.splitExpiresAt, cap), split: p.splits)
+            }
+            return s.positionLeases != before
+        }
+    }
+
+    /// Each of `mine`'s (from `positions`) Groundworks lease: the chain's split and lease end while
+    /// it holds them, else the ones last seen here. From this wallet's own reads only; nothing is
+    /// asked about a position.
+    public func groundworksLeases(_ mine: [PrivacyReads.Position]) async -> [Reminders.GroundworksLease] {
+        let seen = await locked { store.state.positionLeases }
+        let cap = Handles.satAdd(now(), Handles.maxAheadSeconds)
+        return mine.map { p in
+            p.splits.isEmpty
+                ? Reminders.GroundworksLease(positionID: p.id, expiresAt: seen[p.id]?.expiresAt ?? 0, held: false, split: seen[p.id]?.split ?? [:])
+                : Reminders.GroundworksLease(positionID: p.id, expiresAt: min(p.splitExpiresAt, cap), held: true, split: p.splits)
+        }
     }
 
     /// Locks `amount` derth/`validator` into a new position split by `splits`, under a fresh owner tag.

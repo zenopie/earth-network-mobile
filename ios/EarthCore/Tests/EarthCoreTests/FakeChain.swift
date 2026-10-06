@@ -78,9 +78,19 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     final class Pos {
         let id: UInt64, validator: String, derth: UInt64, ownerTag: Fr, createdHeight: UInt64
         var splits: [UInt64: UInt64]
-        init(id: UInt64, validator: String, derth: UInt64, ownerTag: Fr, splits: [UInt64: UInt64], createdHeight: UInt64) {
+        var splitExpiresAt: Int64
+        init(id: UInt64, validator: String, derth: UInt64, ownerTag: Fr, splits: [UInt64: UInt64], createdHeight: UInt64, splitExpiresAt: Int64 = 0) {
             self.id = id; self.validator = validator; self.derth = derth; self.ownerTag = ownerTag; self.splits = splits
-            self.createdHeight = createdHeight
+            self.createdHeight = createdHeight; self.splitExpiresAt = splitExpiresAt
+        }
+    }
+    /// x/allocation groundworks_lease_seconds: a split counts this long after it was cast or renewed.
+    var groundworksLease: Int64 = 365 * 86400
+
+    /// The chain's lapse at `now`: every split whose lease has ended is cleared (splits empty, split_expires_at 0).
+    func lapseSplits() {
+        for p in positions.values where !p.splits.isEmpty && p.splitExpiresAt > 0 && p.splitExpiresAt <= now {
+            p.splits = [:]; p.splitExpiresAt = 0
         }
     }
     var positions: [UInt64: Pos] = [:]
@@ -1020,10 +1030,12 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             let id = nextPositionID
             nextPositionID += 1
             positions[id] = Pos(id: id, validator: m.validator, derth: m.amount, ownerTag: try f(m.stake.ownerTag),
-                                splits: Dictionary(uniqueKeysWithValues: m.splits.map { ($0.optionID, $0.percent) }), createdHeight: height)
+                                splits: Dictionary(uniqueKeysWithValues: m.splits.map { ($0.optionID, $0.percent) }), createdHeight: height,
+                                splitExpiresAt: m.splits.isEmpty ? 0 : now + groundworksLease)
             positionOrder.append(id)
         case let m as MsgUpdatePosition:
             positions[m.positionID]!.splits = Dictionary(uniqueKeysWithValues: m.splits.map { ($0.optionID, $0.percent) })
+            positions[m.positionID]!.splitExpiresAt = m.splits.isEmpty ? 0 : now + groundworksLease
         case let m as MsgUnlockPosition:
             _ = positions.removeValue(forKey: m.positionID)!
             positionOrder.removeAll { $0 == m.positionID }
@@ -1263,7 +1275,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     func positionReads() -> [PrivacyReads.Position] {
         positionOrder.compactMap { positions[$0] }.map {
             PrivacyReads.Position(id: $0.id, validator: $0.validator, derth: $0.derth, ownerTag: $0.ownerTag, splits: $0.splits,
-                                  createdHeight: $0.createdHeight)
+                                  createdHeight: $0.createdHeight, splitExpiresAt: $0.splitExpiresAt)
         }
     }
 

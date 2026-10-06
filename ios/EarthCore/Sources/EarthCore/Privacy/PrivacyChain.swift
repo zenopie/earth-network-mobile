@@ -126,9 +126,13 @@ public enum PrivacyReads {
         public let ownerTag: Fr
         public let splits: [UInt64: UInt64]
         public let createdHeight: UInt64
-        public init(id: UInt64, validator: String, derth: UInt64, ownerTag: Fr, splits: [UInt64: UInt64] = [:], createdHeight: UInt64 = 0) {
+        /// When the split stops counting (x/allocation groundworks_lease_seconds after it was cast or
+        /// renewed; 0 without a split, or on a node before leases).
+        public let splitExpiresAt: Int64
+        public init(id: UInt64, validator: String, derth: UInt64, ownerTag: Fr, splits: [UInt64: UInt64] = [:], createdHeight: UInt64 = 0,
+                    splitExpiresAt: Int64 = 0) {
             self.id = id; self.validator = validator; self.derth = derth; self.ownerTag = ownerTag
-            self.splits = splits; self.createdHeight = createdHeight
+            self.splits = splits; self.createdHeight = createdHeight; self.splitExpiresAt = splitExpiresAt
         }
     }
 
@@ -477,7 +481,8 @@ public struct PrivacyQueries: PrivacyChainReads {
                 for s in p.splits.array { splits[s.option_id.uint64(default: 0)] = s.percent.uint64(default: 0) }
                 out.append(PrivacyReads.Position(id: p.id.uint64(default: 0), validator: p.validator.string(default: ""),
                                                  derth: p.derth.uint64(default: 0), ownerTag: try field(p.owner_tag),
-                                                 splits: splits, createdHeight: p.created_height.uint64(default: 0)))
+                                                 splits: splits, createdHeight: p.created_height.uint64(default: 0),
+                                                 splitExpiresAt: max(0, p.split_expires_at.int64(default: 0))))
             }
             key = j.pagination.next_key.string.flatMap { $0.isEmpty || $0 == "null" ? nil : $0 }
         } while key != nil

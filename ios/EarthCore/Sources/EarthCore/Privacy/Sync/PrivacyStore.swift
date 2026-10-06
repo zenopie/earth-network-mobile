@@ -218,6 +218,17 @@ public struct CarriedMark: Codable, Equatable, Sendable {
     public var tx: String?
 }
 
+/// The last Groundworks split this wallet saw on one of its own positions and
+/// when that split's lease ends. The chain clears a lapsed split (splits
+/// empty, split_expires_at 0), so only this says when it lapsed and what it
+/// was, for the reminder and a re-cast of the same split. Ports PositionLease
+/// in `privacy/sync/PrivacyStore.kt`.
+public struct PositionLease: Codable, Equatable, Sendable {
+    public var expiresAt: Int64
+    public var split: [UInt64: UInt64]
+    public init(expiresAt: Int64, split: [UInt64: UInt64]) { self.expiresAt = expiresAt; self.split = split }
+}
+
 /// What the wallet keeps between syncs: cursors into each indexer stream, its
 /// own notes, its registration, and its own txs' bookkeeping. Small; the
 /// trees live beside it in per-level files. Ports PrivacyState in
@@ -295,6 +306,8 @@ public struct PrivacyState: Codable, Sendable {
     public var nextOtagCounter: UInt32 = 0
     /// The highest owner-tag counter of a position this wallet closed, from its unlock memos (nil: none).
     public var closedOtagMax: UInt32?
+    /// Per position id of ours: its split's lease as last seen (PrivacyWallet.positions keeps it).
+    public var positionLeases: [UInt64: PositionLease] = [:]
     /// Every stake vote cast: (proposal, vote nullifier).
     public var stakeVotes: [StakeVoteRecord] = []
     /// The stake tree's stream cursors and this wallet's stake notes.
@@ -322,7 +335,7 @@ public struct PrivacyState: Codable, Sendable {
              pendingUnbonds, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax,
              syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
              handleSetAt, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, voidRecordHeights, pendingMoves, switchTarget,
-             handleExpiresAt, handleExpiresFor, labelWindowSeconds, carriedMarks, registrationKeepUntil
+             handleExpiresAt, handleExpiresFor, labelWindowSeconds, carriedMarks, registrationKeepUntil, positionLeases
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -356,6 +369,7 @@ public struct PrivacyState: Codable, Sendable {
         labelWindowSeconds = try v(.labelWindowSeconds, 0)
         carriedMarks = try v(.carriedMarks, [:])
         registrationKeepUntil = try v(.registrationKeepUntil, 0)
+        positionLeases = try v(.positionLeases, [:])
     }
 }
 
@@ -546,6 +560,7 @@ public final class PrivacyStore {
             s.pendingRegistration = old.pendingRegistration
             s.registrationKeepUntil = old.registrationKeepUntil
             s.stakeVotes = old.stakeVotes
+            s.positionLeases = old.positionLeases
             s.labelWindowSeconds = old.labelWindowSeconds
             s.claimedDays = old.claimedDays
             s.caretakerCastAt = old.caretakerCastAt; s.caretakerSplit = old.caretakerSplit
