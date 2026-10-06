@@ -412,3 +412,31 @@ recent root. Android and iOS in parity.
 - **Keep window.** A sent registration is kept for the chain's
   current_date_max_skew_seconds (read before the broadcast, at least 48 h,
   at most a year and a day) instead of a constant (67878c2, 47dfac6).
+
+## Groundworks split leases (chain 20a91c6, genesis 34fe7441, 2026-10-06)
+
+The chain now leases every Groundworks split: a position's split counts
+until `Position.split_expires_at` (field 11, cast or renewed +
+`groundworks_lease_seconds`, a year by default), MsgUpdatePosition with the
+same split renews it, and at the lease end the chain clears it
+(`split_lapsed`). No tx, msg or sighash changed: the golden vectors
+regenerated from 20a91c6 are byte-identical, and no proto mirror changed.
+Android and iOS in parity.
+
+- **Read.** `split_expires_at` comes from the whole positions listing the
+  wallet already pages (`/earth/shieldedstaking/v1/positions`); no position
+  is ever asked for by id, so nothing new links a position to its owner.
+  The backend's new `/stake/positions` stream has no owner tags, so the
+  wallet cannot pick its own from it and does not use it.
+- **Memory.** Each own position's last split and lease end are kept in the
+  store (`position_leases` / `positionLeases`), because the chain clears both
+  at a lapse: the wallet still knows when it lapsed and which split to cast
+  again (d8250c9, 3f3b3b3).
+- **Reminder, never automatic.** `GroundworksExpiring` on the caretaker
+  vote's window (30 days before to 30 days after), on Home and on each
+  position's card, in the same banner and wording. Renew is one tap and its
+  confirm sheet: MsgUpdatePosition with the held split. Nothing is sent by
+  a sync or a reminder. A lapsed position reads "Lapsed — choose a split
+  again" and opens the split sheet on the last split seen (1854d92,
+  c681d81). On iOS the caretaker and Groundworks banners now open their
+  Govern sheet directly, as Android's do.

@@ -2,7 +2,7 @@
 
 The current byte-level and behavioural spec of the Earth Wallet's private
 side (Android, iOS; the web app must match the formats). It describes what
-is true now, against chain privacy/orchard **6d3500a**. How it got here is in AUDIT_HISTORY.md.
+is true now, against chain privacy/orchard **20a91c6** (genesis 34fe7441). How it got here is in AUDIT_HISTORY.md.
 
 **Who defines what.** The chain (x/shielded, x/personhood, x/assembly,
 x/shieldedstaking, x/dex; `zk/privacy`, `zk/orchard`, `zk/indexed`,
@@ -1394,8 +1394,29 @@ MsgPositionVote: lane A all zero, the position's salt. MsgUnlockPosition:
 lane A merges the position's derth (v_in) into the wallet's note at its
 validator (or pads), the position's salt, and the fee bundle carries the
 unlock record (§6). The chain weighs positions per validator. Positions are
-read from `/earth/shieldedstaking/v1/positions`; one votes on a proposal
-only if created before the snapshot's block.
+read from `/earth/shieldedstaking/v1/positions`, the whole listing paged by
+its own key (never `Query/Position` for an id: that would tell the node
+which positions are whose); the wallet picks its own by owner tag. One votes
+on a proposal only if created before the snapshot's block.
+
+**Split leases (Groundworks).** A position's split counts until
+`split_expires_at` (Position field 11, unix seconds): cast or renewed
+(MsgLockPosition, MsgUpdatePosition) + x/allocation
+`groundworks_lease_seconds` (0 = 365 days). MsgUpdatePosition with the same
+split renews it. At the lease end the chain clears the split (`splits`
+empty, `split_expires_at` 0; a `shieldedstaking_position` event with action
+`split_lapsed`) and the position directs nothing until a split is cast
+again. The wallet reads `split_expires_at` from that same whole listing and
+keeps, per position of its own, the last split and lease end it saw
+(Android state.json `position_leases`: `[{id, expires_at, split}]`; iOS
+`positionLeases`), clamped to now + 10 years, kept through a same-chain
+reset, dropped when the position is gone. A position is **lapsed** when its
+split is cleared, or held past its lease end (the chain clears it in the
+next block); the card then reads "Lapsed — choose a split again" and the
+split sheet opens on the last split seen, removed options left out. From 30
+days before the lease end the card offers **Renew**: MsgUpdatePosition with
+the held split, on the user's confirmation; a split naming an option the
+fund no longer has is not offered for renewal (the chain would refuse it).
 
 **Stake votes (MsgStakeVote, no stake proof).** One msg votes up to two
 eligible derth notes of one validator with one weight; nothing is spent or
@@ -1791,7 +1812,12 @@ refused by the chain only while the old leaf is live).
   when today's claim is open and not made; the caretaker vote from 30 days
   before its expires_at until 30 days after; the handle from 30 days before
   expires_at through its renewal period; a handle naming this wallet's
-  address that it does not hold. All reminder arithmetic saturates.
+  address that it does not hold; each Groundworks position's split from 30
+  days before its lease end until 30 days after (§15), whether or not the
+  identity is live, and never while the lease end is unknown (a lapse the
+  wallet never saw). The caretaker and Groundworks banners open their Govern
+  screen (Groundworks on Positions); Renew there is one tap and its confirm
+  sheet. All reminder arithmetic saturates.
 - **Saved state.** state.json is written to a temp file, fsynced and renamed
   over (iOS: atomic write); a failed save is an error, never silent. An
   unreadable state.json is an error shown to the user, never replaced by an
