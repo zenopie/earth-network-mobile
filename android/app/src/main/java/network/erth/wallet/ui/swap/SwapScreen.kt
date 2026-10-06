@@ -192,7 +192,7 @@ fun SwapScreen(
                     spendable = spendable,
                     onFraction = { numerator, denominator ->
                         val units = (spendable ?: 0) * numerator / denominator
-                        amount = if (units > 0) units.asDecimalAmount() else ""
+                        amount = if (units > 0) units.fromBaseUnits() else ""
                     },
                 )
                 Spacer(Modifier.height(dimens.space8))
@@ -318,8 +318,8 @@ fun SwapScreen(
 
         // No pool list here. Reserves and LP shares are what a liquidity
         // provider needs; someone swapping needs the rate, the fee and what
-        // they get, all of which are above. Pools moved to Liquidity, one tap
-        // away in the bar.
+        // they get, all of which are above. Pools are under Earn, one tap away
+        // in the bar.
         Spacer(Modifier.height(dimens.space32))
     }
 }
@@ -429,9 +429,6 @@ private fun AmountChip(label: String, onClick: () -> Unit) {
 /** The reverse button's diameter, needed to centre it on the seam. */
 private val REVERSE_BUTTON_SIZE = 48.dp
 
-/** Base units to a plain decimal, for putting a computed amount in the field. */
-private fun Long.asDecimalAmount(): String =
-    java.math.BigDecimal(this).movePointLeft(6).stripTrailingZeros().toPlainString()
 
 /**
  * Tolerances offered, in basis points.

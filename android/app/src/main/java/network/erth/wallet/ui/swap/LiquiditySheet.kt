@@ -142,7 +142,7 @@ fun LiquiditySheet(
                 balance = erthAvailable,
                 value = erthText,
                 onValueChange = ::setErth,
-                onMax = { setErth(erthAvailable.asDecimalAmount()) },
+                onMax = { setErth(erthAvailable.fromBaseUnits()) },
             )
             Spacer(Modifier.height(dimens.space8))
             DepositPanel(
@@ -151,7 +151,7 @@ fun LiquiditySheet(
                 balance = tokenAvailable,
                 value = tokenText,
                 onValueChange = ::setToken,
-                onMax = { setToken(tokenAvailable.asDecimalAmount()) },
+                onMax = { setToken(tokenAvailable.fromBaseUnits()) },
             )
 
             if (overErth || overToken) {
@@ -237,8 +237,8 @@ private fun AmountShortcuts(available: Long, onPick: (String) -> Unit) {
     if (available <= 0) return
     val dimens = EarthTheme.dimens
     Row(horizontalArrangement = Arrangement.spacedBy(dimens.space8)) {
-        Chip("50%") { onPick((available / 2).asDecimalAmount()) }
-        Chip("Max") { onPick(available.asDecimalAmount()) }
+        Chip("50%") { onPick((available / 2).fromBaseUnits()) }
+        Chip("Max") { onPick(available.fromBaseUnits()) }
     }
 }
 
@@ -258,9 +258,6 @@ private fun Chip(label: String, onClick: () -> Unit) {
     )
 }
 
-/** Base units to a plain decimal, for filling the field from a shortcut. */
-private fun Long.asDecimalAmount(): String =
-    java.math.BigDecimal(this).movePointLeft(6).stripTrailingZeros().toPlainString()
 
 @Composable
 private fun Detail(label: String, value: String) {

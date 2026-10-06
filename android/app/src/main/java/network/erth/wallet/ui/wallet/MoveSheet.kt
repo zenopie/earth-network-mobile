@@ -28,6 +28,7 @@ import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.components.dismissKeyboardOnTap
 import network.erth.wallet.ui.components.doneKeyboard
 import network.erth.wallet.ui.components.formatUerth
+import network.erth.wallet.ui.components.fromBaseUnits
 import network.erth.wallet.ui.components.toUerthOrNull
 import network.erth.wallet.ui.designsystem.component.EarthButton
 import network.erth.wallet.ui.designsystem.component.EarthTextField
@@ -151,7 +152,7 @@ fun MoveSheet(
                 style = EarthTypography.textSm.copy(fontWeight = FontWeight.SemiBold),
                 color = EarthAccent.ink,
                 modifier = Modifier
-                    .clickable { amount = cap.asDecimal() }
+                    .clickable { amount = cap.fromBaseUnits() }
                     .padding(dimens.space4),
             )
         }
@@ -183,7 +184,3 @@ fun MoveSheet(
         Spacer(Modifier.height(dimens.space16))
     }
 }
-
-/** uerth back to a plain decimal, for filling the field from "max". */
-private fun Long.asDecimal(): String =
-    java.math.BigDecimal(this).movePointLeft(6).stripTrailingZeros().toPlainString()

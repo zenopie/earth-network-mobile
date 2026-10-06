@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import com.valentinilk.shimmer.shimmer
 import network.erth.wallet.chain.Explorer
 import network.erth.wallet.ui.components.EarthLabel
@@ -102,7 +103,7 @@ fun ExploreScreen(
         if (state == null) {
             repeat(4) {
                 Column(Modifier.padding(vertical = dimens.space8).shimmer(shimmer)) {
-                    ShimmerRectangle(width = 200.dp(), height = 12.dp())
+                    ShimmerRectangle(width = 200.dp, height = 12.dp)
                 }
             }
         } else {
@@ -186,7 +187,7 @@ private fun StatCard(
         Spacer(Modifier.height(dimens.space4))
         if (value == null) {
             Column(Modifier.shimmer(shimmer)) {
-                ShimmerRectangle(width = 72.dp(), height = 22.dp())
+                ShimmerRectangle(width = 72.dp, height = 22.dp)
             }
         } else {
             Text(
@@ -197,5 +198,3 @@ private fun StatCard(
         }
     }
 }
-
-private fun Int.dp() = androidx.compose.ui.unit.Dp(toFloat())

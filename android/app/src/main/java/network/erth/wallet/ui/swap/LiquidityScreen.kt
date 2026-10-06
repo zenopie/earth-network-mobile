@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import com.valentinilk.shimmer.shimmer
 import network.erth.wallet.R
 import network.erth.wallet.chain.Dex
@@ -90,9 +91,9 @@ fun PoolList(
         if (pools == null) {
             repeat(2) {
                 Column(Modifier.padding(vertical = dimens.space12).shimmer(shimmer)) {
-                    ShimmerRectangle(width = 120.dp(), height = 16.dp())
-                    Spacer(Modifier.height(8.dp()))
-                    ShimmerRectangle(width = 200.dp(), height = 12.dp())
+                    ShimmerRectangle(width = 120.dp, height = 16.dp)
+                    Spacer(Modifier.height(8.dp))
+                    ShimmerRectangle(width = 200.dp, height = 12.dp)
                 }
             }
             return@Column
@@ -165,7 +166,7 @@ fun PoolList(
                     )
                     Image(
                         modifier = Modifier
-                            .offset(x = (-6).dp())
+                            .offset(x = (-6).dp)
                             .size(dimens.space24),
                         painter = painterResource(
                             if (pool.tokenDenom == "uanml") {
@@ -356,7 +357,6 @@ private fun Double.readable(): String = when {
 private fun String.trimDecimal(): String =
     if ('.' in this) trimEnd('0').trimEnd('.') else this
 
-private fun Int.dp() = androidx.compose.ui.unit.Dp(toFloat())
 
 /**
  * "in 6 days" / "in 4 hours" / "any moment".

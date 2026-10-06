@@ -26,6 +26,7 @@ import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.components.dismissKeyboardOnTap
 import network.erth.wallet.ui.components.doneKeyboard
 import network.erth.wallet.ui.components.formatUerth
+import network.erth.wallet.ui.components.fromBaseUnits
 import network.erth.wallet.ui.components.toUerthOrNull
 import network.erth.wallet.ui.designsystem.component.EarthButton
 import network.erth.wallet.ui.designsystem.component.EarthTextField
@@ -144,7 +145,7 @@ fun StakeSheet(
             text = "Available ${formatUerth(cap)} ERTH",
             style = EarthTypography.textSm,
             color = EarthColors.Text.textTertiary,
-            modifier = Modifier.clickable { amount = cap.asDecimal() },
+            modifier = Modifier.clickable { amount = cap.fromBaseUnits() },
         )
         note?.let {
             Spacer(Modifier.height(dimens.space8))
@@ -167,7 +168,3 @@ fun StakeSheet(
         Spacer(Modifier.height(dimens.space16))
     }
 }
-
-/** uerth back to a plain decimal, for filling the field from "max". */
-private fun Long.asDecimal(): String =
-    java.math.BigDecimal(this).movePointLeft(6).stripTrailingZeros().toPlainString()

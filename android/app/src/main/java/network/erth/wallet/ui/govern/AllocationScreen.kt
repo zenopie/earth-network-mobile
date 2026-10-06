@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import com.valentinilk.shimmer.shimmer
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.ui.components.EarthLabel
@@ -184,7 +185,7 @@ private fun GovernRow(
             Spacer(Modifier.height(dimens.space4))
             if (loading) {
                 Box(Modifier.shimmer(shimmer)) {
-                    ShimmerRectangle(width = 140.dp(), height = 12.dp())
+                    ShimmerRectangle(width = 140.dp, height = 12.dp)
                 }
             } else if (status != null) {
                 Text(
@@ -201,5 +202,3 @@ private fun GovernRow(
         )
     }
 }
-
-private fun Int.dp() = androidx.compose.ui.unit.Dp(toFloat())

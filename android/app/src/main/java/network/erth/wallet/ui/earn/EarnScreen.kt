@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import com.valentinilk.shimmer.shimmer
 import network.erth.wallet.chain.Dex
 import network.erth.wallet.chain.math.StakingApr
@@ -281,7 +282,7 @@ private fun AmountOrShimmer(
 ) {
     if (uerth == null) {
         Column(Modifier.shimmer(shimmer)) {
-            ShimmerRectangle(width = 120.dp(), height = 26.dp())
+            ShimmerRectangle(width = 120.dp, height = 26.dp)
         }
     } else {
         Text(
@@ -292,7 +293,6 @@ private fun AmountOrShimmer(
     }
 }
 
-private fun Int.dp() = androidx.compose.ui.unit.Dp(toFloat())
 
 /**
  * A rate at whatever magnitude it lands.

@@ -26,6 +26,7 @@ import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.components.dismissKeyboardOnTap
 import network.erth.wallet.ui.components.doneKeyboard
 import network.erth.wallet.ui.components.formatUerth
+import network.erth.wallet.ui.components.fromBaseUnits
 import network.erth.wallet.ui.components.toUerthOrNull
 import network.erth.wallet.ui.designsystem.component.EarthButton
 import network.erth.wallet.ui.designsystem.component.EarthTextField
@@ -144,7 +145,7 @@ fun MoveStakeSheet(
             text = "Can move now ${formatUerth(cap)} derth",
             style = EarthTypography.textSm,
             color = EarthColors.Text.textTertiary,
-            modifier = Modifier.clickable { amount = java.math.BigDecimal(cap).movePointLeft(6).stripTrailingZeros().toPlainString() },
+            modifier = Modifier.clickable { amount = cap.fromBaseUnits() },
         )
         Spacer(Modifier.height(dimens.space8))
         Text(text = note, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)

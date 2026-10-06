@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
 import network.erth.wallet.privacy.handles.Handles
 import network.erth.wallet.ui.components.EarthLabel
 import network.erth.wallet.ui.components.brandButtonColors
@@ -91,7 +92,7 @@ fun MrzConfirmScreen(
             .background(EarthColors.Surfaces.bgPrimary)
             .dismissKeyboardOnTap()
             .verticalScroll(rememberScrollState())
-            .padding(24.dp()),
+            .padding(24.dp),
     ) {
         Text(
             text = if (initial != null) {
@@ -104,9 +105,9 @@ fun MrzConfirmScreen(
             color = EarthColors.Text.textSecondary,
         )
 
-        Spacer(Modifier.height(24.dp()))
+        Spacer(Modifier.height(24.dp))
         EarthLabel("Passport number")
-        Spacer(Modifier.height(8.dp()))
+        Spacer(Modifier.height(8.dp))
         EarthTextField(
             value = number,
             onValueChange = { number = it.uppercase() },
@@ -115,9 +116,9 @@ fun MrzConfirmScreen(
             keyboardActions = numberKeys.second,
         )
 
-        Spacer(Modifier.height(16.dp()))
+        Spacer(Modifier.height(16.dp))
         EarthLabel("Date of birth")
-        Spacer(Modifier.height(8.dp()))
+        Spacer(Modifier.height(8.dp))
         EarthTextField(
             value = dob,
             onValueChange = { dob = it.filter(Char::isDigit).take(6) },
@@ -127,9 +128,9 @@ fun MrzConfirmScreen(
             keyboardActions = dateKeys.second,
         )
 
-        Spacer(Modifier.height(16.dp()))
+        Spacer(Modifier.height(16.dp))
         EarthLabel("Expiry date")
-        Spacer(Modifier.height(8.dp()))
+        Spacer(Modifier.height(8.dp))
         EarthTextField(
             value = expiry,
             onValueChange = { expiry = it.filter(Char::isDigit).take(6) },
@@ -143,9 +144,9 @@ fun MrzConfirmScreen(
         // Separated from the passport fields above by a divider: this one is
         // not read off the document and is not required. Grouping it with them
         // would suggest it is another thing to copy from the photo page.
-        Spacer(Modifier.height(24.dp()))
+        Spacer(Modifier.height(24.dp))
         HorizontalDivider(color = EarthColors.Surfaces.divider)
-        Spacer(Modifier.height(24.dp()))
+        Spacer(Modifier.height(24.dp))
 
         if (referrerLocked) {
             // Arrived through a referral link, so there is nothing to fill in.
@@ -153,25 +154,25 @@ fun MrzConfirmScreen(
             // a transaction on their behalf, and silently acting on something
             // they cannot see is worse than one line of text.
             EarthLabel("Referred by")
-            Spacer(Modifier.height(8.dp()))
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = Handles.parse(referrer)?.let { "@$it" } ?: referrer,
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textPrimary,
             )
             referrerLookupError?.let {
-                Spacer(Modifier.height(8.dp()))
+                Spacer(Modifier.height(8.dp))
                 Text(text = it, style = EarthTypography.textXs, color = EarthColors.Text.textPrimary)
             }
-            Spacer(Modifier.height(8.dp()))
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = "Half the registration reward goes to them, privately, as a note to " +
                     "their shielded address. Your own half is unaffected.",
                 style = EarthTypography.textXs,
                 color = EarthColors.Text.textSecondary,
             )
-            Spacer(Modifier.height(8.dp()))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp())) {
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 EarthButton(
                     text = "Change",
                     onClick = onReplaceReferrer,
@@ -187,7 +188,7 @@ fun MrzConfirmScreen(
             }
         } else {
             EarthLabel("Referred by (optional)")
-            Spacer(Modifier.height(8.dp()))
+            Spacer(Modifier.height(8.dp))
             EarthTextField(
                 value = referrer,
                 onValueChange = { onReferrerChange(it.trim()) },
@@ -197,7 +198,7 @@ fun MrzConfirmScreen(
                 keyboardOptions = referrerKeys.first,
                 keyboardActions = referrerKeys.second,
             )
-            Spacer(Modifier.height(8.dp()))
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = "Half the registration reward goes to whoever referred you, " +
                     "privately, as a note to their handle's shielded address. Leaving " +
@@ -207,7 +208,7 @@ fun MrzConfirmScreen(
             )
         }
 
-        Spacer(Modifier.height(24.dp()))
+        Spacer(Modifier.height(24.dp))
         EarthButton(
             text = if (checkingReferrer) "Checking @handle…" else "Continue",
             onClick = { onContinue(mrz) },
@@ -215,8 +216,6 @@ fun MrzConfirmScreen(
             modifier = Modifier.fillMaxWidth(),
             colors = brandButtonColors(),
         )
-        Spacer(Modifier.height(32.dp()))
+        Spacer(Modifier.height(32.dp))
     }
 }
-
-private fun Int.dp() = androidx.compose.ui.unit.Dp(toFloat())

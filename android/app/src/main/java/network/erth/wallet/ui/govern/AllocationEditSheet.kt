@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import network.erth.wallet.ui.components.EarthSheet
 import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.designsystem.component.EarthButton
@@ -150,7 +151,7 @@ private const val STEP = 5L
 private fun Stepper(label: String, enabled: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
-            .size(36.dp())
+            .size(36.dp)
             .background(EarthColors.Surfaces.bgSecondary, CircleShape)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -167,5 +168,3 @@ private fun Stepper(label: String, enabled: Boolean, onClick: () -> Unit) {
         )
     }
 }
-
-private fun Int.dp() = androidx.compose.ui.unit.Dp(toFloat())

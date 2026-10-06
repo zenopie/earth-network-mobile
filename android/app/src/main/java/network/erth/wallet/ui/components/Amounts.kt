@@ -60,3 +60,6 @@ internal fun String.toBaseUnits(): BigInteger? =
 /** Base units back to a plain decimal for display. */
 internal fun BigInteger.fromBaseUnits(): String =
     BigDecimal(this).movePointLeft(6).stripTrailingZeros().toPlainString()
+
+/** Base units back to a plain decimal, e.g. to fill an amount field. */
+internal fun Long.fromBaseUnits(): String = BigInteger.valueOf(this).fromBaseUnits()
