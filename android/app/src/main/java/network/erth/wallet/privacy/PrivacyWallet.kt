@@ -115,6 +115,8 @@ interface PrivacyChainReads {
         val ownerTag: Fr,
         val splits: Map<Long, Long> = emptyMap(),
         val createdHeight: Long = 0,
+        /** When the split stops counting (x/allocation groundworks_lease_seconds after it was cast or renewed; 0 without a split). */
+        val splitExpiresAt: Long = 0,
     )
 
     /**
@@ -2237,8 +2239,41 @@ class PrivacyWallet(
             found.maxOfOrNull { it.second }?.let { top -> if (top + 1 + OTAG_GAP > limit) limit = top + 1 + OTAG_GAP }
         }
         val next = maxOf(s.nextOtagCounter, s.closedOtagMax + 1, (out.maxOfOrNull { it.second } ?: -1) + 1)
-        if (next > s.nextOtagCounter) { s.nextOtagCounter = next; store.save() }
+        var dirty = next > s.nextOtagCounter
+        if (dirty) s.nextOtagCounter = next
+        if (rememberLeases(out.map { it.first })) dirty = true
+        if (dirty) store.save()
         return out.sortedBy { it.first.id }
+    }
+
+    /**
+     * Keeps each of our positions' split and lease end as last seen, so a
+     * lapse (which the chain records by clearing both) is still known: when,
+     * and which split to cast again. Closed positions are forgotten. True
+     * when anything changed.
+     */
+    private fun rememberLeases(mine: List<PrivacyChainReads.Position>): Boolean = synchronized(this) {
+        val leases = store.state.positionLeases
+        val before = HashMap(leases)
+        leases.keys.retainAll(mine.map { it.id }.toSet())
+        for (p in mine) if (p.splits.isNotEmpty() && p.splitExpiresAt > 0) {
+            leases[p.id] = network.erth.wallet.privacy.sync.PositionLease(minOf(p.splitExpiresAt, Handles.satAdd(now(), Handles.MAX_AHEAD_SECONDS)), p.splits)
+        }
+        leases != before
+    }
+
+    /**
+     * Each of [mine]'s (from [positions]) Groundworks lease: the chain's
+     * split and lease end while it holds them, else the ones last seen here.
+     * From this wallet's own reads only; nothing is asked about a position.
+     */
+    fun groundworksLeases(mine: List<PrivacyChainReads.Position>): List<Reminders.GroundworksLease> {
+        val seen = store.state.positionLeases
+        val cap = Handles.satAdd(now(), Handles.MAX_AHEAD_SECONDS)
+        return mine.map { p ->
+            if (p.splits.isNotEmpty()) Reminders.GroundworksLease(p.id, minOf(p.splitExpiresAt, cap), held = true, split = p.splits)
+            else Reminders.GroundworksLease(p.id, seen[p.id]?.expiresAt ?: 0, held = false, split = seen[p.id]?.split.orEmpty())
+        }
     }
 
     private val otags = HashMap<Int, Fr>()

@@ -267,7 +267,7 @@ object PrivacySession {
         }
 
         override fun positions() = PrivacyQueries.positions().map {
-            PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight)
+            PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight, it.splitExpiresAt)
         }
 
         override fun debtTree(start: Long, limit: Int) = PrivacyQueries.debtTree(start, limit)

@@ -38,4 +38,34 @@ class RemindersTest {
         assertEquals(true, (Reminders.due(q.copy(handle = "alice", handleEntry = e.copy(expiresAt = now - 5))).single() as Reminders.Reminder.HandleExpiring).inRenewal)
         assertTrue(Reminders.text(Reminders.Reminder.AnmlReady, now).contains("ANML"))
     }
+
+    /**
+     * A position's Groundworks split: reminded as the caretaker vote is (from
+     * 30 days before its lease end, for 30 days after), whatever the
+     * identity's state, and never while the lease end is unknown.
+     */
+    @Test
+    fun groundworksLeaseReminders() {
+        val q = Reminders.Inputs(now, identityLive = false, claimOpensAt = null, claimedToday = true, caretakerExpiresAt = 0, handle = "", handleEntry = null)
+        fun due(vararg g: Reminders.GroundworksLease) = Reminders.due(q.copy(groundworks = g.toList()))
+        val split = mapOf(2L to 100L)
+        assertTrue(due(Reminders.GroundworksLease(3, now + Reminders.LEAD_SECONDS + 1, true, split)).isEmpty())
+        assertEquals(listOf<Reminders.Reminder>(Reminders.Reminder.GroundworksExpiring(3, now + 7 * 86_400, false)), due(Reminders.GroundworksLease(3, now + 7 * 86_400, true, split)))
+        assertEquals(listOf<Reminders.Reminder>(Reminders.Reminder.GroundworksExpiring(3, now + Reminders.LEAD_SECONDS, false)), due(Reminders.GroundworksLease(3, now + Reminders.LEAD_SECONDS, true, split)))
+        // Past its end, cleared by the chain or not yet: lapsed.
+        assertEquals(listOf<Reminders.Reminder>(Reminders.Reminder.GroundworksExpiring(3, now, true)), due(Reminders.GroundworksLease(3, now, true, split)))
+        assertEquals(listOf<Reminders.Reminder>(Reminders.Reminder.GroundworksExpiring(3, now - 86_400, true)), due(Reminders.GroundworksLease(3, now - 86_400, false, split)))
+        assertTrue(due(Reminders.GroundworksLease(3, now - Reminders.LAPSED_SECONDS - 1, false, split)).isEmpty())
+        // Unknown lease end (a node before leases; a lapse never seen here): no reminder, though the card says lapsed.
+        assertTrue(due(Reminders.GroundworksLease(3, 0, true, split), Reminders.GroundworksLease(4, 0, false, emptyMap())).isEmpty())
+        assertTrue(Reminders.GroundworksLease(4, 0, false, emptyMap()).lapsed(now))
+        assertTrue(!Reminders.GroundworksLease(3, 0, true, split).lapsed(now))
+        // One per position.
+        assertEquals(2, due(Reminders.GroundworksLease(3, now + 86_400, true, split), Reminders.GroundworksLease(5, now - 86_400, false, split)).size)
+        // Hostile times saturate.
+        Reminders.due(q.copy(now = Long.MIN_VALUE, groundworks = listOf(Reminders.GroundworksLease(1, Long.MAX_VALUE, true, split))))
+        Reminders.text(Reminders.Reminder.GroundworksExpiring(1, Long.MAX_VALUE, false), Long.MIN_VALUE)
+        assertTrue(Reminders.text(Reminders.Reminder.GroundworksExpiring(3, now + 7 * 86_400, false), now).contains("expires in 7 days"))
+        assertTrue(Reminders.text(Reminders.Reminder.GroundworksExpiring(3, now - 1, true), now).contains("Choose a split again"))
+    }
 }

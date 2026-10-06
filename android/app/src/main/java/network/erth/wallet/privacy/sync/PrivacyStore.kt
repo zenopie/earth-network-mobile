@@ -174,6 +174,14 @@ data class PendingMove(
 data class CarriedMark(val at: Long, val until: Long?, val tx: String?)
 
 /**
+ * The last Groundworks split this wallet saw on one of its own positions and
+ * when that split's lease ends. The chain clears a lapsed split (splits
+ * empty, split_expires_at 0), so only this says when it lapsed and what it
+ * was, for the reminder and a re-cast of the same split.
+ */
+data class PositionLease(val expiresAt: Long, val split: Map<Long, Long>)
+
+/**
  * What the wallet keeps between syncs: cursors into each indexer stream, its
  * own notes, its registration, and its own txs' bookkeeping. Small; the
  * trees live beside it in per-level files.
@@ -264,6 +272,8 @@ class PrivacyState {
     var nextOtagCounter: Int = 0
     /** The highest owner-tag counter of a position this wallet closed, from its unlock memos (-1: none). */
     var closedOtagMax: Int = -1
+    /** Per position id of ours: its split's lease as last seen (PrivacyWallet.positions keeps it). */
+    val positionLeases: MutableMap<Long, PositionLease> = java.util.TreeMap()
     /** The stake tree's stream cursors and this wallet's stake notes. */
     var stakeNext: Long = 0
     var stakeHeight: Long = 0
@@ -334,6 +344,9 @@ class PrivacyState {
         })
         put("identity_heights", JSONArray(identityHeights)); put("identity_rows_seen", identityRowsSeen)
         put("next_otag_counter", nextOtagCounter); put("closed_otag_max", closedOtagMax)
+        put("position_leases", JSONArray().apply {
+            positionLeases.forEach { (id, l) -> put(JSONObject().put("id", id).put("expires_at", l.expiresAt).put("split", splitJson(l.split))) }
+        })
         put("stake_next", stakeNext); put("stake_height", stakeHeight); put("stake_nullifiers_next", stakeNullifiersNext)
         put("label_window_seconds", labelWindowSeconds)
         put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
@@ -408,6 +421,11 @@ class PrivacyState {
             }
             identityHeights.addAll(longs(j.optJSONArray("identity_heights"))); identityRowsSeen = j.optLong("identity_rows_seen")
             nextOtagCounter = j.optInt("next_otag_counter"); closedOtagMax = j.optInt("closed_otag_max", -1)
+            j.optJSONArray("position_leases")?.let { a ->
+                for (i in 0 until a.length()) a.getJSONObject(i).let {
+                    positionLeases[it.getLong("id")] = PositionLease(it.optLong("expires_at"), splitFromJson(it.optJSONObject("split")))
+                }
+            }
             stakeNext = j.optLong("stake_next"); stakeHeight = j.optLong("stake_height"); stakeNullifiersNext = j.optLong("stake_nullifiers_next")
             labelWindowSeconds = j.optLong("label_window_seconds")
             j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
@@ -598,6 +616,7 @@ class PrivacyStore private constructor(
                 keepHandleState(old, this)
                 pendingUnbonds.addAll(old.pendingUnbonds)
                 stakeVotes.addAll(old.stakeVotes)
+                positionLeases.putAll(old.positionLeases)
                 labelWindowSeconds = old.labelWindowSeconds
                 // Notes a tx in flight spends stay unspendable through the resync.
                 carriedMarks.putAll(old.carriedMarks)

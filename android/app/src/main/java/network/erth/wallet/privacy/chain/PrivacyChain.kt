@@ -291,6 +291,8 @@ object PrivacyQueries {
         val ownerTag: Fr,
         val splits: Map<Long, Long>,
         val createdHeight: Long,
+        /** When the split stops counting (unix seconds; 0 without a split, or on a node before leases). */
+        val splitExpiresAt: Long = 0,
     )
 
     /** Every Groundworks position (public); the wallet finds its own by owner tag. */
@@ -308,6 +310,7 @@ object PrivacyQueries {
                         id = p.long("id"), validator = p.optString("validator"), derth = p.long("derth"),
                         ownerTag = field(p.optString("owner_tag")),
                         createdHeight = p.long("created_height"),
+                        splitExpiresAt = p.long("split_expires_at"),
                         splits = (0 until (splits?.length() ?: 0)).associate { s ->
                             splits!!.getJSONObject(s).let { it.long("option_id") to it.long("percent") }
                         },

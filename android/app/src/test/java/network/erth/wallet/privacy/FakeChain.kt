@@ -145,7 +145,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     val withdrawals = ArrayList<Withdrawal>()
 
     // x/shieldedstaking positions, x/personhood handles and caretaker splits, x/assembly removal ballots.
-    data class Pos(val id: Long, val validator: String, val derth: Long, val ownerTag: Fr, var splits: Map<Long, Long>, val createdHeight: Long)
+    data class Pos(val id: Long, val validator: String, val derth: Long, val ownerTag: Fr, var splits: Map<Long, Long>, val createdHeight: Long, var splitExpiresAt: Long = 0)
+    /** x/allocation groundworks_lease_seconds: a split counts this long after it was cast or renewed. */
+    var groundworksLease = 365L * 86_400
+
+    /** The chain's lapse at [now]: every split whose lease has ended is cleared (splits empty, split_expires_at 0). */
+    fun lapseSplits() {
+        for (p in positions.values) if (p.splits.isNotEmpty() && p.splitExpiresAt in 1..now) { p.splits = emptyMap(); p.splitExpiresAt = 0 }
+    }
     val positions = LinkedHashMap<Long, Pos>()
     var nextPositionId = 1L
     val positionVotes = ArrayList<Pair<Long, Long>>()
@@ -1089,9 +1096,13 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             )
             is MsgLockPosition -> {
                 val id = nextPositionId++
-                positions[id] = Pos(id, m.validator, m.amount, f(m.stake.ownerTag), m.splitsList.associate { it.optionId to it.percent }, height)
+                positions[id] = Pos(id, m.validator, m.amount, f(m.stake.ownerTag), m.splitsList.associate { it.optionId to it.percent }, height,
+                    if (m.splitsCount > 0) now + groundworksLease else 0)
             }
-            is MsgUpdatePosition -> positions.getValue(m.positionId).splits = m.splitsList.associate { it.optionId to it.percent }
+            is MsgUpdatePosition -> positions.getValue(m.positionId).let { p ->
+                p.splits = m.splitsList.associate { it.optionId to it.percent }
+                p.splitExpiresAt = if (m.splitsCount > 0) now + groundworksLease else 0
+            }
             is MsgUnlockPosition -> positions.remove(m.positionId)!!
             is MsgPositionVote -> positionVotes.add(m.positionId to m.proposalId)
             is MsgSetCaretaker -> {
@@ -1329,7 +1340,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     fun handleDirectory() = network.erth.wallet.privacy.handles.HandleDirectory(::handlesPage, { f, l -> handles(f, l) }, now = { now })
 
     fun positionReads(): List<PrivacyChainReads.Position> =
-        positions.values.map { PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight) }
+        positions.values.map { PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight, it.splitExpiresAt) }
 
     fun unshieldedTo(receiver: String, denom: String = "uerth"): Long = unshielded[receiver]?.get(denom) ?: 0
 }
