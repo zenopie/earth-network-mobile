@@ -109,7 +109,7 @@ fun RegistrationIntroScreen(
             text = "Already registered from another wallet? Registering here switches your " +
                 "identity to this wallet. Move your handle and caretaker vote first, from the " +
                 "old wallet's Identity screen (Switch identity), or the new identity waits up " +
-                "to a year before it can hold them.",
+                "to a year before it can hold them. A passport can switch once per day (UTC).",
             style = EarthTypography.textXs,
             color = EarthColors.Text.textTertiary,
         )

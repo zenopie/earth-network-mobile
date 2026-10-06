@@ -187,7 +187,7 @@ struct RegistrationSheet: View {
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textError)
                 }
-                Text("Already registered from another wallet? Registering here switches your identity to this wallet. Move your handle and caretaker vote first, from the old wallet's Identity screen (Switch identity), or the new identity waits up to a year before it can hold them.")
+                Text("Already registered from another wallet? Registering here switches your identity to this wallet. Move your handle and caretaker vote first, from the old wallet's Identity screen (Switch identity), or the new identity waits up to a year before it can hold them. A passport can switch once per day (UTC).")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }

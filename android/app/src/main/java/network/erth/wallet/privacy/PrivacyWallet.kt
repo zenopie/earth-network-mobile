@@ -293,6 +293,13 @@ class PrivacyWallet(
 
     fun identityStatus(): WalletSync.IdentityStatus = WalletSync(indexer, store, keys, chainId, roots, now).identityStatus()
 
+    /**
+     * Until when a registration this wallet broadcast can still land (null:
+     * none can any more). Its identity, so its recovery phrase, must be kept
+     * until then, and the wallet counts as possibly registered.
+     */
+    fun registrationMayLandUntil(): Long? = store.state.registrationKeepUntil.takeIf { it > now() }
+
     /** A committed registration whose leaf is not matched yet (null: none), and why, if it failed. */
     val pendingRegistration: PendingRegistration? get() = store.state.pendingRegistration
 
@@ -674,6 +681,14 @@ class PrivacyWallet(
         require(PrivateMsgs.decimalField(publicSignals[1]) == prep.binding) { "the passport proof is bound to other notes" }
         require(PrivateMsgs.isCalendarDate(publicSignals[0])) { "the passport proof's current_date ${publicSignals[0]} is not a calendar date" }
         val base = registerMsg(prep, proof, publicSignals, signatureAlgorithm, dscDer)
+        // Before any byte leaves: a registration that fails or is refused is
+        // public and may still land while its current_date is in the chain's
+        // skew, so this identity counts as possibly registered until then.
+        val proofDate = PrivateMsgs.calendarDateUnix(publicSignals[0])!!
+        synchronized(this) {
+            store.state.registrationKeepUntil = maxOf(store.state.registrationKeepUntil, Handles.satAdd(proofDate, REGISTRATION_SKEW_SECONDS))
+            store.save()
+        }
         val dscKey = PrivateMsgs.decimalField(publicSignals[3])
         val hint = dscCountry(dscDer)
         val record = NoteOut.to(keys.address, FEE, 0, WalletSync.regMemo(keys.nk, dscKey, hint, now()))
@@ -2591,6 +2606,15 @@ class PrivacyWallet(
         }.getOrNull() ?: ""
 
         const val SECONDS_PER_DAY = 86_400L
+
+        /**
+         * The chain's current_date_max_skew_seconds (48 h): a registration
+         * lands only while its proof's current_date is within it of the block
+         * time. A switch must also be proven on a later date than the live
+         * registration (error 1128), so the wallet always proves on today's
+         * UTC date.
+         */
+        const val REGISTRATION_SKEW_SECONDS = 172_800L
 
         fun notYetText(waitSeconds: Long): String =
             if (waitSeconds > 2 * SECONDS_PER_DAY) "this identity replaced another too recently for this action; it opens in ${waitSeconds / SECONDS_PER_DAY + 1} days"

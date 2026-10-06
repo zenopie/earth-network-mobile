@@ -156,6 +156,19 @@ object PrivateMsgs {
         return d <= days[m - 1]
     }
 
+    /** YYMMDD [s] as unix seconds at midnight UTC (the chain's yymmddToUnix), or null when it is no calendar date. */
+    fun calendarDateUnix(s: String): Long? {
+        if (!isCalendarDate(s)) return null
+        val y = 2000 + s.substring(0, 2).toInt(); val m = s.substring(2, 4).toInt(); val d = s.substring(4, 6).toInt()
+        // Days from the civil date (Hinnant), so no time-zone API is involved.
+        val yy = if (m <= 2) y - 1 else y
+        val era = yy / 400
+        val yoe = yy - era * 400
+        val doy = (153 * (if (m > 2) m - 3 else m + 9) + 2) / 5 + d - 1
+        val doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+        return (era * 146097L + doe - 719468) * 86_400
+    }
+
     /** OptionsBytes: per option, u64 BE option, u32 BE length, the weight's LegacyDec string. */
     fun optionsBytes(opts: List<WeightedVoteOption>): ByteArray {
         val out = java.io.ByteArrayOutputStream()

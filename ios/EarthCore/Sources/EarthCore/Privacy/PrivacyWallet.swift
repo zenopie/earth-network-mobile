@@ -13,6 +13,11 @@ import Foundation
 /// `snapshot`, which is replaced after each operation and never torn.
 public final class PrivacyWallet: @unchecked Sendable {
     public static let secondsPerDay: Int64 = 86_400
+    /// The chain's current_date_max_skew_seconds (48 h): a registration lands
+    /// only while its proof's current_date is within it of the block time. A
+    /// switch must also be proven on a later date than the live registration
+    /// (error 1128), so the wallet always proves on today's UTC date.
+    public static let registrationSkewSeconds: Int64 = 172_800
     /// MsgRegister's gas, for the fee estimate before simulating: the
     /// passport proof (3M) and DSC chain (300k), the fee bundle's two action
     /// proofs and note writes, and the tx's bytes.
@@ -89,6 +94,8 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let syncedHeight: UInt64
         /// A committed registration whose leaf is not matched yet (nil: none), and why, if it failed.
         public let pendingRegistration: PendingRegistration?
+        /// Until when a registration this wallet broadcast can still land (0: none ever).
+        public let registrationKeepUntil: Int64
         /// Whether the last sync's roots matched the chain's; no private tx is built on unverified ones.
         public let rootsVerified: Bool
         public let rootsError: String?
@@ -107,7 +114,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             handle = s.handle; handleMovedOut = s.handleMovedOut
             caretakerSplitUnknown = s.caretakerSplitUnknown; pendingMoves = s.pendingMoves; switchTarget = s.switchTarget
             pendingUnbonds = s.pendingUnbonds; syncedHeight = s.notesHeight
-            pendingRegistration = s.pendingRegistration; rootsVerified = s.rootsVerified; rootsError = s.rootsError
+            pendingRegistration = s.pendingRegistration; registrationKeepUntil = s.registrationKeepUntil; rootsVerified = s.rootsVerified; rootsError = s.rootsError
             identityStatus = WalletSync.identityStatus(store: store, keys: keys)
             self.maxActions = maxActions
             self.saveError = saveError
@@ -206,6 +213,13 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func identityStatus() -> WalletSync.IdentityStatus { snapshot.identityStatus }
     /// A committed registration whose leaf is not matched yet (nil: none), and why, if it failed.
     public var pendingRegistration: PendingRegistration? { snapshot.pendingRegistration }
+    /// Until when a registration this wallet broadcast can still land (nil:
+    /// none can any more). Its identity, so its recovery phrase, must be kept
+    /// until then, and the wallet counts as possibly registered.
+    public func registrationMayLandUntil() -> Int64? {
+        let t = snapshot.registrationKeepUntil
+        return t > now() ? t : nil
+    }
 
     /// x/shielded max_actions_per_bundle, read from the chain (the last value on a read failure).
     public func maxActions() async -> Int {
@@ -650,6 +664,13 @@ public final class PrivacyWallet: @unchecked Sendable {
             try require(try PrivateMsgs.decimalField(publicSignals[1]) == prep.binding, "the passport proof is bound to other notes")
             try require(PrivateMsgs.isCalendarDate(publicSignals[0]), "the passport proof's current_date \(publicSignals[0]) is not a calendar date")
             let base = registerMsg(prep, proof: proof, publicSignals: publicSignals, signatureAlgorithm: signatureAlgorithm, dscDer: dscDer)
+            // Before any byte leaves: a registration that fails or is refused
+            // is public and may still land while its current_date is in the
+            // chain's skew, so this identity counts as possibly registered
+            // until then.
+            let proofDate = PrivateMsgs.calendarDateUnix(publicSignals[0])!
+            store.mutate { $0.registrationKeepUntil = max($0.registrationKeepUntil, Handles.satAdd(proofDate, Self.registrationSkewSeconds)) }
+            try store.save()
             let dscKey = try PrivateMsgs.decimalField(publicSignals[3])
             let hint = Self.dscCountry(dscDer)
             let record = try NoteOut.to(keys.address, denom: Self.fee, value: 0,

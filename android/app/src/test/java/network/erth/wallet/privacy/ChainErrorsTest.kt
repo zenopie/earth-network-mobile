@@ -29,6 +29,10 @@ class ChainErrorsTest : WalletTest() {
         val cap = ChainErrors.explain(1113, "personhood")!!
         assertTrue(cap, "Try again tomorrow" in cap)
         assertEquals(cap, ChainErrors.explain("rpc error: daily registration limit reached for this document signer or country"))
+        // A second switch the same UTC day.
+        val stale = ChainErrors.explain(1128, "personhood")!!
+        assertTrue(stale, "once per day" in stale)
+        assertEquals(stale, ChainErrors.explain("rpc error: identity switch must be proven on a later date than the live registration: proof dated 1, live registration proven 1"))
         // The codes mean nothing in another module.
         assertNull(ChainErrors.explain(1127, "dex"))
     }

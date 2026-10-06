@@ -32,6 +32,9 @@ object ChainErrors {
         // A switch stays under its Document Signer.
         Known("personhood", 1127, "identity switch must be proven under the live registration's document signer",
             "This switch was refused. A switch must be proven with the same passport you registered with, and this one was signed by a different issuing key."),
+        // A switch is proven on a strictly later date than the live registration.
+        Known("personhood", 1128, "identity switch must be proven on a later date than the live registration",
+            "This passport already switched identity today (UTC). A passport can switch once per day: try again tomorrow."),
         // The signer's (or country's) daily cap; a switch counts against its signer's.
         Known("personhood", 1113, "daily registration limit reached",
             "Today's limit for passports from this issuer has been reached. Try again tomorrow."),

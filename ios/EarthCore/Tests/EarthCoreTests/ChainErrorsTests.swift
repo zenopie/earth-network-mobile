@@ -26,6 +26,10 @@ final class ChainErrorsTests: XCTestCase {
         let cap = ChainErrors.explain(code: 1113, codespace: "personhood")!
         XCTAssertTrue(cap.contains("Try again tomorrow"), cap)
         XCTAssertEqual(cap, ChainErrors.explain(text: "rpc error: daily registration limit reached for this document signer or country"))
+        // A second switch the same UTC day.
+        let stale = ChainErrors.explain(code: 1128, codespace: "personhood")!
+        XCTAssertTrue(stale.contains("once per day"), stale)
+        XCTAssertEqual(stale, ChainErrors.explain(text: "rpc error: identity switch must be proven on a later date than the live registration: proof dated 1, live registration proven 1"))
         // The codes mean nothing in another module.
         XCTAssertNil(ChainErrors.explain(code: 1127, codespace: "dex"))
     }

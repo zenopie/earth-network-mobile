@@ -191,6 +191,14 @@ class PrivacyState {
     var identity: IdentityRecord? = null
     /** A committed registration not yet matched to its leaf. */
     var pendingRegistration: PendingRegistration? = null
+    /**
+     * Until when (unix seconds) a registration this wallet broadcast can
+     * still land: its proof's current_date plus the chain's 48 h skew. A
+     * registration that failed or was refused is public and may be replayed
+     * until then, so this wallet's identity (its recovery phrase) must be
+     * kept and counted as possibly registered. 0: none.
+     */
+    var registrationKeepUntil: Long = 0
     /** Registration record notes found (restore). */
     val regRecords: MutableList<RegRecord> = ArrayList()
     /** Whether the last sync's roots matched the chain's own, and why not. */
@@ -280,6 +288,7 @@ class PrivacyState {
                 .put("passport_nullifier", p.passportNullifier).put("public_signals", JSONArray(p.publicSignals))
                 .put("activated_at", p.activatedAt ?: JSONObject.NULL).put("country_hint", p.countryHint).put("failure", p.failure ?: JSONObject.NULL))
         }
+        if (registrationKeepUntil != 0L) put("registration_keep_until", registrationKeepUntil)
         put("reg_records", JSONArray().apply {
             regRecords.forEach {
                 put(JSONObject().put("height", it.height).put("position", it.position).put("dsc_key", it.dscKey.toHex())
@@ -348,6 +357,7 @@ class PrivacyState {
                     if (p.isNull("failure")) null else p.optString("failure"),
                 )
             }
+            registrationKeepUntil = j.optLong("registration_keep_until", 0L)
             j.optJSONArray("reg_records")?.let { a ->
                 for (i in 0 until a.length()) a.getJSONObject(i).let {
                     val ls = it.optJSONArray("leaves")
@@ -580,6 +590,7 @@ class PrivacyStore private constructor(
             if (old.chainId == chainId && old.genesis == genesis) {
                 identity = old.identity?.takeIf { it.verified }
                 pendingRegistration = old.pendingRegistration
+                registrationKeepUntil = old.registrationKeepUntil
                 claimedDays.addAll(old.claimedDays)
                 caretakerCastAt = old.caretakerCastAt; caretakerSplit = old.caretakerSplit
                 caretakerExpiresAt = old.caretakerExpiresAt; caretakerMovedOut = old.caretakerMovedOut
@@ -639,6 +650,7 @@ class PrivacyStore private constructor(
             closedOtagMax = old.closedOtagMax
             identity = old.identity
             pendingRegistration = old.pendingRegistration?.copy(failure = null)
+            registrationKeepUntil = old.registrationKeepUntil
         }
         save()
     }

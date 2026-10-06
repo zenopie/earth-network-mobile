@@ -114,7 +114,9 @@ enum PrivacySession {
         let id = storeID(keys)
         let st = (try? PrivacyStore.shared(root: try dataRoot(), walletID: id, key: try dataKey()))?.state
         let t = Int64(Date().timeIntervalSince1970)
-        return TargetInfo(storeID: id, registered: st?.identity != nil || st?.pendingRegistration != nil, handle: st?.handle ?? "",
+        // A registration it sent that can still land counts: one that failed may be replayed.
+        let registered = st.map { $0.identity != nil || $0.pendingRegistration != nil || $0.registrationKeepUntil > t } ?? false
+        return TargetInfo(storeID: id, registered: registered, handle: st?.handle ?? "",
                           handleRefusal: st.flatMap { PrivacyWallet.targetRefusal($0, kind: PendingMove.handleKind, now: t) },
                           voteRefusal: st.flatMap { PrivacyWallet.targetRefusal($0, kind: PendingMove.caretakerKind, now: t) })
     }

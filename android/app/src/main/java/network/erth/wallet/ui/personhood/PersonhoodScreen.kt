@@ -164,7 +164,7 @@ fun PersonhoodScreen(
                     "expires. To move it to another wallet, switch identity: " +
                     "your handle and caretaker vote move first, then you " +
                     "register the same passport there. Nothing is paid the " +
-                    "second time.",
+                    "second time. A passport can switch once per day (UTC).",
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
                 textAlign = TextAlign.Center,

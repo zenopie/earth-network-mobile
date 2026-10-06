@@ -160,7 +160,7 @@ struct IdentityScreen: View {
                     if model.isRegistered {
                         EarthDetailRow(label: "Handle", value: model.handle.isEmpty ? "None" : "@\(model.handle)")
                         EarthButton(title: model.handle.isEmpty ? "Claim a handle" : "Manage @\(model.handle)", role: .secondary) { handleOpen = true }
-                        Text("Your registration stays with this wallet until it expires. To move it to another wallet, switch identity: your handle and caretaker vote move first, then you register the same passport there. Nothing is paid the second time.")
+                        Text("Your registration stays with this wallet until it expires. To move it to another wallet, switch identity: your handle and caretaker vote move first, then you register the same passport there. Nothing is paid the second time. A passport can switch once per day (UTC).")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
                         EarthButton(title: "Switch identity", role: .secondary) { switching = true }

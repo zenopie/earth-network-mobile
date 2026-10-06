@@ -151,6 +151,8 @@ class RegistrationTest : WalletTest() {
         assertThrows(java.io.IOException::class.java) { a.register(prep, ByteArray(14_656), sigs, "lean_poa", ByteArray(10)) }
         a.sync()
         assertTrue(a.pendingRegistration!!.failure!!.startsWith(PrivacyWallet.TX_FAILED))
+        // Public now, it may still land while 261001 is in the chain's 48 h skew.
+        assertEquals(1_790_812_800L + PrivacyWallet.REGISTRATION_SKEW_SECONDS, a.registrationMayLandUntil())
         assertEquals(0L, bal(a, "uerth"))
         // Released only once the chain is past the tx's timeout_height, not by the clock.
         chain.now += WalletSync.PENDING_TIMEOUT_S + 1
@@ -163,5 +165,7 @@ class RegistrationTest : WalletTest() {
         a.register(prep, ByteArray(14_656), sigs, "lean_poa", ByteArray(10))
         a.sync()
         assertEquals(WalletSync.IdentityStatus.LIVE, a.identityStatus())
+        chain.now = 1_790_812_800L + PrivacyWallet.REGISTRATION_SKEW_SECONDS + 1
+        assertEquals(null, a.registrationMayLandUntil())
     }
 }

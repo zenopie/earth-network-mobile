@@ -511,7 +511,7 @@ internal fun EarthContent(
                         info == null || info.storeId == switchTarget -> null
                         info.handleRefusal != null || info.voteRefusal != null ->
                             listOfNotNull(info.handleRefusal?.let { "Your handle cannot move there: $it." }, info.voteRefusal?.let { "Your caretaker vote cannot move there: $it." }).joinToString(" ")
-                        info.registered -> "That wallet already has a registration. Switching to it replaces this identity with it; anything it holds stays with it."
+                        info.registered -> "That wallet has a registration, or sent one in the last two days that can still land. Switching to it replaces this identity with it; anything it holds stays with it."
                         else -> null
                     }
                 }

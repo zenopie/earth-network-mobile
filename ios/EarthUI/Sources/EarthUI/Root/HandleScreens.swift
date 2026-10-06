@@ -294,7 +294,7 @@ struct SwitchIdentityScreen: View {
                 .compactMap { $0 }.joined(separator: " ")
         } else {
             targetWarning = info.registered
-                ? "That wallet already has a registration. Switching to it replaces this identity with it; anything it holds stays with it."
+                ? "That wallet has a registration, or sent one in the last two days that can still land. Switching to it replaces this identity with it; anything it holds stays with it."
                 : nil
         }
     }

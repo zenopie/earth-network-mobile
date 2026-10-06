@@ -235,6 +235,12 @@ public struct PrivacyState: Codable, Sendable {
     public var identity: IdentityRecord?
     /// A committed registration not yet matched to its leaf.
     public var pendingRegistration: PendingRegistration?
+    /// Until when (unix seconds) a registration this wallet broadcast can
+    /// still land: its proof's current_date plus the chain's 48 h skew. A
+    /// registration that failed or was refused is public and may be replayed
+    /// until then, so this wallet's identity (its recovery phrase) must be
+    /// kept and counted as possibly registered. 0: none.
+    public var registrationKeepUntil: Int64 = 0
     /// Registration record notes found (restore, L8).
     public var regRecords: [RegRecord] = []
     /// Whether the last sync's roots matched the chain's own, and why not.
@@ -316,7 +322,7 @@ public struct PrivacyState: Codable, Sendable {
              pendingUnbonds, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax,
              syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
              handleSetAt, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, voidRecordHeights, pendingMoves, switchTarget,
-             handleExpiresAt, handleExpiresFor, labelWindowSeconds, carriedMarks
+             handleExpiresAt, handleExpiresFor, labelWindowSeconds, carriedMarks, registrationKeepUntil
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -349,6 +355,7 @@ public struct PrivacyState: Codable, Sendable {
         handleExpiresAt = try v(.handleExpiresAt, 0); handleExpiresFor = try v(.handleExpiresFor, "")
         labelWindowSeconds = try v(.labelWindowSeconds, 0)
         carriedMarks = try v(.carriedMarks, [:])
+        registrationKeepUntil = try v(.registrationKeepUntil, 0)
     }
 }
 
@@ -537,6 +544,7 @@ public final class PrivacyStore {
             s.pendingUnbonds = old.pendingUnbonds
             s.identity = old.identity?.verified == true ? old.identity : nil
             s.pendingRegistration = old.pendingRegistration
+            s.registrationKeepUntil = old.registrationKeepUntil
             s.stakeVotes = old.stakeVotes
             s.labelWindowSeconds = old.labelWindowSeconds
             s.claimedDays = old.claimedDays
@@ -591,6 +599,7 @@ public final class PrivacyStore {
         s.identity = old.identity
         s.pendingRegistration = old.pendingRegistration
         s.pendingRegistration?.failure = nil
+        s.registrationKeepUntil = old.registrationKeepUntil
         state = s
         try save()
     }

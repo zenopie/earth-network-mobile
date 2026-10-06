@@ -419,6 +419,18 @@ public enum PrivateMsgs {
         return d <= [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
     }
 
+    /// YYMMDD `s` as unix seconds at midnight UTC (the chain's yymmddToUnix), or nil when it is no calendar date.
+    public static func calendarDateUnix(_ s: String) -> Int64? {
+        guard isCalendarDate(s), let n = Int64(s) else { return nil }
+        let y = 2000 + n / 10000, m = n / 100 % 100, d = n % 100
+        // Days from the civil date (Hinnant), so no calendar API is involved.
+        let yy = m <= 2 ? y - 1 : y
+        let era = yy / 400, yoe = yy - era * 400
+        let doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+        return (era * 146_097 + doe - 719_468) * 86_400
+    }
+
     public static func optionsBytes(_ opts: [WeightedVoteOption]) throws -> Data {
         var out = Data()
         for o in opts {

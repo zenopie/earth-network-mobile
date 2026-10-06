@@ -233,6 +233,12 @@ final class PrivateMsgsTests: XCTestCase {
         XCTAssertFalse(PrivateMsgs.isCalendarDate("250231"))
         XCTAssertTrue(PrivateMsgs.isCalendarDate("240229"))
         XCTAssertFalse(PrivateMsgs.isCalendarDate("250229"))
+        // Midnight UTC, as the chain's yymmddToUnix.
+        XCTAssertEqual(1_790_812_800, PrivateMsgs.calendarDateUnix("261001"))
+        XCTAssertEqual(1_709_164_800, PrivateMsgs.calendarDateUnix("240229"))
+        XCTAssertEqual(951_868_800, PrivateMsgs.calendarDateUnix("000301"))
+        XCTAssertEqual(4_102_358_400, PrivateMsgs.calendarDateUnix("991231"))
+        XCTAssertNil(PrivateMsgs.calendarDateUnix("250229"))
     }
 
     /// legacyDec: a non-ASCII digit is refused, never a trap.

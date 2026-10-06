@@ -301,5 +301,11 @@ class PrivateMsgsTest {
         assertEquals(false, PrivateMsgs.isCalendarDate("250231"))
         assertEquals(true, PrivateMsgs.isCalendarDate("240229"))
         assertEquals(false, PrivateMsgs.isCalendarDate("250229"))
+        // Midnight UTC, as the chain's yymmddToUnix.
+        assertEquals(1_790_812_800L, PrivateMsgs.calendarDateUnix("261001"))
+        assertEquals(1_709_164_800L, PrivateMsgs.calendarDateUnix("240229"))
+        assertEquals(951_868_800L, PrivateMsgs.calendarDateUnix("000301"))
+        assertEquals(4_102_358_400L, PrivateMsgs.calendarDateUnix("991231"))
+        assertEquals(null, PrivateMsgs.calendarDateUnix("250229"))
     }
 }

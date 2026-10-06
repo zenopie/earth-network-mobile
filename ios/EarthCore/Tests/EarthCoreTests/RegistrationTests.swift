@@ -137,6 +137,8 @@ final class RegistrationTests: PrivacyTestCase {
         })
         try await a.sync()
         XCTAssertTrue(a.pendingRegistration?.failure?.hasPrefix(PrivacyWallet.txFailed) == true)
+        // Public now, it may still land while 261001 is in the chain's 48 h skew.
+        XCTAssertEqual(1_790_812_800 + PrivacyWallet.registrationSkewSeconds, a.registrationMayLandUntil())
         XCTAssertEqual(0, bal(a, "uerth"))
         // Released only once the chain is past the tx's timeout_height, not by the clock.
         chain.now += WalletSync.pendingTimeout + 1
@@ -148,6 +150,8 @@ final class RegistrationTests: PrivacyTestCase {
         _ = try await a.register(prep, proof: Data(count: 14_656), publicSignals: signals(prep, "1"), signatureAlgorithm: "lean_poa", dscDer: Data(count: 10))
         try await a.sync()
         XCTAssertEqual(.live, a.identityStatus())
+        chain.now = 1_790_812_800 + PrivacyWallet.registrationSkewSeconds + 1
+        XCTAssertNil(a.registrationMayLandUntil())
     }
 
     /// A claim for day 0 is refused, never an underflow trap.

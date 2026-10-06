@@ -137,7 +137,8 @@ object PrivacySession {
         val st = runCatching { PrivacyStore.shared(app.filesDir, id, dataKey()).state }.getOrNull()
         val now = System.currentTimeMillis() / 1000
         return TargetInfo(
-            id, st?.identity != null || st?.pendingRegistration != null, st?.handle.orEmpty(),
+            // A registration it sent that can still land counts: one that failed may be replayed.
+            id, st != null && (st.identity != null || st.pendingRegistration != null || st.registrationKeepUntil > now), st?.handle.orEmpty(),
             st?.let { PrivacyWallet.targetRefusal(it, network.erth.wallet.privacy.sync.PendingMove.HANDLE, now) },
             st?.let { PrivacyWallet.targetRefusal(it, network.erth.wallet.privacy.sync.PendingMove.CARETAKER, now) },
         )
