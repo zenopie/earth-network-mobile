@@ -162,11 +162,15 @@ public final class AppModel {
     /// would block both.
     public private(set) var lastError: String?
 
-    /// The PIN, held only while the app is unlocked.
+    /// The unlock secret, held only while the app is unlocked.
     ///
-    /// Android keeps the PIN for the session and decrypts on demand rather
-    /// than keeping the phrase resident; this does the same. Locking drops it,
-    /// and with it the ability to read anything.
+    /// Signing decrypts the vault again with it rather than using `wallets`.
+    /// Unlike Android, `wallets` does keep every phrase resident for the
+    /// session (the wallet list, a switch's target keys and the private side
+    /// read them); either way the secret alone opens the vault, so what bounds
+    /// the exposure is how soon the session ends: locking drops both, on
+    /// device lock and before the app is suspended in the background
+    /// (`scenePhaseChanged`).
     private var sessionPin: String?
 
     /// Guards against a second unlock starting while one is in flight.
@@ -216,6 +220,7 @@ public final class AppModel {
     // MARK: - session
 
     public func start() {
+        watchDeviceLock()
         clearIfReinstalled()
         walletName = UserDefaults.standard.string(forKey: "walletName") ?? walletName
         #if targetEnvironment(simulator)
@@ -598,12 +603,62 @@ public final class AppModel {
         switch scenePhase {
         case .background:
             backgroundedAt = backgroundedAt ?? .now
+            holdBackgroundLock()
         case .active:
             defer { backgroundedAt = nil }
+            endBackgroundLock()
             guard phase == .ready, let away = backgroundedAt else { return }
             if ContinuousClock.now - away > Self.backgroundGrace { lock() }
         default:
             break
+        }
+    }
+
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundLock: Task<Void, Never>?
+    private var deviceLockObserver: NSObjectProtocol?
+
+    /// A suspended app runs nothing, so a check on return alone would keep
+    /// the secret and every phrase in memory for as long as it sits
+    /// suspended. The background time the system grants is used to lock at
+    /// the grace's end, or when that time runs out, whichever comes first,
+    /// so the session never outlives the app being in the foreground by
+    /// more than the grace.
+    private func holdBackgroundLock() {
+        guard phase == .ready, backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "lock") { [weak self] in
+            MainActor.assumeIsolated {
+                self?.lock()
+                self?.endBackgroundLock()
+            }
+        }
+        backgroundLock = Task { [weak self] in
+            try? await Task.sleep(for: Self.backgroundGrace)
+            guard !Task.isCancelled, let self else { return }
+            self.lock()
+            self.endBackgroundLock()
+        }
+    }
+
+    private func endBackgroundLock() {
+        backgroundLock?.cancel()
+        backgroundLock = nil
+        if backgroundTask != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
+        }
+    }
+
+    /// Locks the moment the device does, as Android locks on screen-off.
+    private func watchDeviceLock() {
+        guard deviceLockObserver == nil else { return }
+        deviceLockObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.phase == .ready else { return }
+                self.lock()
+            }
         }
     }
 

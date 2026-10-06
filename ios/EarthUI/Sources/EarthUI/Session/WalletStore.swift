@@ -63,8 +63,9 @@ public struct WalletStore: Sendable {
     /// under a random 32-byte key that only the biometric prompt can retrieve —
     /// stronger
     /// than four digits, and unrecoverable if the Keychain entry goes with the
-    /// passcode. `.both` seals under the PIN and *also* keeps it behind
-    /// biometrics, so either opens it.
+    /// passcode. `.both` seals under the PIN combined with a random half kept
+    /// behind biometrics (`combine`), so both are needed every time and
+    /// neither opens it alone.
     public enum Method: String, CaseIterable, Sendable {
         case pin, biometrics, both
 
