@@ -108,12 +108,16 @@ do {
             guard let name = p["name"] as? String, let type = p["type"] as? [String: Any] else { continue }
             check("\(id): \(name) is \(shape(type))", witness[name].map { witnessShape($0, like: type) } ?? "missing", shape(type))
         }
-        // Public inputs: current_date and address, then the two return values
-        // (nullifier, dsc_key): the four signals the chain indexes 0...3.
+        // Public inputs: current_date and address, then the three return values
+        // (nullifier, dsc_key, idc): the five signals the chain indexes 0...4.
         let publics = parameters.filter { $0["visibility"] as? String == "public" }.compactMap { $0["name"] as? String }
         check("\(id): public inputs in order", publics.joined(separator: ","), "current_date,address")
         let returns = ((abi?["return_type"] as? [String: Any])?["abi_type"] as? [String: Any])?["fields"] as? [Any]
-        check("\(id): return values", "\(returns?.count ?? -1)", "2")
+        check("\(id): return values", "\(returns?.count ?? -1)", "3")
+        // id_secret is private and comes right before current_date (the ABI order the wallets build).
+        check("\(id): id_secret is private", parameters.first { $0["name"] as? String == "id_secret" }?["visibility"] as? String ?? "missing", "private")
+        let order = names.firstIndex(of: "id_secret").map { names.index(after: $0) < names.count ? names[names.index(after: $0)] : "" } ?? ""
+        check("\(id): id_secret comes before current_date", order, "current_date")
 
         // current_date is a calendar date (the chain refuses one that is not).
         let date = Int(decimalFromHex(witness["current_date"] as? String ?? "0x0")) ?? 0

@@ -99,7 +99,7 @@ public enum Gate {
                       "\(result.publicSignals.count) signals, circuit declares \(declared), "
                           + "splitProof assumes \(LeanPoaProver.numPublicInputs)")
 
-        // splitProof's framing (4-byte prefix, then 4x32-byte public inputs) is
+        // splitProof's framing (4-byte prefix, then 5x32-byte public inputs) is
         // asserted rather than assumed: current_date is a known input, so a wrong
         // framing shows up as a signal that does not round-trip.
         let expectedDate = (witness["current_date"] as? String).map { decimalFromHex($0) }
@@ -110,6 +110,9 @@ public enum Gate {
                       ? .passed : .failed, "the fixture's")
         report.record("dsc_key", result.publicSignals.count > 3 && result.publicSignals[3] == fixture?["dsc_key"] as? String
                       ? .passed : .failed, "the chain's commitment to the fixture's DSC")
+        report.record("idc", result.publicSignals.count > LeanPoaProver.idcIndex
+                      && result.publicSignals[LeanPoaProver.idcIndex] == fixture?["idc"] as? String
+                      ? .passed : .failed, "H(TAG_ID, id_secret) of the fixture's identity secret")
 
         let selfVerified = try circuit.verify(result.rawProof,
                                               vkey: result.verificationKey,

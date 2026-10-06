@@ -17,18 +17,21 @@ import ProverGateCore
 public enum LeanPoaProver {
 
     /// Public-input positions in the lean_poa circuit. Public signals are
-    /// [current_date, address, nullifier, dsc_key]: current_date and address are
+    /// [current_date, address, nullifier, dsc_key, idc]: current_date and address are
     /// the declared public inputs, and bb appends the circuit's return values
     /// after them. address binds the proof to the registration it is broadcast
     /// in -- see circuits/poa_core/SECURITY.md.
     ///
     /// These must match PassportProver.kt's constants and the chain's
-    /// `nullifier_index` / `dsc_key_index` params. They are not free-standing:
+    /// `nullifier_index` / `dsc_key_index` / `idc_index` params. They are not free-standing:
     /// a wrong count leaves the trailing public inputs glued to the front of the
     /// proof body and short-changes public_signals, which the chain rejects with
     /// "dsc key index 3 out of range: proof public inputs do not match".
     public static let nullifierIndex = 2
-    public static let numPublicInputs = 4
+    /// The identity commitment of the witness's id_secret: the chain requires
+    /// it to be MsgRegister.idc.
+    public static let idcIndex = 4
+    public static let numPublicInputs = 5
 
     /// SRS size hint. Must cover the circuit's domain (next power of two >= gate
     /// count): 2^18, the bundled variants' tier. The fetched variants are 2^19

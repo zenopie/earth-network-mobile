@@ -188,8 +188,8 @@ Run it:
 
 Checks per variant: the circuit hashes to its pinned sha256, proof
 generated (14,656-byte body), public-input count against the ABI, proof
-framing (`splitProof`'s 4-byte prefix + 4×32-byte public inputs — asserted
-via `current_date`, not assumed), the nullifier and DSC commitment the
+framing (`splitProof`'s 4-byte prefix + 5×32-byte public inputs — asserted
+via `current_date`, not assumed), the nullifier, DSC commitment and idc the
 fixture expects, verification against its own VK, and the VK equal to the
 chain's genesis key (`networks/genesis/verifying-keys/<variant>.vk.b64` in
 a chain checkout beside this one). Proofs and VKs land in
@@ -212,7 +212,7 @@ every tier; larger variants take longer and more memory):
     proving key   ~160 ms
     proof         ~1.5s
     memory        ~320 MiB peak
-    public inputs [current_date, address, nullifier, dsc_key]
+    public inputs [current_date, address, nullifier, dsc_key, idc]
 
 ~320 MiB peak is the number to watch when this moves to a phone — iOS is
 stricter than macOS about it, and `Swoirenberg` exposes `low_memory_mode` and
