@@ -216,11 +216,20 @@ second-preimage literature before relaunches.
   `signed_attrs_max`, `log2_circuit_size`. The same file is bundled for both wallets and read by the
   fixture generators. A check fails if the generated mains differ from the
   committed ones.
-- **The public interface is unchanged** for every variant:
-  `[current_date, address] → (nullifier, dsc_key, idc)`, with the same indices,
-  idc = H(TAG_ID, id_secret) from the private `id_secret` (audit R2-B1),
-  registration binding, date pin and DSC/country exclusion. The chain keeps
-  one path: `params.verifying_keys[signature_algorithm]`.
+- **One public interface** for every variant:
+  `[current_date, address] → (nullifier, dsc_key, idc)`, i.e. public inputs
+  0..4 = current_date, address, nullifier, dsc_key, idc. It gained a fifth
+  public value, idc at index 4 (audit R2-B1): idc = H(TAG_ID, id_secret)
+  from the private `id_secret`. The positions are chain code
+  (`types.Register*Input`, no longer params), and the chain refuses a proof
+  with any other number of public inputs. Registration binding, date pin and
+  DSC/country exclusion are unchanged. The chain keeps one path:
+  `params.verifying_keys[signature_algorithm]`.
+- **Manifest hashes reproduce from source.** `variants.py build` pins each
+  stripped circuit's sha256. nargo's `hash` field depends on the build
+  location, so the stripped circuit replaces it with one derived from
+  noir_version, abi and bytecode (audit R3C-3). Swoir needs the field
+  present, so it is kept.
 
 Buffer sizes are fixed per hash so that each one ends on a block boundary:
 

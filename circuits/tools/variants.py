@@ -433,11 +433,29 @@ def gen(root=CIRCUITS):
 
 def stripped(path):
     """The compiled circuit without debug_symbols and file_map: the prover
-    reads only the bytecode and ABI, and the rest is a third of the size."""
+    reads only the bytecode and ABI, and the rest is a third of the size.
+
+    nargo's own `hash` depends on where the circuit was built (two checkouts
+    of the same source give the same bytecode and ABI but different hashes),
+    so the pinned sha256 could not be reproduced from source (audit R3C-3).
+    It is replaced by one derived from what is kept: the prover never checks
+    it, but Swoir (iOS) requires the field, so it stays, as nargo's decimal
+    u64 string (63 bits here)."""
     with open(path) as f:
         j = json.load(f)
-    keep = {k: j[k] for k in ("noir_version", "hash", "abi", "bytecode")}
-    return json.dumps(keep, separators=(",", ":")).encode()
+    keep = {k: j[k] for k in ("noir_version", "abi", "bytecode")}
+    return with_source_hash(keep)
+
+
+def with_source_hash(keep):
+    """noir_version, abi, bytecode plus a `hash` that is a function of those
+    three alone, serialised in the asset's key order."""
+    core = json.dumps({k: keep[k] for k in ("noir_version", "abi", "bytecode")},
+                      separators=(",", ":"), sort_keys=True).encode()
+    digest = int.from_bytes(hashlib.sha256(core).digest()[:8], "big") >> 1
+    out = {"noir_version": keep["noir_version"], "hash": str(digest),
+           "abi": keep["abi"], "bytecode": keep["bytecode"]}
+    return json.dumps(out, separators=(",", ":")).encode()
 
 
 def gates(path):
