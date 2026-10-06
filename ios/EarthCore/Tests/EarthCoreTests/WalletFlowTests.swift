@@ -283,7 +283,7 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertEqual(1, held.count)
         let rounded = try PrivacyWallet.voteWeight(held.reduce(UInt64(0)) { $0 + $1.amount })
         XCTAssertEqual(held.count, weight.notes)
-        XCTAssertEqual(rounded, weight.uerth)
+        XCTAssertEqual(liveValue(chain, try PrivacyWallet.parseDerth(derth), rounded), weight.uerth)
         var voted: [TxResult] = []
         for item in try await a.stakeVoteItems(proposalID: 11) {
             if let r = try await a.castStakeVote(proposalID: 11, item: item, options: yes) { voted.append(r) }

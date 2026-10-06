@@ -183,3 +183,12 @@ final class CheckingMoveRecorder: PrivacyWallet.MoveRecorder, @unchecked Sendabl
     func rollback(_ move: PendingMove) throws { try PrivacyWallet.rollbackIncoming(store, move, now: now()) }
     func refusal(_ move: PendingMove) -> String? { PrivacyWallet.targetRefusal(store.state, kind: move.kind, now: now()) }
 }
+
+/// The install data key the tests seal stores under (WalletStore.Opened.dataKey in the app).
+let testDataKey = Data((0 ..< 32).map { UInt8($0) })
+
+/// `validator`'s ERTH value of `derth` at its live book rate: what a vote preview shows when the snapshot carries no rates.
+func liveValue(_ chain: FakeChain, _ validator: String, _ derth: UInt64) -> UInt64 {
+    let book = try! chain.validatorsRead().of(validator)
+    return PrivacyWallet.derthValue(derth, rate: Decimal(string: book.backing.description)! / Decimal(string: book.supply.description)!)
+}
