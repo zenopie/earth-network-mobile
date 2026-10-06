@@ -10,6 +10,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.earth.proto.shielded.MsgShield
+import network.erth.wallet.crypto.Bech32
 import network.erth.wallet.chain.EarthTx
 import network.erth.wallet.privacy.chain.PrivacyQueries
 import network.erth.wallet.privacy.handles.HandleDirectory
@@ -106,6 +107,9 @@ fun SendFlow(
         shieldedTo -> null
         !recipient.startsWith("earth1") -> "An Earth address starts with earth1, or erthz1 to send privately."
         recipient.length < 39 -> "That address is too short."
+        // The chain checks the checksum only when the send executes, after
+        // the fee is spent, so a typo is caught here instead.
+        runCatching { Bech32.decode(recipient) }.getOrNull()?.size != 20 -> "That is not a valid Earth address."
         recipient == state.address -> "That is this wallet's own address."
         else -> null
     }
@@ -160,7 +164,9 @@ fun SendFlow(
         }
         resolution = target
         val to = target.address
-        val label = "@${target.entry.handle} · ${Handles.truncate(target.entry.address)}"
+        // The whole address the note goes to, under the handle that named it.
+        val label = target.entry.address
+        val labelTitle = "To @${target.entry.handle}"
         if (handleFromNotes) {
             tx.requestPrivate(
                 details = TxConfirmDetails(
@@ -170,7 +176,7 @@ fun SendFlow(
                     amountLabel = "Amount",
                     amountValue = "$amount ${selected.symbol}",
                     recipient = label,
-                    recipientLabel = "To handle",
+                    recipientLabel = labelTitle,
                 ),
                 shieldedErth = state.shieldedErthUerth,
                 onSuccess = { clear(); onSent() },
@@ -188,7 +194,7 @@ fun SendFlow(
                     amountLabel = "Amount",
                     amountValue = "$amount ${selected.symbol}",
                     recipient = label,
-                    recipientLabel = "To handle",
+                    recipientLabel = labelTitle,
                 ),
                 onSuccess = { clear(); onSent() },
                 build = { ctx ->
