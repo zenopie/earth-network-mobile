@@ -41,7 +41,7 @@ type vector struct {
 
 func main() {
 	// `certcheck <witness.json> <public_signals.txt>` closes the last gap in
-	// the passport pipeline: the circuit returns a DSC commitment as its third
+	// the passport pipeline: the circuit returns a DSC commitment as its fourth
 	// public signal, and the chain recomputes one from the certificate in
 	// MsgRegister. If the Swift canonical encoding were wrong the two would
 	// differ, and a registration would fail on chain with nothing in the app
@@ -133,7 +133,13 @@ func checkCommitment(witnessPath, signalsPath string) int {
 	}
 
 	canonical := cert.PublicKey.CanonicalBytes()
-	commitment := certs.DscCommitment(canonical)
+	// The tagged form the chain checks MsgRegister with: the curve tag, or
+	// for RSA the exponent, is part of what is committed.
+	commitment, err := certs.DscCommitmentOf(cert.PublicKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "commit DSC: %v\n", err)
+		return 2
+	}
 	got := commitment.String()
 
 	signalsRaw, err := os.ReadFile(signalsPath)
@@ -142,11 +148,13 @@ func checkCommitment(witnessPath, signalsPath string) int {
 		return 2
 	}
 	signals := strings.Split(strings.TrimSpace(string(signalsRaw)), "\n")
-	if len(signals) < 3 {
-		fmt.Fprintf(os.Stderr, "expected 3 public signals, got %d\n", len(signals))
+	// The DSC commitment is the fourth signal (dsc_key_index 3); the third
+	// is the nullifier.
+	if len(signals) < 4 {
+		fmt.Fprintf(os.Stderr, "expected at least 4 public signals, got %d\n", len(signals))
 		return 2
 	}
-	want := strings.TrimSpace(signals[2])
+	want := strings.TrimSpace(signals[3])
 
 	fmt.Printf("canonical key   %d bytes  %s\n", len(canonical), hex.EncodeToString(canonical))
 	fmt.Printf("chain           %s\n", got)
