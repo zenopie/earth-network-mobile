@@ -669,7 +669,7 @@ public struct LCDChainRoots: ChainRoots {
               !net.isEmpty else { return nil }
         let hash = (try? await rest.get("/cosmos/base/tendermint/v1beta1/blocks/1"))?.block_id.hash.string
             .flatMap { Data(base64Encoded: $0) }.flatMap { $0.count == 32 ? $0 : nil }
-        return ChainIdentity(chainID: net, genesis: hash.map { String($0.map { String(format: "%02x", $0) }.joined().prefix(16)) })
+        return ChainIdentity(chainID: net, genesis: hash.map { String($0.hexString.prefix(16)) })
     }
 
     public func noteRoot(_ root: Fr) async throws -> NoteRootRecord? {

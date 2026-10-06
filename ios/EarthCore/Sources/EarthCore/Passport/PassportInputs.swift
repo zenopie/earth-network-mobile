@@ -331,7 +331,7 @@ public enum PassportInputs {
     public static func addressField(_ bech32: String) throws -> String {
         let (_, payload) = try Bech32.decode(bech32)
         guard payload.count == 20 else { throw Error.badAddress(payload.count) }
-        return "0x" + payload.map { String(format: "%02x", $0) }.joined()
+        return "0x" + Data(payload).hexString
     }
 
     /// A big integer as `count` 120-bit little-endian limbs.

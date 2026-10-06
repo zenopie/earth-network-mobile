@@ -65,7 +65,7 @@ public enum SRS {
             if n > bytes { return false }
             hasher.update(data: chunk)
         }
-        return n == bytes && hasher.finalize().map { String(format: "%02x", $0) }.joined() == sha256
+        return n == bytes && Data(hasher.finalize()).hexString == sha256
     }
 
     /// Provisions `size` (a power of two: size + 1 points) from a local `.dat`
@@ -214,7 +214,7 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
     static func split(_ raw: Data, numPublic: Int) throws -> (Data, [String]) {
         let b = [UInt8](raw)
         guard b.count >= 4 + 32 * numPublic else { throw Failure.proofTooShort(b.count) }
-        let pub = (0 ..< numPublic).map { i in b[(4 + 32 * i) ..< (4 + 32 * i + 32)].map { String(format: "%02x", $0) }.joined() }
+        let pub = (0 ..< numPublic).map { i in Data(b[(4 + 32 * i) ..< (4 + 32 * i + 32)]).hexString }
         return (Data(b[(4 + 32 * numPublic)...]), pub)
     }
 }

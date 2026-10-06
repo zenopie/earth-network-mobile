@@ -129,8 +129,8 @@ func runWitness(path: String, start: String) -> Int32 {
         func write(_ text: String, _ name: String) {
             try? Data(text.utf8).write(to: artifacts.appendingPathComponent(name))
         }
-        write(result.verificationKey.map { String(format: "%02x", $0) }.joined(), "passport_vk.hex")
-        write(result.proof.map { String(format: "%02x", $0) }.joined(), "passport_proof_body.hex")
+        write(result.verificationKey.hexString, "passport_vk.hex")
+        write(result.proof.hexString, "passport_proof_body.hex")
         write(result.publicSignals.joined(separator: "\n"), "passport_public_signals.txt")
         print("\nartifacts \(artifacts.path)")
 

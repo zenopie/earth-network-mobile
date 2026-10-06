@@ -109,7 +109,7 @@ public struct Fr: Hashable, Comparable, Sendable, CustomStringConvertible {
         return out
     }
 
-    public var hex: String { bytes.map { String(format: "%02x", $0) }.joined() }
+    public var hex: String { bytes.hexString }
 
     /// As a Noir input: "0x" + minimal hex, the form the prover takes scalars in.
     public var noir: String { "0x" + String(bigUInt, radix: 16) }

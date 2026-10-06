@@ -113,7 +113,7 @@ public enum PassportSRS {
                 if n == want { break }
             }
         }
-        guard n == want, hasher.finalize().map({ String(format: "%02x", $0) }).joined() == tier.sha256 else {
+        guard n == want, Data(hasher.finalize()).hexString == tier.sha256 else {
             throw Failure.download("it did not match its pinned hash")
         }
         try? out.synchronize()
@@ -152,7 +152,7 @@ public enum PassportCircuits {
     }
 
     public static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        Data(SHA256.hash(data: data)).hexString
     }
 
     /// The cached circuit if it is there and intact, else nil.
