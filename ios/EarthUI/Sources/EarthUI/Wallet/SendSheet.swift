@@ -267,11 +267,12 @@ struct SendSheet: View {
         Task {
             let r = await model.resolveHandle(input)
             guard case let .payable(entry, address) = r else { resolution = r; return }
-            let label = "@\(entry.handle) · \(Handles.truncate(entry.address))"
+            // The whole address the note goes to, under the handle that named it.
+            let label = entry.address, labelTitle = "To @\(entry.handle)"
             if fromNotes {
                 let amount = UInt64(value)
                 tx.requestPrivate(.private(action: "Pay @\(entry.handle) privately", rows: [
-                    ("Amount", display), ("To handle", label),
+                    ("Amount", display), (labelTitle, label),
                     ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
                 ]), onSuccess: { await model.syncPrivacy() }) { w in
                     try await w.send(to: address, denom: denom, amount: amount)
@@ -284,7 +285,7 @@ struct SendSheet: View {
                     resolution = .notPayable("Couldn't make the note to @\(entry.handle): \(model.describe(error))"); return
                 }
                 tx.request(.init(action: "Pay @\(entry.handle) from your public balance", rows: [
-                    ("Amount", display), ("To handle", label), ("Fee", "\(Token.erth.format(TransactionSigner.defaultFeeUerth)) ERTH"),
+                    ("Amount", display), (labelTitle, label), ("Fee", "\(Token.erth.format(TransactionSigner.defaultFeeUerth)) ERTH"),
                 ]), onSuccess: { await model.syncPrivacy() }) { key in
                     [MsgShield(sender: key.address, amount: Coin(denom: denom, amount: String(value)),
                                pc: out.pc.bytes, ciphertext: out.ciphertext).asAny(typeURL: MsgShield.typeURL)]
