@@ -47,17 +47,21 @@ fun NetworkScreen(onChanged: () -> Unit, modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val node by NodeConfig.node.collectAsStateWithLifecycle()
 
-    var lcd by remember { mutableStateOf(if (node.isDefault) "" else node.lcd) }
-    var rpc by remember { mutableStateOf(if (node.isDefault) "" else node.rpc) }
+    val notice by NodeConfig.notice.collectAsStateWithLifecycle()
+    // The saved node, also when a failed recheck set it aside: its fields stay filled to check it again.
+    var saved by remember(node) { mutableStateOf(NodeConfig.saved(context)) }
+    var lcd by remember { mutableStateOf(saved?.lcd ?: "") }
+    var rpc by remember { mutableStateOf(saved?.rpc ?: "") }
     var checking by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    // The node in use, as it answers now.
+    // The node in use, as it answers now: the light probe while its last
+    // full check stands, else (or when that fails) the full check.
     LaunchedEffect(node) {
         status = null
         status = withContext(Dispatchers.IO) {
-            runCatching { NodeConfig.probe(node) }.fold(
+            runCatching { NodeConfig.status(context, node) }.fold(
                 { "Connected · ${it.chainId} · height ${it.height}" },
                 { "Not answering: ${it.message}" },
             )
@@ -104,6 +108,11 @@ fun NetworkScreen(onChanged: () -> Unit, modifier: Modifier = Modifier) {
             style = EarthTypography.textSm,
             color = EarthColors.Text.textTertiary,
         )
+
+        notice?.let {
+            Spacer(Modifier.height(dimens.space12))
+            Text(text = it, style = EarthTypography.textSm, color = EarthColors.Utility.ErrorRed.utilityError700)
+        }
 
         Spacer(Modifier.height(dimens.space16))
         Text(
@@ -180,7 +189,7 @@ fun NetworkScreen(onChanged: () -> Unit, modifier: Modifier = Modifier) {
                 }
             },
         )
-        if (!node.isDefault) {
+        if (!node.isDefault || saved != null) {
             Spacer(Modifier.height(dimens.space8))
             EarthButton(
                 text = "Reset to default",
@@ -188,6 +197,7 @@ fun NetworkScreen(onChanged: () -> Unit, modifier: Modifier = Modifier) {
                 colors = EarthButtonDefaults.secondaryColors(),
                 onClick = {
                     NodeConfig.reset(context)
+                    saved = null
                     lcd = ""
                     rpc = ""
                     error = null

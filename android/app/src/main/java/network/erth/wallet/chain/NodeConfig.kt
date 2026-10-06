@@ -40,31 +40,207 @@ object NodeConfig {
     private const val PREFS = "node"
     private const val KEY_LCD = "lcd"
     private const val KEY_RPC = "rpc"
+    /** The saved node failed a recheck: why, shown until the user checks a node again (Earth's node meanwhile). */
+    private const val KEY_SUSPENDED = "suspended"
+    /** The last full check each node passed (by its URLs), with the genesis pin it passed against. */
+    private const val KEY_VERIFIED = "verified"
+
+    /**
+     * How long a passed full check stands. The heavy check (the whole
+     * genesis) runs at launch for a saved node, again once this old while
+     * the app runs, and when a node's light status probe fails; the Network
+     * screen otherwise shows the light probe.
+     */
+    const val RECHECK_SECONDS = 6L * 3600
+
+    /** How often a running app looks whether the saved node is due a recheck. */
+    const val RECHECK_TICK_SECONDS = 15L * 60
+
+    /** Where the node choice is kept: the app's preferences; tests use a map. */
+    interface Store {
+        fun get(key: String): String?
+        /** Sets every key (null removes it) at once. */
+        fun put(values: Map<String, String?>)
+    }
+
+    private class Prefs(context: Context) : Store {
+        private val p = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        override fun get(key: String): String? = p.getString(key, null)
+        override fun put(values: Map<String, String?>) {
+            val e = p.edit()
+            values.forEach { (k, v) -> if (v == null) e.remove(k) else e.putString(k, v) }
+            e.commit()
+        }
+    }
+
+    private var store: Store? = null
+
+    private fun store(context: Context): Store = store ?: Prefs(context).also { store = it }
 
     private val _node = MutableStateFlow(DEFAULT)
     val node: StateFlow<Node> = _node.asStateFlow()
 
     val current: Node get() = _node.value
 
-    /** Read once at launch, before anything queries the chain. */
-    fun load(context: Context) {
-        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val lcd = p.getString(KEY_LCD, null)?.let(::normalize) ?: return
-        // A node saved before the RPC was required is dropped: its genesis was never checked.
-        val rpc = p.getString(KEY_RPC, null)?.let(::normalize) ?: return
-        if (problem(lcd) == null && problem(rpc) == null) _node.value = Node(lcd, rpc)
+    private val _notice = MutableStateFlow<String?>(null)
+
+    /**
+     * What the person should know about their node: it is waiting for its
+     * check, or it failed one and Earth's node is in use. Null otherwise.
+     */
+    val notice: StateFlow<String?> = _notice.asStateFlow()
+
+    /** Unix seconds; tests pin it. */
+    internal var clock: () -> Long = { System.currentTimeMillis() / 1000 }
+
+    /** The full check; tests replace it. */
+    internal var fullCheck: (Node) -> Probe = ::probe
+
+    /**
+     * Read once at launch, before anything queries the chain. A saved node
+     * is used at once only if it passed this build's full check before
+     * (against the genesis pinned now); one saved by an earlier build, or
+     * that failed a recheck, is not: Earth's node answers until [recheck]
+     * passes it (a failed one waits for the person to check it again).
+     */
+    fun load(context: Context) = load(store(context))
+
+    internal fun load(s: Store) {
+        store = s
+        _node.value = DEFAULT
+        _notice.value = null
+        val saved = saved(s) ?: return
+        s.get(KEY_SUSPENDED)?.let { _notice.value = suspendedText(it); return }
+        if (verifiedAt(s, saved) != null) _node.value = saved
+        else _notice.value = UNCHECKED
+    }
+
+    /**
+     * Runs the full check on the saved node: at launch ([force]), then
+     * whenever the last pass is older than [RECHECK_SECONDS] (or it never
+     * passed). Passed: it is used (again). An LCD that cannot be reached
+     * leaves things as they are: nothing answers, so nothing wrong is read;
+     * the next tick tries again. Any other failure (another chain or
+     * genesis, an LCD and RPC that disagree, a node far behind, an RPC that
+     * does not serve the genesis) suspends it: Earth's node is used, and
+     * [notice] says why, until the person checks a node again. Blocking.
+     */
+    fun recheck(context: Context, force: Boolean) = recheck(store(context), force)
+
+    internal fun recheck(s: Store, force: Boolean) {
+        val saved = saved(s) ?: return
+        if (s.get(KEY_SUSPENDED) != null) return
+        if (!force && fresh(s, saved)) return
+        // What a failure means is settled in [check]; nothing to show here.
+        runCatching { check(s, saved) }
+    }
+
+    /** The full check of [node]; a pass is recorded, and the saved node's failure suspends it. Throws as [probe] does. */
+    private fun check(s: Store, node: Node): Probe {
+        val p = try { fullCheck(node) } catch (e: Exception) {
+            if (node == saved(s) && e !is LcdUnreachable) suspendSaved(s, e.message ?: e.javaClass.simpleName)
+            throw e
+        }
+        markVerified(s, node)
+        if (node == saved(s)) {
+            _notice.value = null
+            if (_node.value != node) _node.value = node
+        }
+        return p
+    }
+
+    /**
+     * What the Network screen shows for [node]: the light probe (the
+     * LCD's latest block: chain id, height, age) while its last full check
+     * stands, else, or when the light probe fails, the full check (recorded
+     * when it passes; the saved node suspended when it fails). Blocking.
+     */
+    fun status(context: Context, node: Node): Probe {
+        val s = store(context)
+        if (fresh(s, node)) runCatching { return lightProbe(node) }
+        return check(s, node)
     }
 
     fun save(context: Context, node: Node) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_LCD, node.lcd).putString(KEY_RPC, node.rpc).commit()
+        val s = store(context)
+        s.put(mapOf(KEY_LCD to node.lcd, KEY_RPC to node.rpc, KEY_SUSPENDED to null))
+        // Saved only after [probe] passed it.
+        markVerified(s, node)
+        _notice.value = null
         _node.value = node
     }
 
     fun reset(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().commit()
+        store(context).put(mapOf(KEY_LCD to null, KEY_RPC to null, KEY_SUSPENDED to null, KEY_VERIFIED to null))
+        _notice.value = null
         _node.value = DEFAULT
     }
+
+    /** The node the person saved (suspended or not), null for none. */
+    fun saved(context: Context): Node? = saved(store(context))
+
+    private fun saved(s: Store): Node? {
+        val lcd = s.get(KEY_LCD)?.let(::normalize) ?: return null
+        // A node saved before the RPC was required is dropped: its genesis cannot be checked.
+        val rpc = s.get(KEY_RPC)?.let(::normalize) ?: return null
+        return if (problem(lcd) == null && problem(rpc) == null) Node(lcd, rpc) else null
+    }
+
+    private fun suspendSaved(s: Store, reason: String) {
+        s.put(mapOf(KEY_SUSPENDED to reason))
+        saved(s)?.let { forget(s, it) }
+        _notice.value = suspendedText(reason)
+        _node.value = DEFAULT
+    }
+
+    private fun key(node: Node) = node.lcd + "\n" + node.rpc
+
+    /** Every recorded pass: node key to (genesis pin, unix seconds). A few nodes at most. */
+    private fun verified(s: Store): MutableMap<String, Pair<String, Long>> {
+        val out = LinkedHashMap<String, Pair<String, Long>>()
+        runCatching {
+            val j = JSONObject(s.get(KEY_VERIFIED) ?: return out)
+            j.keys().forEach { k -> j.optJSONObject(k)?.let { e -> out[k] = e.optString("genesis") to e.optLong("at") } }
+        }
+        return out
+    }
+
+    private fun markVerified(s: Store, node: Node) {
+        val all = verified(s)
+        all.remove(key(node))
+        all[key(node)] = Constants.EARTH_GENESIS_SHA256.lowercase() to clock()
+        writeVerified(s, all)
+    }
+
+    private fun forget(s: Store, node: Node) {
+        val all = verified(s)
+        if (all.remove(key(node)) != null) writeVerified(s, all)
+    }
+
+    private fun writeVerified(s: Store, all: Map<String, Pair<String, Long>>) {
+        val j = JSONObject()
+        all.entries.toList().takeLast(MAX_VERIFIED).forEach { (k, v) -> j.put(k, JSONObject().put("genesis", v.first).put("at", v.second)) }
+        s.put(mapOf(KEY_VERIFIED to j.toString()))
+    }
+
+    /** When [node] last passed the full check against the genesis pinned now; null when it never did. */
+    private fun verifiedAt(s: Store, node: Node): Long? =
+        verified(s)[key(node)]?.takeIf { it.first == Constants.EARTH_GENESIS_SHA256.lowercase() }?.second
+
+    /** Its last pass stands: under [RECHECK_SECONDS] old (and not in the future). */
+    private fun fresh(s: Store, node: Node): Boolean {
+        val at = verifiedAt(s, node) ?: return false
+        val age = clock() - at
+        return age in 0 until RECHECK_SECONDS
+    }
+
+    private const val MAX_VERIFIED = 4
+
+    private fun suspendedText(reason: String) = "Your node no longer passes the wallet's check, so the wallet " +
+        "switched to Earth's node: $reason Check your node, then save it again in Settings → Network."
+
+    private const val UNCHECKED = "Your node has not passed this version's check yet. Until it does, the wallet " +
+        "uses Earth's node. Settings → Network shows the result."
 
     /**
      * A base URL as typed, trimmed of whitespace and trailing slashes; null
@@ -167,15 +343,7 @@ object NodeConfig {
         problem(node.lcd)?.let { throw IllegalArgumentException("LCD: $it") }
         if (node.rpc.isEmpty()) throw IllegalArgumentException(RPC_REQUIRED)
         problem(node.rpc)?.let { throw IllegalArgumentException("RPC: $it") }
-        val body = lcdGet(node.lcd, "/cosmos/base/tendermint/v1beta1/blocks/latest", "the LCD")
-        val header = runCatching {
-            val j = JSONObject(body)
-            (j.optJSONObject("sdk_block") ?: j.getJSONObject("block")).getJSONObject("header")
-        }.getOrElse { throw IllegalStateException("That does not look like a Cosmos LCD.") }
-        val chainId = header.optString("chain_id")
-        if (chainId != Constants.EARTH_CHAIN_ID) throw IllegalStateException("That node follows \"$chainId\", not ${Constants.EARTH_CHAIN_ID}.")
-        val height = header.optString("height").toLongOrNull() ?: throw IllegalStateException("The LCD did not say its latest height.")
-        checkLag("The LCD", RestPrivateChain.parseTime(header.optString("time")))
+        val (chainId, height) = lcdLatest(node)
 
         val status = runCatching { JSONObject(lcdGet(node.rpc, "/status", "the RPC")).let { it.optJSONObject("result") ?: it } }
             .getOrElse { throw if (it is IllegalStateException) it else IllegalStateException(NOT_RPC) }
@@ -202,6 +370,38 @@ object NodeConfig {
         if (lcdHash != rpcHash) throw IllegalStateException(SPLIT_NODES)
         return Probe(chainId, height)
     }
+
+    /**
+     * The light probe: the LCD's latest block, its chain id, height and age
+     * (what [probe] checks first). For a node whose full check stands.
+     */
+    fun lightProbe(node: Node): Probe {
+        problem(node.lcd)?.let { throw IllegalArgumentException("LCD: $it") }
+        val (chainId, height) = lcdLatest(node)
+        return Probe(chainId, height)
+    }
+
+    /** The LCD's latest block: chain id earth-1, its height, at most [MAX_LAG_SECONDS] old. */
+    private fun lcdLatest(node: Node): Pair<String, Long> {
+        val body = try { lcdGet(node.lcd, "/cosmos/base/tendermint/v1beta1/blocks/latest", "the LCD") } catch (e: Unreachable) {
+            throw LcdUnreachable(e.message ?: "Could not reach the LCD.")
+        }
+        val header = runCatching {
+            val j = JSONObject(body)
+            (j.optJSONObject("sdk_block") ?: j.getJSONObject("block")).getJSONObject("header")
+        }.getOrElse { throw IllegalStateException("That does not look like a Cosmos LCD.") }
+        val chainId = header.optString("chain_id")
+        if (chainId != Constants.EARTH_CHAIN_ID) throw IllegalStateException("That node follows \"$chainId\", not ${Constants.EARTH_CHAIN_ID}.")
+        val height = header.optString("height").toLongOrNull() ?: throw IllegalStateException("The LCD did not say its latest height.")
+        checkLag("The LCD", RestPrivateChain.parseTime(header.optString("time")))
+        return chainId to height
+    }
+
+    /** A request that never got an answer (no connection, a timeout). */
+    open class Unreachable(message: String) : IllegalStateException(message)
+
+    /** The node's LCD did not answer at all: nothing was read from it, so nothing wrong was. */
+    class LcdUnreachable(message: String) : Unreachable(message)
 
     /**
      * sha256 of the genesis a CometBFT RPC serves: /genesis_chunked's
@@ -245,7 +445,7 @@ object NodeConfig {
     /** GET [path] from [base] (local http allowed for the probe); the body of a 2xx, else throws with a message. */
     private fun lcdGet(base: String, path: String, what: String, maxBytes: Int = EarthRest.MAX_BODY_BYTES): String {
         val (code, body) = runCatching { EarthRest.getFrom(base, path, allowLocal = true, maxBytes = maxBytes) }
-            .getOrElse { throw IllegalStateException("Could not reach $what: ${it.message ?: it.javaClass.simpleName}") }
+            .getOrElse { throw Unreachable("Could not reach $what: ${it.message ?: it.javaClass.simpleName}") }
         if (code !in 200..299) throw IllegalStateException("${what.replaceFirstChar { it.uppercase() }} answered $code for $path.")
         return body
     }

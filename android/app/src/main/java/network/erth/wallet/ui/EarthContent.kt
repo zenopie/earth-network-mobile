@@ -164,6 +164,7 @@ internal fun EarthContent(
     var partsChoice by remember { mutableStateOf<Pair<StakeVoting, PrivacyWallet.StakeVoteItem.Validator>?>(null) }
     // This identity's handle, caretaker vote and what is due (reminders only).
     val personal by privacy.personal.collectAsStateWithLifecycle()
+    val nodeNotice by network.erth.wallet.chain.NodeConfig.notice.collectAsStateWithLifecycle()
     val now = System.currentTimeMillis() / 1000
     val onShare = { text: String ->
         val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
@@ -217,7 +218,8 @@ internal fun EarthContent(
             unbondingUerth = earnState?.unbonding?.sumOf { it.amountUerth } ?: 0L,
             privateNotice = state?.privacySyncError,
             // What is due, never done unasked: each reminder opens where it is done.
-            reminders = personal?.reminders.orEmpty().map { r ->
+            // A node that failed its recheck (or awaits it) leads: Earth's node is in use meanwhile.
+            reminders = listOfNotNull(nodeNotice?.let { it to { nav.push(EarthRoute.Network) } }) + personal?.reminders.orEmpty().map { r ->
                 Reminders.text(r, now) to when (r) {
                     Reminders.Reminder.AnmlReady -> onClaimAnml
                     is Reminders.Reminder.CaretakerExpiring -> { { nav.push(EarthRoute.Stream(true)) } }
