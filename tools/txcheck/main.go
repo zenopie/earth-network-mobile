@@ -11,6 +11,12 @@
 //
 //	cd ios/EarthCore && swift run corecheck     # writes .artifacts/tx.json
 //	cd tools/txcheck && go run . ../../ios/EarthCore/.artifacts
+//
+// The fixture also carries unsigned private txs (the move msgs). The earth
+// types are not in this module's graph, so their fields are decoded with
+// protowire against the chain's numbering (x/personhood tx.proto,
+// registration.proto MoveProof); the golden vectors pin their bytes and
+// sighash to the chain's own types (tools/privacyvectors).
 package main
 
 import (
@@ -21,6 +27,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/cosmos/cosmos-sdk/types/bech32"
@@ -28,6 +36,7 @@ import (
 	signingtypes "github.com/cosmos/cosmos-sdk/types/tx/signing"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 type fixture struct {
@@ -46,6 +55,115 @@ type fixture struct {
 	SignDocB64    string `json:"sign_doc_base64"`
 	SignatureHex  string `json:"signature_hex"`
 	VoteProposal  uint64 `json:"vote_proposal_id"`
+	PrivateTxs    []struct {
+		TypeURL  string `json:"type_url"`
+		FeeUerth string `json:"fee_uerth"`
+		TxRawB64 string `json:"tx_raw_base64"`
+	} `json:"private_txs"`
+}
+
+// fields decodes one protobuf message into field number -> raw values,
+// refusing anything that is not a well-formed length-delimited or varint field.
+func fields(b []byte) (map[protowire.Number][][]byte, map[protowire.Number]protowire.Type, error) {
+	out := map[protowire.Number][][]byte{}
+	types := map[protowire.Number]protowire.Type{}
+	for len(b) > 0 {
+		num, typ, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			return nil, nil, protowire.ParseError(n)
+		}
+		b = b[n:]
+		var v []byte
+		switch typ {
+		case protowire.BytesType:
+			v, n = protowire.ConsumeBytes(b)
+		case protowire.VarintType:
+			var x uint64
+			x, n = protowire.ConsumeVarint(b)
+			v = protowire.AppendVarint(nil, x)
+		default:
+			return nil, nil, fmt.Errorf("field %d has wire type %d", num, typ)
+		}
+		if n < 0 {
+			return nil, nil, protowire.ParseError(n)
+		}
+		b = b[n:]
+		out[num] = append(out[num], v)
+		types[num] = typ
+	}
+	return out, types, nil
+}
+
+func sortedKeys(m map[protowire.Number][][]byte) []protowire.Number {
+	ks := make([]protowire.Number, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Slice(ks, func(i, j int) bool { return ks[i] < ks[j] })
+	return ks
+}
+
+var handleRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,30})[a-z0-9]$`)
+
+// checkMove checks a private move tx: unsigned, its one msg laid out as the
+// chain's MsgMoveHandle{fee 1, move 2, handle 3} or MsgMoveCaretaker{fee 1,
+// move 2}, the MoveProof{proof 1, root 2, old_nullifier 3, new_nullifier 4}
+// with a proof-sized body, 32-byte canonical-length fields and two distinct
+// nullifiers, and nothing else (no membership, no new_owner).
+func checkMove(typeURL, feeUerth, txB64 string) {
+	fmt.Printf("\nprivate tx %s\n", typeURL)
+	raw, err := base64.StdEncoding.DecodeString(txB64)
+	check("tx decodes from base64", err == nil)
+	var txRaw txtypes.TxRaw
+	check("TxRaw unmarshals", txRaw.Unmarshal(raw) == nil)
+	equal("unsigned (the fee bundle pays)", len(txRaw.Signatures), 0)
+	var body txtypes.TxBody
+	check("TxBody unmarshals", body.Unmarshal(txRaw.BodyBytes) == nil)
+	var authInfo txtypes.AuthInfo
+	check("AuthInfo unmarshals", authInfo.Unmarshal(txRaw.AuthInfoBytes) == nil)
+	equal("no signer", len(authInfo.SignerInfos), 0)
+	if authInfo.Fee != nil && len(authInfo.Fee.Amount) == 1 {
+		equal("declared fee is the bundle's", authInfo.Fee.Amount[0].Amount.String(), feeUerth)
+	} else {
+		check("one fee coin", false)
+	}
+	if len(body.Messages) != 1 {
+		check("one message", false)
+		return
+	}
+	equal("type url", body.Messages[0].TypeUrl, typeURL)
+	f, types, err := fields(body.Messages[0].Value)
+	check("msg fields decode", err == nil, err)
+	allowed := map[protowire.Number]bool{1: true, 2: true}
+	if typeURL == "/earth.personhood.v1.MsgMoveHandle" {
+		allowed[3] = true
+		h := f[3]
+		check("handle (3) is one valid handle", len(h) == 1 && handleRe.Match(h[0]), fmt.Sprintf("%q", h))
+	}
+	for _, n := range sortedKeys(f) {
+		check(fmt.Sprintf("field %d is the chain's", n), allowed[n])
+	}
+	check("fee (1) is one bundle", len(f[1]) == 1 && types[1] == protowire.BytesType)
+	if len(f[2]) != 1 || types[2] != protowire.BytesType {
+		check("move (2) is one MoveProof", false)
+		return
+	}
+	mv, mtypes, err := fields(f[2][0])
+	check("MoveProof decodes", err == nil, err)
+	for _, n := range sortedKeys(mv) {
+		check(fmt.Sprintf("MoveProof field %d is the chain's", n), n >= 1 && n <= 4 && mtypes[n] == protowire.BytesType)
+	}
+	one := func(n protowire.Number) []byte {
+		if len(mv[n]) != 1 {
+			return nil
+		}
+		return mv[n][0]
+	}
+	equal("proof (1) is 14,656 bytes", len(one(1)), 14_656)
+	equal("root (2) is 32 bytes", len(one(2)), 32)
+	equal("old_nullifier (3) is 32 bytes", len(one(3)), 32)
+	equal("new_nullifier (4) is 32 bytes", len(one(4)), 32)
+	check("old and new nullifier differ", !bytes.Equal(one(3), one(4)))
 }
 
 var failures int
@@ -195,6 +313,11 @@ func main() {
 			bytes.Equal(reencoded, body.Messages[1].Value))
 	} else {
 		check("MsgVote unmarshals", false)
+	}
+
+	equal("two private move txs", len(f.PrivateTxs), 2)
+	for _, p := range f.PrivateTxs {
+		checkMove(p.TypeURL, p.FeeUerth, p.TxRawB64)
 	}
 
 	fmt.Println()

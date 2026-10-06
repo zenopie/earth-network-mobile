@@ -6,7 +6,7 @@ go 1.25.3
 // judges these bytes is the one the chain actually runs.
 require (
 	github.com/cosmos/cosmos-sdk v0.53.4
-	google.golang.org/protobuf v1.36.12 // indirect
+	google.golang.org/protobuf v1.36.12
 )
 
 require (

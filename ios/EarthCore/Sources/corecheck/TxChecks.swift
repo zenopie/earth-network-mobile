@@ -94,6 +94,23 @@ func checkTransactions(writingTo artifacts: URL) {
         signed.txBytes.hexString
     )
 
+    Check.group("private move msgs")
+
+    // MsgMoveHandle{fee 1, move 2, handle 3} and MsgMoveCaretaker{fee 1,
+    // move 2} as the wallet sends them (unsigned, the fee in the bundle):
+    // tools/txcheck decodes their fields with the chain's numbering.
+    func fe(_ i: UInt64) -> Data { Poseidon2.hash([Fr(i)]).bytes }
+    let fee = ShieldedBundle(balances: [ValueBalance(denom: "uerth", amount: 2000)], bindingSig: Data(repeating: 0xb5, count: 64))
+    let move = MoveProof(proof: Data(repeating: 0x9e, count: PrivateTxEngine.proofBytes), root: fe(1), oldNullifier: fe(2), newNullifier: fe(3))
+    let moveHandle = MsgMoveHandle(fee: fee, move: move, handle: "alice-01")
+    let moveCaretaker = MsgMoveCaretaker(fee: fee, move: move)
+    Check.equal("MsgMoveHandle sighash fields: Bytes(handle)", (try? moveHandle.sighashFields()) ?? [], [PrivacyHash.bytes("alice-01")])
+    Check.equal("MsgMoveCaretaker sighash fields: none", (try? moveCaretaker.sighashFields())?.count ?? -1, 0)
+    let privateTxs: [[String: Any]] = [(MsgMoveHandle.typeURL, moveHandle as any PrivateMsg), (MsgMoveCaretaker.typeURL, moveCaretaker)].map { url, m in
+        ["type_url": url, "fee_uerth": String(m.totalFee),
+         "tx_raw_base64": UnsignedTx.build(m, gasLimit: 3_000_000, timeoutHeight: 1_050).base64EncodedString()]
+    }
+
     let fixture: [String: Any] = [
         "mnemonic": abandon,
         "address": key.address,
@@ -110,6 +127,7 @@ func checkTransactions(writingTo artifacts: URL) {
         "sign_doc_base64": signed.signDoc.encoded().base64EncodedString(),
         "signature_hex": signed.signature.hexString,
         "vote_proposal_id": 7,
+        "private_txs": privateTxs,
     ]
 
     try? FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
