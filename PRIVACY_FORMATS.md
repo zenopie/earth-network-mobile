@@ -144,8 +144,26 @@ For each, with k the child's 32-byte private key:
 
 **[chain]** `idc = H(TAG_ID, id_secret)`, `owner_pk = H(TAG_OWNER, nk)`.
 
+**Identity generations [wallet].** The chain registers each idc once (§13,
+error 1130), and a registration lasts a year, so a wallet needs a new
+identity secret for every registration after its first (a re-entry after a
+lapse, a fresh identity). Generation g of the one phrase, with k the
+identity child's private key above (m/2026'/118'/0'/0'):
+
+    id_secret_0 = HMAC-SHA512("earth.privacy.v1", "id_secret" || k)              mod p   (the identity above, unchanged)
+    id_secret_g = HMAC-SHA512("earth.privacy.v1", "id_secret" || k || u32 BE g)  mod p   (g >= 1)
+    idc_g       = H(TAG_ID, id_secret_g)
+
+g is at most 10,000. nk and ek (notes, the shielded address, owner tags)
+are the same for every generation: only the identity changes, so funds and
+stake never move. A compromised phrase exposes every generation (a new
+wallet is the remedy); a generation's secret alone does not expose the
+others (HMAC under k). Which generation a wallet acts as and which it
+registers next: §13; how a restore finds them: §19.
+
 Nothing else is derived from the mnemonic by a counter except owner-tag
-salts (§7): every note the chain mints to the wallet and every stake note
+salts (§7) and identity generations (above; the registration records name
+theirs, §6): every note the chain mints to the wallet and every stake note
 uses fresh random rho and rcm and is found by trial decryption (§19), so a
 failed or abandoned attempt never leaves a gap a restore cannot cross.
 The seed and the phrase's bytes are zeroed once the keys are derived (the
@@ -160,6 +178,12 @@ derivation), mnemonic `abandon ×11 about`:
     ek_pub    c6327c6004804dce1fd6a876c9c983204cb251507a5da8ae845e52cde8585773
     salt_0    0685f54037389aaceee42288ed8c8c996a884e297ffee771c73370ca885e1618
     salt_1    2e52e73b7af259664a34df8bcee1c0476009a37e0ab2e52b285bae497845a9ba
+    id_secret_1 1578439fcb7abad1387e5fe1f7a46ad6ed3300186b8f4e0c783ec7a39fc7de87
+    id_secret_2 11b2df44a02f56ef93dbe19933e65939c426c7a58ef8d021c14809b2cce04164
+    id_secret_3 0aa6bcc31d78717aab7c87ba4b8d88f785842444a48cc229ef673233400bd084
+
+(generations pinned in `IdentityGenerationsTest` / `IdentityGenerationsTests`;
+`legal winner … yellow` gives id_secret_1 `155ada956f52baa40ef19cde4bac90f0196a56b1167aaf995d4c1b06f6faf3ea`).
 
 ## 3. Shielded address
 
@@ -319,7 +343,13 @@ bundle:
     memo = "ER" (0x45 0x52) || 0x02 || country (2 ASCII bytes A-Z, 0x0000 unknown)
            || built_at (u64 BE unix seconds, the wallet's clock when the bundle was laid out)
            || dsc_key (32 BE) || tag (16) || zero padding (3)                   (61 bytes used)
-    tag  = first 16 bytes of BE32( H(Tag("earth.rectag"), nk, dsc_key, U64(built_at)) )
+    tag  = first 16 bytes of BE32( H(Tag("earth.rectag"), nk, dsc_key, U64(built_at)) )                 (generation 0)
+           first 16 bytes of BE32( H(Tag("earth.rectag"), nk, dsc_key, U64(built_at), U64(g)) )         (generation g >= 1, §2)
+
+The tag names the identity generation the registration proved with: a
+reader tries generations 0 to the highest it knows (§13) plus 8, and the
+first whose tag recomputes is the record's. Generation 0's record is byte
+for byte the record above.
 
 A memo is a record only if the magic and version match, the country is
 0x0000 or two A-Z letters, dsc_key is canonical, the padding is zero and the
@@ -350,7 +380,12 @@ MsgMoveHandle and MsgMoveCaretaker carries state records:
     kind:      1 holds, 2 released / cleared, 3 moved out;
                caretaker 0x81: holds, the split not recorded (it did not fit
                40 bytes, or has more than 20 options), split bytes zero
-    tag:       first 16 bytes of BE32( H(Tag("earth.statetag"), nk, Bytes(memo[0..48))) )
+    tag:       first 16 bytes of BE32( H(Tag("earth.statetag"), nk, Bytes(memo[0..48))) )          (generation 0)
+               first 16 bytes of BE32( H(Tag("earth.statetag"), nk, Bytes(memo[0..48)), U64(g)) )  (generation g >= 1)
+
+As with the registration record, the tag names the generation the record is
+about (tried 0 to the highest known plus 8): each generation holds its own
+handle and split.
 
 The tag sits at memo[48..64) and covers every byte before it. A record is
 accepted only if the magic, version and kind are known, the tag recomputes
@@ -369,7 +404,10 @@ and `RestoreTests` (`stateRecordsRoundTripAndRefuseForgeries`). Who writes what:
 | MsgMoveCaretaker | moved out | holds (split, the chain's expiry) |
 
 The mover has the new wallet's keys on the phone, so it addresses and tags
-that wallet's record. How sync applies them: §19.
+that wallet's record (with the new identity's generation). A move within one
+wallet, from an earlier generation to the current one (§14), writes both
+records to the same address, each tagged with its own generation. How sync
+applies them: §19.
 
 **Unlock record.** MsgUnlockPosition's fee bundle carries a value-0 record
 naming the owner-tag counter it closed (§7):
@@ -1075,15 +1113,45 @@ mnemonic: §19.
 **Fresh identity [chain + wallet].** The chain refuses a registration to
 any idc registered before, by any passport (error 1130, ErrIdcUsed, in the
 ante before the proof; genesis `used_idcs`, field 23). Every first
-registration, switch and re-entry is to a fresh identity secret; a wallet
-never re-registers a retired identity (a switch back to an earlier wallet is
-refused: that wallet's identity is spent), and a switch target is always a
-wallet whose identity was never registered. The register proof outputs the
-idc of the witness `id_secret` (§9), so the wallet proves with the target
-identity's own secret.
+registration, switch and re-entry is to a fresh identity secret: the
+registering wallet's next identity generation (§2), so no registration ever
+needs a new recovery phrase. The register proof outputs the idc of the
+witness `id_secret` (§9), so the wallet proves with that generation's secret.
+
+- **Which generation [wallet].** The wallet keeps, per generation, what that
+  identity holds (its registration, handle, split, moves: one slot each) and
+  the generation it acts as: the newest whose registration it matched
+  (committed, or found by a restore), or the newest a state record names.
+  Membership proofs, binds, casts and the handle owner use that generation's
+  secret. A generation is used when a registration record of it exists (it
+  reached a block, failed or not: the record lands with the fee), a
+  registration of it matched, or it is below the floor. The next
+  registration uses the lowest generation above every used one; a sent
+  registration that has not landed keeps its own, so a retry is the same
+  identity. Skipping a generation whose registration failed costs nothing.
+  Nothing here asks the chain about an idc: it is all the wallet's own
+  records and its local identity tree.
+- **Floor.** A registration the chain refuses with 1130 (the wallet's records
+  missed a used generation), or a /gas/register refusal with the same text,
+  raises the floor past its generation; the user starts the registration
+  again (a new proof, bound to the next idc).
+- **Re-entry** (the registration lapsed) and a **switch** (another wallet's
+  next generation, or this wallet's own: "a fresh identity in this wallet")
+  are both just a registration of the next generation; the chain appends the
+  succession from the passport's last idc either way (§8), and what the
+  previous identity holds moves with §14's moves. A registration that
+  prepared a generation which landed meanwhile is refused before anything is
+  sent (`IdentityUsed`: prepare again).
+- **Which fresh identity.** A compromised recovery phrase exposes every
+  generation: only a new wallet (a new phrase), then a switch to it, helps. A
+  compromised identity secret alone (rare: it exists only in memory, derived
+  from the phrase) is answered by the next generation in the same wallet.
+  The switch screen offers both and says so.
 
 **Chain errors explained.** personhood 1130 ("This identity has been
-registered before. Switch to a new wallet."), 1127 (a switch proven under another
+registered before, and the chain accepts each identity once. The wallet has
+moved on to your next identity, from the same recovery phrase: start the
+registration again."), 1127 (a switch proven under another
 Document Signer than the live registration's: "This switch was refused. A
 switch must be proven with the same passport you registered with …"), 1113
 (a signer's daily cap, switches included: "Today's limit for passports
@@ -1234,10 +1302,20 @@ switch).
   tx, right after the new identity leaf, so the wallet looks at the new
   leaf's index + 1 first and searches the rest of its local tree only if it
   is not there. Nothing asked names either leaf.
-- **The offer.** Identity in the new wallet looks among this phone's other
-  wallets for the one whose idc forms a succession leaf with its own in its
-  local tree (at most one: the passport's previous identity), syncs that
-  wallet, and offers "Bring your handle @… to this identity" and "Bring your
+- **Within one wallet.** When the previous identity is an earlier generation
+  of the same wallet (a re-entry after a lapse, or a fresh identity), the
+  wallet moves from that generation's slot to the current one's: both
+  secrets come from the one phrase, the fee from the wallet's own ERTH, and
+  both state records (moved out, holds) go to its own address tagged with
+  their generations (§6). The move is recorded in both slots before the
+  broadcast and settled like any other.
+- **The offer.** Identity looks first at this wallet's own earlier
+  generations (the current one minus 1 down to minus 8; only the leaf right
+  after the identity's own is compared, where the chain appends the
+  succession), then among this phone's other wallets (the idc each acts as)
+  for the one whose idc forms a succession leaf with its own in its local
+  tree (at most one: the passport's previous identity), syncs that wallet,
+  and offers "Bring your handle @… to this identity" and "Bring your
   Caretaker split to this identity" for what it still holds, with the fee
   shown against that wallet's ERTH. A switch from a wallet whose phrase is
   lost finds nothing to offer: the move proof needs its secret. The switch
@@ -1795,7 +1873,13 @@ still lands; the wallet voids it when it sees the failure, and otherwise the
 chain refuses what follows from it at no cost. A HOLDS record settles an
 incoming move, a MOVED_OUT one an outgoing move.
 
-**Restore of the registration.** No query names it. Every tagged
+**Restore of the registration.** No query names it. Each record's tag names
+its identity generation (§6), and its leaves are matched with that
+generation's idc, so a restore scans generations at no extra hashing cost:
+the newest matched record is the live identity (the wallet acts as its
+generation), records whose leaves were zeroed (lapsed, switched away) still
+mark their generation used, and the next registration is the lowest
+generation above all of them (§13). Every tagged
 registration record found keeps, as the identity stream passes them, the
 identity leaves appended at its block height h (at most 64). Records are
 matched only after the same sync's root checks verified the identity tree
@@ -1836,9 +1920,10 @@ leaf_index, dsc_key, country, activated_at and predecessor_at: the identity
 record (passport nullifier left empty; nothing needs it), marked
 `verified`. A same-chain reset keeps only a verified identity record; a
 match at the identity's own index replaces it. A registration whose record
-note is missing (an older app) cannot be restored and must register again
-(a switch to the same passport is allowed; a switch to the same idc is
-refused by the chain only while the old leaf is live).
+note is missing (an older app) cannot be restored and must register again:
+with no record of its earlier generation the wallet first proves with
+generation 0, the chain refuses it as used (1130, before the proof, at no
+cost), and the floor moves the next attempt to generation 1 (§13).
 
 ## 20. Wallet behaviour
 
@@ -1916,4 +2001,7 @@ platforms with VKs equal to the chain's genesis keys. Suites: `StakeVoteFlowTest
 snapshot nullifier tree, the weight rule), `StakeTest` / `StakeNoteTests`
 (stake note v2, moves, debt tree, clear_before), `HandlesTest`,
 `LeaseBoundsTest`, `NoteDiscoveryTest`, `UnstakeTest`, `SyncTest`,
-`RestoreTest`, `WalletFlowTest` and their iOS counterparts.
+`RestoreTest`, `IdentityGenerationsTest` (generation goldens, re-entry
+after a lapse, a fresh identity in the same wallet, the 1130 floor, restore
+scanning, moves within a wallet), `WalletFlowTest` and their iOS
+counterparts.
