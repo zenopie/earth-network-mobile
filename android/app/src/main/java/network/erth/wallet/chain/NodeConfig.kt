@@ -50,8 +50,9 @@ object NodeConfig {
     fun load(context: Context) {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val lcd = p.getString(KEY_LCD, null)?.let(::normalize) ?: return
-        val rpc = p.getString(KEY_RPC, null)?.let { if (it.isEmpty()) "" else normalize(it) } ?: ""
-        if (problem(lcd) == null && (rpc.isEmpty() || problem(rpc) == null)) _node.value = Node(lcd, rpc)
+        // A node saved before the RPC was required is dropped: its genesis was never checked.
+        val rpc = p.getString(KEY_RPC, null)?.let(::normalize) ?: return
+        if (problem(lcd) == null && problem(rpc) == null) _node.value = Node(lcd, rpc)
     }
 
     fun save(context: Context, node: Node) {
@@ -144,18 +145,28 @@ object NodeConfig {
     /** How far behind the wall clock a node's latest block may be (it is syncing or stalled past that). */
     const val MAX_LAG_SECONDS = 10L * 60
 
+    /** The most /genesis_chunked chunks read (CometBFT's are 16 MiB each). */
+    const val MAX_GENESIS_CHUNKS = 8
+
+    /** One chunk's response bound: 16 MiB as base64, and the JSON around it. */
+    private const val GENESIS_CHUNK_BYTES = 24 * 1024 * 1024
+
     /**
      * Asks [node] which chain it follows and how far it is. Refused: a node
-     * that is not [Constants.EARTH_CHAIN_ID]; one whose block 1 is not the
-     * live chain's (an earlier earth-1 genesis or a fork under the same id;
-     * the hash is [Constants.EARTH_GENESIS_BLOCK_HASH], or Earth's own node's
-     * block 1 until that is set); one whose latest block is more than
-     * [MAX_LAG_SECONDS] old. The RPC, when given, is checked the same way.
+     * that is not [Constants.EARTH_CHAIN_ID]; one whose genesis is not the
+     * live chain's (an earlier earth-1 genesis, or another chain under the
+     * same id): the sha256 of what its RPC's /genesis_chunked serves must be
+     * [Constants.EARTH_GENESIS_SHA256]; an LCD that does not hold the RPC's
+     * block at their common height (so both are one node, or nodes of one
+     * chain); and either one whose latest block is more than
+     * [MAX_LAG_SECONDS] old. The RPC is required: only it serves the genesis,
+     * and every node keeps that, state-synced or pruned.
      * On the caller's (IO) thread; throws with a message to show.
      */
     fun probe(node: Node): Probe {
         problem(node.lcd)?.let { throw IllegalArgumentException("LCD: $it") }
-        if (node.rpc.isNotEmpty()) problem(node.rpc)?.let { throw IllegalArgumentException("RPC: $it") }
+        if (node.rpc.isEmpty()) throw IllegalArgumentException(RPC_REQUIRED)
+        problem(node.rpc)?.let { throw IllegalArgumentException("RPC: $it") }
         val body = lcdGet(node.lcd, "/cosmos/base/tendermint/v1beta1/blocks/latest", "the LCD")
         val header = runCatching {
             val j = JSONObject(body)
@@ -165,35 +176,75 @@ object NodeConfig {
         if (chainId != Constants.EARTH_CHAIN_ID) throw IllegalStateException("That node follows \"$chainId\", not ${Constants.EARTH_CHAIN_ID}.")
         val height = header.optString("height").toLongOrNull() ?: throw IllegalStateException("The LCD did not say its latest height.")
         checkLag("The LCD", RestPrivateChain.parseTime(header.optString("time")))
-        val expected = expectedGenesis()
-        val lcdGenesis = runCatching {
-            base64Hex(JSONObject(lcdGet(node.lcd, "/cosmos/base/tendermint/v1beta1/blocks/1", "the LCD")).getJSONObject("block_id").getString("hash"))
-        }.getOrNull() ?: throw IllegalStateException(NO_BLOCK_ONE)
-        if (lcdGenesis != expected) throw IllegalStateException(OTHER_GENESIS)
-        if (node.rpc.isNotEmpty()) {
-            val status = runCatching { JSONObject(lcdGet(node.rpc, "/status", "the RPC")).let { it.optJSONObject("result") ?: it } }
-                .getOrElse { throw if (it is IllegalStateException) it else IllegalStateException("That does not look like a CometBFT RPC.") }
-            val net = status.optJSONObject("node_info")?.optString("network")
-                ?: throw IllegalStateException("That does not look like a CometBFT RPC.")
-            if (net != Constants.EARTH_CHAIN_ID) throw IllegalStateException("The RPC follows \"$net\", not ${Constants.EARTH_CHAIN_ID}.")
-            checkLag("The RPC", RestPrivateChain.parseTime(status.optJSONObject("sync_info")?.optString("latest_block_time").orEmpty()))
-            val rpcGenesis = runCatching {
-                JSONObject(lcdGet(node.rpc, "/block?height=1", "the RPC")).let { it.optJSONObject("result") ?: it }
-                    .getJSONObject("block_id").getString("hash").lowercase().takeIf { h -> h.length == 64 && h.all { c -> c in '0'..'9' || c in 'a'..'f' } }
-            }.getOrNull() ?: throw IllegalStateException(NO_BLOCK_ONE)
-            if (rpcGenesis != expected) throw IllegalStateException(OTHER_GENESIS)
-        }
+
+        val status = runCatching { JSONObject(lcdGet(node.rpc, "/status", "the RPC")).let { it.optJSONObject("result") ?: it } }
+            .getOrElse { throw if (it is IllegalStateException) it else IllegalStateException(NOT_RPC) }
+        val net = status.optJSONObject("node_info")?.optString("network") ?: throw IllegalStateException(NOT_RPC)
+        if (net != Constants.EARTH_CHAIN_ID) throw IllegalStateException("The RPC follows \"$net\", not ${Constants.EARTH_CHAIN_ID}.")
+        val sync = status.optJSONObject("sync_info")
+        checkLag("The RPC", RestPrivateChain.parseTime(sync?.optString("latest_block_time").orEmpty()))
+        val rpcHeight = sync?.optString("latest_block_height")?.toLongOrNull() ?: throw IllegalStateException("The RPC did not say its latest height.")
+
+        val genesis = genesisSha256 { chunk -> lcdGet(node.rpc, "/genesis_chunked?chunk=$chunk", "the RPC", GENESIS_CHUNK_BYTES) }
+        if (genesis != Constants.EARTH_GENESIS_SHA256.lowercase()) throw IllegalStateException(OTHER_GENESIS)
+
+        // The genesis is the RPC's; the LCD answers every query. Both must
+        // hold the same block at a height both have.
+        val common = minOf(height, rpcHeight)
+        val lcdHash = runCatching {
+            base64Hex(JSONObject(lcdGet(node.lcd, "/cosmos/base/tendermint/v1beta1/blocks/$common", "the LCD")).getJSONObject("block_id").getString("hash"))
+        }.getOrNull()
+        val rpcHash = runCatching {
+            JSONObject(lcdGet(node.rpc, "/block?height=$common", "the RPC")).let { it.optJSONObject("result") ?: it }
+                .getJSONObject("block_id").getString("hash").lowercase()
+        }.getOrNull()
+        if (lcdHash == null || rpcHash == null) throw IllegalStateException("Could not read block $common from both the LCD and the RPC to compare them; try again.")
+        if (lcdHash != rpcHash) throw IllegalStateException(SPLIT_NODES)
         return Probe(chainId, height)
     }
 
-    private const val NO_BLOCK_ONE = "That node does not serve block 1 (it was state-synced or prunes old blocks), so the wallet " +
-        "cannot tell which earth-1 it follows. Use a node that keeps the chain from its first block."
-    private const val OTHER_GENESIS = "That node follows another earth-1: its first block is not the live chain's " +
-        "(an earlier launch, or a fork). Point it at the live chain."
+    /**
+     * sha256 of the genesis a CometBFT RPC serves: /genesis_chunked's
+     * base64 chunks, decoded, in order. [chunk] fetches one response body.
+     * 64 lowercase hex digits; throws with a message to show.
+     */
+    internal fun genesisSha256(chunk: (Int) -> String): String {
+        val sha = java.security.MessageDigest.getInstance("SHA-256")
+        var total = 1
+        var i = 0
+        while (i < total) {
+            val r = runCatching { JSONObject(chunk(i)).let { it.optJSONObject("result") ?: it } }
+                .getOrElse { throw if (it is IllegalStateException) it else IllegalStateException(NO_GENESIS) }
+            val n = r.optString("total").toIntOrNull() ?: throw IllegalStateException(NO_GENESIS)
+            if (i == 0) {
+                if (n !in 1..MAX_GENESIS_CHUNKS) throw IllegalStateException(NO_GENESIS)
+                total = n
+            }
+            if (n != total || r.optString("chunk").toIntOrNull() != i) throw IllegalStateException(NO_GENESIS)
+            val data = r.optString("data").decodeBase64()?.toByteArray()?.takeIf { it.isNotEmpty() } ?: throw IllegalStateException(NO_GENESIS)
+            sha.update(data)
+            i++
+        }
+        return sha.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
+
+    /** Settings -> Network says this under the RPC field (docs quote it). */
+    const val RPC_WHY = "Required. The wallet checks your node against the live chain's genesis, and only " +
+        "the RPC serves it (/genesis_chunked). Every node keeps its genesis, state-synced or not. " +
+        "The explorer also reads block ranges from it."
+
+    private const val RPC_REQUIRED = "RPC: required. The wallet checks the node's genesis, which only the RPC serves."
+    private const val NOT_RPC = "That does not look like a CometBFT RPC."
+    private const val NO_GENESIS = "The RPC did not serve its genesis (/genesis_chunked), so the wallet cannot tell " +
+        "which earth-1 it follows. Check that the URL is the node's CometBFT RPC (port 26657)."
+    private const val OTHER_GENESIS = "That node follows another earth-1: its genesis is not the live chain's " +
+        "(an earlier launch, or another network under the same name). Point it at the live chain."
+    private const val SPLIT_NODES = "The LCD and the RPC disagree about a recent block: they are not following " +
+        "the same chain. Use the LCD and RPC of one node."
 
     /** GET [path] from [base] (local http allowed for the probe); the body of a 2xx, else throws with a message. */
-    private fun lcdGet(base: String, path: String, what: String): String {
-        val (code, body) = runCatching { EarthRest.getFrom(base, path, allowLocal = true) }
+    private fun lcdGet(base: String, path: String, what: String, maxBytes: Int = EarthRest.MAX_BODY_BYTES): String {
+        val (code, body) = runCatching { EarthRest.getFrom(base, path, allowLocal = true, maxBytes = maxBytes) }
             .getOrElse { throw IllegalStateException("Could not reach $what: ${it.message ?: it.javaClass.simpleName}") }
         if (code !in 200..299) throw IllegalStateException("${what.replaceFirstChar { it.uppercase() }} answered $code for $path.")
         return body
@@ -205,14 +256,6 @@ object NodeConfig {
         if (now - time > MAX_LAG_SECONDS) {
             throw IllegalStateException("$what's latest block is ${(now - time) / 60} minutes old: it is still syncing or has stopped. Try again once it has caught up.")
         }
-    }
-
-    /** The live chain's block 1 hash: pinned, or (until the pin is set) Earth's own node's. */
-    private fun expectedGenesis(): String {
-        if (Constants.EARTH_GENESIS_BLOCK_HASH.isNotEmpty()) return Constants.EARTH_GENESIS_BLOCK_HASH.lowercase()
-        return runCatching {
-            base64Hex(JSONObject(lcdGet(DEFAULT.lcd, "/cosmos/base/tendermint/v1beta1/blocks/1", "Earth's node")).getJSONObject("block_id").getString("hash"))
-        }.getOrNull() ?: throw IllegalStateException("Could not read the live chain's first block from Earth's node to compare with; try again.")
     }
 
     /** A 32-byte hash as base64 (the LCD's encoding), as 64 lowercase hex digits; null otherwise. */

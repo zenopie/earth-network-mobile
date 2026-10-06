@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Which node the wallet talks to: every chain query and every broadcast goes
@@ -17,7 +18,8 @@ public enum NodeSettings {
 
     public struct Node: Equatable, Sendable {
         public let lcd: URL
-        /// Nil: no RPC (the explorer then reads blocks from the LCD).
+        /// Nil only for a built-in default without one; a node the user
+        /// chooses always has one (`probe` refuses it otherwise).
         public let rpc: URL?
         public init(lcd: URL, rpc: URL?) { self.lcd = lcd; self.rpc = rpc }
         public var isDefault: Bool { self == NodeSettings.defaultNode }
@@ -42,9 +44,8 @@ public enum NodeSettings {
     private static func load() -> Node {
         let d = UserDefaults.standard
         guard let lcdText = d.string(forKey: lcdKey), let lcd = normalize(lcdText), problem(lcd) == nil else { return defaultNode }
-        let rpcText = d.string(forKey: rpcKey) ?? ""
-        if rpcText.isEmpty { return Node(lcd: lcd, rpc: nil) }
-        guard let rpc = normalize(rpcText), problem(rpc) == nil else { return defaultNode }
+        // A node saved before the RPC was required is dropped: its genesis was never checked.
+        guard let rpcText = d.string(forKey: rpcKey), let rpc = normalize(rpcText), problem(rpc) == nil else { return defaultNode }
         return Node(lcd: lcd, rpc: rpc)
     }
 
@@ -141,21 +142,38 @@ public enum NodeSettings {
     /// How far behind the wall clock a node's latest block may be (it is syncing or stalled past that).
     public static let maxLagSeconds: Int64 = 10 * 60
 
-    static let noBlockOne = "That node does not serve block 1 (it was state-synced or prunes old blocks), so the wallet "
-        + "cannot tell which earth-1 it follows. Use a node that keeps the chain from its first block."
-    static let otherGenesis = "That node follows another earth-1: its first block is not the live chain's "
-        + "(an earlier launch, or a fork). Point it at the live chain."
+    /// The most /genesis_chunked chunks read (CometBFT's are 16 MiB each).
+    public static let maxGenesisChunks = 8
+    /// One chunk's response bound: 16 MiB as base64, and the JSON around it.
+    static let genesisChunkBytes = 24 * 1024 * 1024
+
+    /// Settings → Network says this under the RPC field (docs quote it).
+    public static let rpcWhy = "Required. The wallet checks your node against the live chain's genesis, and only "
+        + "the RPC serves it (/genesis_chunked). Every node keeps its genesis, state-synced or not. "
+        + "The explorer also reads block ranges from it."
+    static let rpcRequired = "RPC: required. The wallet checks the node's genesis, which only the RPC serves."
+    static let notRPC = "That does not look like a CometBFT RPC."
+    static let noGenesis = "The RPC did not serve its genesis (/genesis_chunked), so the wallet cannot tell "
+        + "which earth-1 it follows. Check that the URL is the node's CometBFT RPC (port 26657)."
+    static let otherGenesis = "That node follows another earth-1: its genesis is not the live chain's "
+        + "(an earlier launch, or another network under the same name). Point it at the live chain."
+    static let splitNodes = "The LCD and the RPC disagree about a recent block: they are not following "
+        + "the same chain. Use the LCD and RPC of one node."
 
     /// Asks `node` which chain it follows and how far it is. Refused: a node
-    /// that is not `Constants.chainID`; one whose block 1 is not the live
-    /// chain's (an earlier earth-1 genesis or a fork under the same id; the
-    /// hash is `Constants.genesisBlockHash`, or Earth's own node's block 1
-    /// until that is set); one whose latest block is more than
-    /// `maxLagSeconds` old. The RPC, when given, is checked the same way.
+    /// that is not `Constants.chainID`; one whose genesis is not the live
+    /// chain's (an earlier earth-1 genesis, or another chain under the same
+    /// id): the sha256 of what its RPC's /genesis_chunked serves must be
+    /// `Constants.genesisSHA256`; an LCD that does not hold the RPC's block
+    /// at their common height (so both are one node, or nodes of one chain);
+    /// and either one whose latest block is more than `maxLagSeconds` old.
+    /// The RPC is required: only it serves the genesis, and every node keeps
+    /// that, state-synced or pruned. Mirrors Android's NodeConfig.probe.
     public static func probe(_ node: Node) async throws -> Probe {
         if let p = problem(node.lcd) { throw ProbeError(message: "LCD: \(p)") }
-        if let rpc = node.rpc, let p = problem(rpc) { throw ProbeError(message: "RPC: \(p)") }
-        let rest = EarthRest(lcd: node.lcd, rpc: node.rpc, allowLocal: true)
+        guard let rpcURL = node.rpc else { throw ProbeError(message: rpcRequired) }
+        if let p = problem(rpcURL) { throw ProbeError(message: "RPC: \(p)") }
+        let rest = EarthRest(lcd: node.lcd, rpc: rpcURL, allowLocal: true)
         let j: JSON
         do { j = try await rest.get("/cosmos/base/tendermint/v1beta1/blocks/latest") } catch {
             throw ProbeError(message: "Could not reach the LCD: \(error.localizedDescription)")
@@ -166,26 +184,62 @@ public enum NodeSettings {
         guard chainID == Constants.chainID else { throw ProbeError(message: "That node follows \"\(chainID)\", not \(Constants.chainID).") }
         guard let height = header.height.uint64 else { throw ProbeError(message: "The LCD did not say its latest height.") }
         try checkLag("The LCD", RESTPrivateChain.parseTime(header.time.string(default: "")))
-        let expected = try await expectedGenesis()
-        guard let lcdGenesis = await blockOneHash(rest) else { throw ProbeError(message: noBlockOne) }
-        guard lcdGenesis == expected else { throw ProbeError(message: otherGenesis) }
-        if node.rpc != nil {
-            let r: JSON
-            do { r = try await rest.getRPC("/status") } catch {
-                throw ProbeError(message: "Could not reach the RPC: \(error.localizedDescription)")
-            }
-            let status = r.result.exists ? r.result : r
-            let info = status.node_info
-            let network = info.network.string(default: "")
-            guard info.exists else { throw ProbeError(message: "That does not look like a CometBFT RPC.") }
-            guard network == Constants.chainID else { throw ProbeError(message: "The RPC follows \"\(network)\", not \(Constants.chainID).") }
-            try checkLag("The RPC", RESTPrivateChain.parseTime(status.sync_info.latest_block_time.string(default: "")))
-            let b = try? await rest.getRPC("/block?height=1")
-            let hash = b.map { ($0.result.exists ? $0.result : $0).block_id.hash.string(default: "").lowercased() } ?? ""
-            guard hash.count == 64, hash.allSatisfy({ $0.isHexDigit }) else { throw ProbeError(message: noBlockOne) }
-            guard hash == expected else { throw ProbeError(message: otherGenesis) }
+
+        let r: JSON
+        do { r = try await rest.getRPC("/status") } catch {
+            throw ProbeError(message: "Could not reach the RPC: \(error.localizedDescription)")
         }
+        let status = r.result.exists ? r.result : r
+        let info = status.node_info
+        let network = info.network.string(default: "")
+        guard info.exists else { throw ProbeError(message: notRPC) }
+        guard network == Constants.chainID else { throw ProbeError(message: "The RPC follows \"\(network)\", not \(Constants.chainID).") }
+        try checkLag("The RPC", RESTPrivateChain.parseTime(status.sync_info.latest_block_time.string(default: "")))
+        guard let rpcHeight = status.sync_info.latest_block_height.uint64 else { throw ProbeError(message: "The RPC did not say its latest height.") }
+
+        let genesis = try await genesisSHA256 { chunk in
+            do { return try await rest.getRPC("/genesis_chunked?chunk=\(chunk)", maxBytes: genesisChunkBytes) } catch {
+                throw ProbeError(message: noGenesis)
+            }
+        }
+        guard genesis == Constants.genesisSHA256.lowercased() else { throw ProbeError(message: otherGenesis) }
+
+        // The genesis is the RPC's; the LCD answers every query. Both must
+        // hold the same block at a height both have.
+        let common = min(height, rpcHeight)
+        let lcdBlock = try? await rest.get("/cosmos/base/tendermint/v1beta1/blocks/\(common)")
+        let lcdHash = lcdBlock?.block_id.hash.string.flatMap { Data(base64Encoded: $0) }.flatMap { $0.count == 32 ? $0.hexString : nil }
+        let rpcBlock = try? await rest.getRPC("/block?height=\(common)")
+        let rpcHash = rpcBlock.map { ($0.result.exists ? $0.result : $0).block_id.hash.string(default: "").lowercased() }
+        guard let lcdHash, let rpcHash, !rpcHash.isEmpty else {
+            throw ProbeError(message: "Could not read block \(common) from both the LCD and the RPC to compare them; try again.")
+        }
+        guard lcdHash == rpcHash else { throw ProbeError(message: splitNodes) }
         return Probe(chainID: chainID, height: height)
+    }
+
+    /// sha256 of the genesis a CometBFT RPC serves: /genesis_chunked's base64
+    /// chunks, decoded, in order. `chunk` fetches one response. 64 lowercase
+    /// hex digits; throws a `ProbeError` to show.
+    static func genesisSHA256(_ chunk: (Int) async throws -> JSON) async throws -> String {
+        var sha = SHA256()
+        var total = 1
+        var i = 0
+        while i < total {
+            let j = try await chunk(i)
+            let r = j.result.exists ? j.result : j
+            guard let n = r.total.int64.map({ Int($0) }) else { throw ProbeError(message: noGenesis) }
+            if i == 0 {
+                guard (1 ... maxGenesisChunks).contains(n) else { throw ProbeError(message: noGenesis) }
+                total = n
+            }
+            guard n == total, r.chunk.int64 == Int64(i),
+                  let data = r.data.string.flatMap({ Data(base64Encoded: $0) }), !data.isEmpty
+            else { throw ProbeError(message: noGenesis) }
+            sha.update(data: data)
+            i += 1
+        }
+        return Data(sha.finalize()).hexString
     }
 
     private static func checkLag(_ what: String, _ time: Int64) throws {
@@ -194,21 +248,5 @@ public enum NodeSettings {
         if now - time > maxLagSeconds {
             throw ProbeError(message: "\(what)'s latest block is \((now - time) / 60) minutes old: it is still syncing or has stopped. Try again once it has caught up.")
         }
-    }
-
-    /// The LCD's block 1 hash as 64 lowercase hex digits; nil when it cannot say.
-    private static func blockOneHash(_ rest: EarthRest) async -> String? {
-        guard let j = try? await rest.get("/cosmos/base/tendermint/v1beta1/blocks/1"),
-              let d = j.block_id.hash.string.flatMap({ Data(base64Encoded: $0) }), d.count == 32 else { return nil }
-        return d.hexString
-    }
-
-    /// The live chain's block 1 hash: pinned, or (until the pin is set) Earth's own node's.
-    private static func expectedGenesis() async throws -> String {
-        if !Constants.genesisBlockHash.isEmpty { return Constants.genesisBlockHash.lowercased() }
-        guard let h = await blockOneHash(EarthRest(lcd: defaultNode.lcd, rpc: nil)) else {
-            throw ProbeError(message: "Could not read the live chain's first block from Earth's node to compare with; try again.")
-        }
-        return h
     }
 }

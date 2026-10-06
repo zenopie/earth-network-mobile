@@ -65,7 +65,7 @@ fun NetworkScreen(onChanged: () -> Unit, modifier: Modifier = Modifier) {
     }
 
     val lcdUrl = NodeConfig.normalize(lcd)
-    val rpcUrl = if (rpc.isBlank()) "" else NodeConfig.normalize(rpc)
+    val rpcUrl = NodeConfig.normalize(rpc)
     val lcdError = when {
         lcd.isBlank() -> null
         lcdUrl == null -> "Enter a URL, for example https://node.example.com"
@@ -73,11 +73,11 @@ fun NetworkScreen(onChanged: () -> Unit, modifier: Modifier = Modifier) {
     }
     val rpcError = when {
         rpc.isBlank() -> null
-        rpcUrl == null -> "Enter a URL, or leave this empty"
+        rpcUrl == null -> "Enter a URL, for example https://rpc.example.com"
         else -> NodeConfig.problem(rpcUrl)
     }
     val cleartext = (lcdUrl != null && lcdError == null && NodeConfig.isCleartext(lcdUrl)) ||
-        (!rpcUrl.isNullOrEmpty() && rpcError == null && NodeConfig.isCleartext(rpcUrl))
+        (rpcUrl != null && rpcError == null && NodeConfig.isCleartext(rpcUrl))
 
     Column(
         modifier
@@ -127,7 +127,7 @@ fun NetworkScreen(onChanged: () -> Unit, modifier: Modifier = Modifier) {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         )
         Spacer(Modifier.height(dimens.space16))
-        EarthLabel("RPC URL (optional)")
+        EarthLabel("RPC URL")
         Spacer(Modifier.height(dimens.space8))
         EarthTextField(
             value = rpc,
@@ -139,7 +139,7 @@ fun NetworkScreen(onChanged: () -> Unit, modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.height(dimens.space8))
         Text(
-            text = "Only the explorer uses the RPC, to read blocks in ranges. Without one it reads them from the LCD.",
+            text = NodeConfig.RPC_WHY,
             style = EarthTypography.textXs,
             color = EarthColors.Text.textTertiary,
         )

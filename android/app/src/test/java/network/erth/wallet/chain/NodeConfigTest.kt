@@ -4,8 +4,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.security.MessageDigest
+import java.util.Base64
 
 /** The custom-node rules: https anywhere, plain http only to this phone or a private network. */
 class NodeConfigTest {
@@ -52,5 +55,37 @@ class NodeConfigTest {
         // With the default node, no http:// base is allowed, local or not.
         assertTrue(NodeConfig.allowed("https://lcd.erth.network"))
         assertFalse(NodeConfig.allowed("http://127.0.0.1:1317"))
+    }
+
+    /** The genesis hash is over the decoded chunks in order, whatever their split. */
+    @Test
+    fun genesisHashOverChunks() {
+        val genesis = "{\"genesis_time\":\"2026-10-02T12:00:00Z\",\"chain_id\":\"earth-1\"}".toByteArray()
+        val want = MessageDigest.getInstance("SHA-256").digest(genesis).joinToString("") { "%02x".format(it) }
+        fun served(parts: List<ByteArray>): (Int) -> String = { i ->
+            """{"jsonrpc":"2.0","id":-1,"result":{"chunk":"$i","total":"${parts.size}","data":"${Base64.getEncoder().encodeToString(parts[i])}"}}"""
+        }
+        assertEquals(want, NodeConfig.genesisSha256(served(listOf(genesis))))
+        assertEquals(want, NodeConfig.genesisSha256(served(listOf(genesis.copyOfRange(0, 10), genesis.copyOfRange(10, 30), genesis.copyOfRange(30, genesis.size)))))
+        // A chunk out of order, a changing total, too many chunks, an error: refused.
+        assertThrows(IllegalStateException::class.java) { NodeConfig.genesisSha256 { """{"result":{"chunk":"1","total":"2","data":"YQ=="}}""" } }
+        assertThrows(IllegalStateException::class.java) {
+            NodeConfig.genesisSha256 { i -> """{"result":{"chunk":"$i","total":"${i + 2}","data":"YQ=="}}""" }
+        }
+        assertThrows(IllegalStateException::class.java) { NodeConfig.genesisSha256 { i -> """{"result":{"chunk":"$i","total":"99","data":"YQ=="}}""" } }
+        assertThrows(IllegalStateException::class.java) { NodeConfig.genesisSha256 { """{"jsonrpc":"2.0","error":{"code":-32603}}""" } }
+    }
+
+    /** The pin is 64 lowercase hex digits (set at the ceremony; iOS holds the same). */
+    @Test
+    fun genesisPinIsASha256() {
+        assertTrue(Regex("[0-9a-f]{64}").matches(network.erth.wallet.Constants.EARTH_GENESIS_SHA256))
+    }
+
+    /** A node without an RPC is refused before anything is asked of it: only the RPC serves the genesis. */
+    @Test
+    fun rpcIsRequired() {
+        val e = assertThrows(IllegalArgumentException::class.java) { NodeConfig.probe(NodeConfig.Node("https://node.example.com", "")) }
+        assertTrue(e.message!!.contains("RPC"))
     }
 }

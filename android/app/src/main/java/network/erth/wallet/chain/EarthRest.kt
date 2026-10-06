@@ -70,7 +70,7 @@ object EarthRest {
         }
     }
 
-    private fun readBounded(stream: java.io.InputStream?): String {
+    private fun readBounded(stream: java.io.InputStream?, maxBytes: Int = MAX_BODY_BYTES): String {
         if (stream == null) return ""
         return stream.use { s ->
             val out = java.io.ByteArrayOutputStream()
@@ -80,7 +80,7 @@ object EarthRest {
                 val n = s.read(buf)
                 if (n < 0) break
                 total += n
-                if (total > MAX_BODY_BYTES) throw java.io.IOException("response exceeds $MAX_BODY_BYTES bytes")
+                if (total > maxBytes) throw java.io.IOException("response exceeds $maxBytes bytes")
                 out.write(buf, 0, n)
             }
             out.toString("UTF-8").also { checkJsonDepth(it) }
@@ -104,7 +104,14 @@ object EarthRest {
         if (!ok) throw IOException("refusing a cleartext connection to $base")
     }
 
-    internal fun getFrom(base: String, path: String, height: Long? = null, allowLocal: Boolean = false, headers: (HttpURLConnection) -> Unit = {}): Pair<Int, String> {
+    internal fun getFrom(
+        base: String,
+        path: String,
+        height: Long? = null,
+        allowLocal: Boolean = false,
+        maxBytes: Int = MAX_BODY_BYTES,
+        headers: (HttpURLConnection) -> Unit = {},
+    ): Pair<Int, String> {
         // An unset base is a supported configuration, not an error: the RPC is
         // optional and is left empty when the deployment exposes only the LCD.
         // Reported as a non-2xx so callers take their existing failure path
@@ -125,7 +132,7 @@ object EarthRest {
             val code = conn.responseCode
             headers(conn)
             val stream = if (code >= 400) conn.errorStream else conn.inputStream
-            code to readBounded(stream)
+            code to readBounded(stream, maxBytes)
         } finally {
             conn.disconnect()
         }

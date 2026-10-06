@@ -25,6 +25,8 @@ privacy core, checked against the same vectors.
     tools/      chainverify (proof checking), keycheck + txcheck + certcheck
                 (Go ground truth for the iOS port), privacyvectors (golden
                 vectors from the chain's own code)
+                genesishash (the genesis sha256 the own-node check pins: set at the
+                ceremony from its genesis.json)
 
 Gradle lives in `android/`, so **every `./gradlew` command runs from there**.
 

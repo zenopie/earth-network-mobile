@@ -48,7 +48,7 @@ javalite.
 | File | Responsibility |
 |------|----------------|
 | `EarthRest.kt` | `get` / `postJson` over the LCD, `getRpc` for CometBFT RPC, to the node `NodeConfig` names. |
-| `NodeConfig.kt` | The node in use: Earth's, or the user's own (Settings → Network), checked to be the live earth-1 (chain id, block 1 hash, a recent tip) before it is saved. https only, except the user's own node at a local address. |
+| `NodeConfig.kt` | The node in use: Earth's, or the user's own (Settings → Network), checked to be the live earth-1 (chain id, the sha256 of the genesis its RPC serves, its LCD and RPC on one chain, a recent tip) before it is saved; the RPC is required. https only, except the user's own node at a local address. |
 | `EarthTx.kt` | Account lookup → `TxBody` / `AuthInfo` / `SignDoc` → sign → broadcast `TxRaw`. |
 | `Fees.kt` | Gas price and fee for a gas limit. |
 | `Bank.kt` | Balances, supply, `msgSend`. |

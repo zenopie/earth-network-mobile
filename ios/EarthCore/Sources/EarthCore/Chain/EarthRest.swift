@@ -152,9 +152,9 @@ public struct EarthRest: Sendable {
 
     /// The CometBFT RPC, which serves the one thing the LCD cannot: a *range*
     /// of blocks in a single request. Callers must tolerate it being absent.
-    public func getRPC(_ path: String) async throws -> JSON {
+    public func getRPC(_ path: String, maxBytes: Int = EarthRest.maxBodyBytes) async throws -> JSON {
         guard let rpc else { throw Error.rpcUnavailable }
-        return try await request(URLRequest(url: try checked(rpc).appendingPath(path)))
+        return try await request(URLRequest(url: try checked(rpc).appendingPath(path)), maxBytes: maxBytes)
     }
 
     public func postJSON(_ path: String, body: [String: Any]) async throws -> JSON {
@@ -165,8 +165,8 @@ public struct EarthRest: Sendable {
         return try await self.request(request)
     }
 
-    private func request(_ request: URLRequest) async throws -> JSON {
-        let (data, status) = try await Self.boundedData(session, request)
+    private func request(_ request: URLRequest, maxBytes: Int = EarthRest.maxBodyBytes) async throws -> JSON {
+        let (data, status) = try await Self.boundedData(session, request, max: maxBytes)
         guard (200 ... 299).contains(status) else {
             throw Error.http(status: status, body: String(decoding: data, as: UTF8.self))
         }

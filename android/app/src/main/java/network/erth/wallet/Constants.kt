@@ -40,15 +40,22 @@ object Constants {
     const val EARTH_CHAIN_ID = "earth-1"
 
     // ======================== SET AT THE GENESIS CEREMONY ========================
-    // The live earth-1's block 1 hash: 64 lowercase hex digits, as the LCD's
-    // /cosmos/base/tendermint/v1beta1/blocks/1 (block_id.hash, base64) and the
-    // RPC's /block?height=1 (result.block_id.hash, hex) both give it. earth-1
-    // has been relaunched under the same chain id, so the chain id alone does
-    // not tell the live chain from an old genesis or a fork: Settings -> Network
-    // refuses a node whose block 1 is not this one (NodeConfig.probe). Must
-    // equal iOS Constants.genesisBlockHash. Empty until it is set: the check
-    // then compares with Earth's own node's block 1 instead.
-    const val EARTH_GENESIS_BLOCK_HASH = ""
+    // sha256 of the live earth-1's genesis as a CometBFT node serves it: the
+    // base64 chunks of the RPC's /genesis_chunked, decoded and concatenated.
+    // earth-1 has been relaunched under the same chain id, so the chain id
+    // alone does not tell the live chain from an old genesis or a fork:
+    // Settings -> Network refuses a node whose genesis is not this one
+    // (NodeConfig.probe). The genesis is what every node keeps, state-synced
+    // or pruned, where block 1 is not.
+    //
+    // NOT the sha256 of genesis.json (deploy's akash/genesis.sha256): CometBFT
+    // v0.38 serves its own re-encoding of the genesis doc (compact, app_name
+    // and app_version dropped), so the bytes differ from the file's. Compute
+    // it from the ceremony's genesis.json with tools/genesishash, or from any
+    // node started on it. The value below is for the chain repo's genesis at
+    // b9f840e (file sha256 723549a8...); the ceremony replaces it. Must equal
+    // iOS Constants.genesisSHA256.
+    const val EARTH_GENESIS_SHA256 = "6d13801680bece746fe05703d0d35a88c73ee611d15181a6d0eaf00a0fbe3a95"
     // =============================================================================
     const val EARTH_PREFIX = "earth"
     const val UERTH_DENOM = "uerth"

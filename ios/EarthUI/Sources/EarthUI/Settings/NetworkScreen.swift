@@ -40,10 +40,10 @@ struct NetworkScreen: View {
                     field("https://node.example.com", text: $lcd)
                     if let lcdError { errorText(lcdError) }
 
-                    EarthLabel("RPC URL (optional)")
+                    EarthLabel("RPC URL")
                     field("https://rpc.example.com", text: $rpc)
                     if let rpcError { errorText(rpcError) }
-                    Text("Only the explorer uses the RPC, to read blocks in ranges. Without one it reads them from the LCD.")
+                    Text(NodeSettings.rpcWhy)
                         .font(EarthType.caption)
                         .foregroundStyle(theme.colors.textTertiary)
 
@@ -86,8 +86,8 @@ struct NetworkScreen: View {
     }
 
     private var lcdURL: URL? { NodeSettings.normalize(lcd) }
-    /// .some(nil): no RPC.
-    private var rpcURL: URL?? { rpc.trimmingCharacters(in: .whitespaces).isEmpty ? .some(nil) : NodeSettings.normalize(rpc).map { .some($0) } }
+    /// Required: only the RPC serves the genesis the check compares.
+    private var rpcURL: URL? { NodeSettings.normalize(rpc) }
 
     private var lcdError: String? {
         if lcd.isEmpty { return nil }
@@ -97,7 +97,7 @@ struct NetworkScreen: View {
 
     private var rpcError: String? {
         if rpc.trimmingCharacters(in: .whitespaces).isEmpty { return nil }
-        guard let u = NodeSettings.normalize(rpc) else { return "Enter a URL, or leave this empty" }
+        guard let u = NodeSettings.normalize(rpc) else { return "Enter a URL, for example https://rpc.example.com" }
         return NodeSettings.problem(u)
     }
 

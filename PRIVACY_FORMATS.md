@@ -1694,11 +1694,16 @@ holds its access logs, could tie the two. The defence is operational, not in
 the request pattern: Earth's node keeps no request logs, and Settings →
 Network points an install at the user's own node (`NodeConfig.kt` /
 `NodeSettings.swift`), through which every chain query and broadcast then
-goes. Such a node is saved only when its chain id is earth-1, its block 1
-hash (LCD `blocks/1`, and RPC `/block?height=1` when an RPC is given) is the
-live chain's (`EARTH_GENESIS_BLOCK_HASH` / `Constants.genesisBlockHash`, set
-at the genesis ceremony; Earth's own node's block 1 until then), and its
-latest block is at most 10 minutes old. Over plain http (a node on the
+goes. Such a node needs both its LCD and its CometBFT RPC, and is saved only
+when its chain id is earth-1; the sha256 of the genesis its RPC serves
+(`/genesis_chunked`, the base64 chunks decoded and concatenated) is the live
+chain's (`EARTH_GENESIS_SHA256` / `Constants.genesisSHA256`, set at the
+genesis ceremony); its LCD and RPC hold the same block at the lower of
+their two latest heights; and the latest block of each is at most 10
+minutes old. The genesis check works on a state-synced or pruned node,
+which keeps its genesis but not block 1. The pin is not genesis.json's
+sha256: CometBFT v0.38 serves its own re-encoding of the genesis doc, so
+it is computed from the file with `tools/genesishash` (which prints both). Over plain http (a node on the
 phone or the LAN) a handle payment or referral also needs the backend's
 directory, read over https, to agree with the node's: the node's pages alone
 never resolve one. The backend (indexer, handle directory, gas grant, fetched circuits)
