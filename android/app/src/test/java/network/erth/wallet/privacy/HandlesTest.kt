@@ -145,6 +145,16 @@ class HandlesTest {
         assertTrue("$forged", forged is HandleDirectory.Resolution.NotPayable)
         chain.forgeHandleAddress = null
 
+        // R2-MK-01: an http own node never resolves a payment alone. With the
+        // backend unreachable the node's pages are all there is: refused.
+        val overHttp = { blind: Boolean ->
+            HandleDirectory(chain::handlesPage, { f, l -> if (blind) throw java.io.IOException("blocked") else chain.handles(f, l) },
+                now = { chain.now }, requireBackend = { true })
+        }
+        assertTrue(overHttp(false).resolveForPayment("alice") is HandleDirectory.Resolution.Payable)
+        val blocked = overHttp(true).resolveForPayment("alice")
+        assertEquals(HandleDirectory.UNCONFIRMED_OVER_HTTP, (blocked as HandleDirectory.Resolution.NotPayable).reason)
+
         // A handle that lapsed (renewal period) or was never claimed pays nobody.
         assertTrue(chain.handleDirectory().resolveForPayment("nobody") is HandleDirectory.Resolution.NotPayable)
         assertTrue(chain.handleDirectory().resolveForPayment("not a handle!") is HandleDirectory.Resolution.NotPayable)

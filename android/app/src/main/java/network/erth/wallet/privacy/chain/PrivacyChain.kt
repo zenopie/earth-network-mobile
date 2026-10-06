@@ -171,7 +171,9 @@ object PrivacyQueries {
      */
     val handles: network.erth.wallet.privacy.handles.HandleDirectory by lazy {
         val indexer = network.erth.wallet.privacy.sync.HttpPrivacyIndexer(network.erth.wallet.Constants.EARTH_API_URL)
-        network.erth.wallet.privacy.handles.HandleDirectory(::handlesPage, { from, limit -> indexer.handles(from, limit) })
+        network.erth.wallet.privacy.handles.HandleDirectory(::handlesPage, { from, limit -> indexer.handles(from, limit) },
+            // An http own node: the node's pages alone never resolve a payment.
+            requireBackend = { network.erth.wallet.chain.NodeConfig.isCleartext(network.erth.wallet.chain.NodeConfig.current.lcd) })
     }
 
     data class Epoch(val number: Long, val startTime: Long, val endTime: Long)

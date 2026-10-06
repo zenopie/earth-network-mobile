@@ -82,7 +82,9 @@ enum PrivacySession {
         let queries = PrivacyQueries(rest: EarthRest())
         let indexer = HTTPPrivacyIndexer()
         return HandleDirectory(fetchChainPage: { start, limit in try await queries.handlesPage(start: start, limit: limit) },
-                               fetchStream: { from, limit in try await indexer.handles(fromIndex: from, limit: limit) })
+                               fetchStream: { from, limit in try await indexer.handles(fromIndex: from, limit: limit) },
+                               // An http own node: the node's pages alone never resolve a payment.
+                               requireBackend: { NodeSettings.isCleartext(NodeSettings.current.lcd) })
     }()
 
     /// A wallet's store directory: named by a hash of the owner key, not the

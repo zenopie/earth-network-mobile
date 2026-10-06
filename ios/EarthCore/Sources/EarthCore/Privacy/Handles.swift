@@ -124,6 +124,13 @@ public struct HandleEntry: Equatable, Sendable {
 /// referral) `resolveForPayment` reads a fresh copy and checks the entry
 /// against the chain's own directory (also fetched whole), so neither an
 /// indexer nor a stale cache can redirect a payment.
+///
+/// That check is worth something only while the two copies come from
+/// different places. `requireBackend` says when the node cannot be the
+/// other one (the user's own node over plain http, which anyone on that
+/// network can answer for): a payment then needs the backend's copy, read
+/// over https, to agree with the node's, and never resolves from the node
+/// alone. Mirrors HandleDirectory in Handles.kt.
 public actor HandleDirectory {
     /// One page of the chain's Query/Handles: handles after start; next "" when exhausted.
     public struct Page: Sendable {
@@ -170,29 +177,40 @@ public actor HandleDirectory {
     private let fetchStream: (@Sendable (Int64, Int) async throws -> StreamPage)?
     private let now: @Sendable () -> Int64
     private let maxAgeSeconds: Int64
+    private let requireBackend: @Sendable () -> Bool
     private var entries: [String: HandleEntry]?
     private var fetchedAt: Int64 = 0
+    /// Whether `entries` is the backend's copy (not the chain pages it falls back on).
+    private var fromBackend = false
     private var chainEntries: [String: HandleEntry]?
     private var chainFetchedAt: Int64 = 0
 
     public init(fetchChainPage: @escaping @Sendable (String, Int) async throws -> Page,
                 fetchStream: (@Sendable (Int64, Int) async throws -> StreamPage)? = nil,
                 now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) },
-                maxAgeSeconds: Int64 = 600) {
+                maxAgeSeconds: Int64 = 600,
+                requireBackend: @escaping @Sendable () -> Bool = { false }) {
         self.fetchChainPage = fetchChainPage; self.fetchStream = fetchStream; self.now = now; self.maxAgeSeconds = maxAgeSeconds
+        self.requireBackend = requireBackend
     }
 
     /// The directory, from cache when it is younger than `maxAge` seconds.
-    public func all(maxAge: Int64? = nil) async throws -> [String: HandleEntry] {
+    public func all(maxAge: Int64? = nil) async throws -> [String: HandleEntry] { try await read(maxAge: maxAge).0 }
+
+    /// The directory and whether it is the backend's copy.
+    private func read(maxAge: Int64?) async throws -> ([String: HandleEntry], Bool) {
         let age = maxAge ?? maxAgeSeconds
-        if let e = entries, (0 ... age).contains(now() - fetchedAt) { return e }
+        if let e = entries, (0 ... age).contains(now() - fetchedAt) { return (e, fromBackend) }
         var out: [String: HandleEntry]? = nil
         if let f = fetchStream { out = try? await readStream(f) }
         let got: [String: HandleEntry]
         if let out { got = out } else { got = try await chainDirectory(maxAge: age) }
-        entries = got; fetchedAt = now()
-        return got
+        entries = got; fromBackend = out != nil; fetchedAt = now()
+        return (got, fromBackend)
     }
+
+    public static let unconfirmedOverHTTP = "Your node is reached over plain http, so a handle is paid only when Earth's directory "
+        + "confirms it, and it could not be read. Try again, or pay the address itself."
 
     /// 0 < expires_at <= renewal_until <= now + `Handles.maxAheadSeconds`.
     public static func timesOk(_ e: HandleEntry, now: Int64) -> Bool {
@@ -286,7 +304,12 @@ public actor HandleDirectory {
         guard let h = Handles.parse(input) else {
             return .notPayable("\"\(input.trimmingCharacters(in: .whitespaces).prefix(40))\" is not a handle")
         }
-        guard let e = try await fresh()[h] else { return .notPayable("@\(h) is not claimed by anyone") }
+        let (dir, backend) = try await read(maxAge: Self.freshSeconds)
+        if requireBackend() && !backend {
+            invalidate()
+            return .notPayable(Self.unconfirmedOverHTTP)
+        }
+        guard let e = dir[h] else { return .notPayable("@\(h) is not claimed by anyone") }
         guard e.status(at: now()) == HandleEntry.live else { return .notPayable("@\(h) has lapsed and names no address now") }
         let c = try await chainDirectory(maxAge: Self.freshSeconds)[h]
         guard let c, c.address == e.address, c.status(at: now()) == HandleEntry.live else {

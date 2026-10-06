@@ -1694,7 +1694,14 @@ holds its access logs, could tie the two. The defence is operational, not in
 the request pattern: Earth's node keeps no request logs, and Settings →
 Network points an install at the user's own node (`NodeConfig.kt` /
 `NodeSettings.swift`), through which every chain query and broadcast then
-goes. The backend (indexer, handle directory, gas grant, fetched circuits)
+goes. Such a node is saved only when its chain id is earth-1, its block 1
+hash (LCD `blocks/1`, and RPC `/block?height=1` when an RPC is given) is the
+live chain's (`EARTH_GENESIS_BLOCK_HASH` / `Constants.genesisBlockHash`, set
+at the genesis ceremony; Earth's own node's block 1 until then), and its
+latest block is at most 10 minutes old. Over plain http (a node on the
+phone or the LAN) a handle payment or referral also needs the backend's
+directory, read over https, to agree with the node's: the node's pages alone
+never resolve one. The backend (indexer, handle directory, gas grant, fetched circuits)
 is not a node and stays at api.erth.network; it never learns the
 transparent address (the indexer streams are whole-chain, the gas grant
 body carries neither address).

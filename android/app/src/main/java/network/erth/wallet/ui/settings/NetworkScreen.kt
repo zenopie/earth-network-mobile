@@ -148,7 +148,8 @@ fun NetworkScreen(onChanged: () -> Unit, modifier: Modifier = Modifier) {
             Spacer(Modifier.height(dimens.space12))
             Text(
                 text = "This is plain http://. Anyone on the same network can read and alter what the wallet " +
-                    "sends and receives, including the balances it shows you. Use it only for a node on this " +
+                    "sends and receives, including the balances it shows you. A payment to a @handle then goes " +
+                    "ahead only when Earth's own directory confirms the address. Use it only for a node on this " +
                     "phone or on a network you control.",
                 style = EarthTypography.textSm,
                 color = EarthColors.Utility.ErrorRed.utilityError700,

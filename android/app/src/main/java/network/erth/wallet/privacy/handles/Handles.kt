@@ -129,12 +129,20 @@ data class HandleEntry(
  * [resolveForPayment] reads a fresh copy and checks the entry against the
  * chain's own directory (also fetched whole), so neither an indexer nor a
  * stale cache can redirect a payment.
+ *
+ * That check is worth something only while the two copies come from
+ * different places. [requireBackend] says when the node cannot be the
+ * other one (the user's own node over plain http, which anyone on that
+ * network can answer for): a payment then needs the backend's copy, read
+ * over https, to agree with the node's, and never resolves from the node
+ * alone.
  */
 class HandleDirectory(
     private val fetchChainPage: (start: String, limit: Int) -> Page,
     private val fetchStream: ((fromIndex: Long, limit: Int) -> StreamPage)? = null,
     private val now: () -> Long = { System.currentTimeMillis() / 1000 },
     private val maxAgeSeconds: Long = 600,
+    private val requireBackend: () -> Boolean = { false },
 ) {
     /** One page of the chain's Query/Handles: handles after start; next "" when exhausted. */
     data class Page(val handles: List<HandleEntry>, val next: String)
@@ -146,17 +154,25 @@ class HandleDirectory(
 
     private var entries: Map<String, HandleEntry>? = null
     private var fetchedAt = 0L
+    /** Whether [entries] is the backend's copy (not the chain pages it falls back on). */
+    private var fromBackend = false
     private var chainEntries: Map<String, HandleEntry>? = null
     private var chainFetchedAt = 0L
 
     /** The directory, from cache when it is younger than [maxAge] seconds. */
     @Synchronized
-    fun all(maxAge: Long = maxAgeSeconds): Map<String, HandleEntry> {
-        entries?.let { if (now() - fetchedAt in 0..maxAge) return it }
-        val out = fetchStream?.let { f -> runCatching { readStream(f) }.getOrNull() } ?: chainDirectory(maxAge)
+    fun all(maxAge: Long = maxAgeSeconds): Map<String, HandleEntry> = read(maxAge).first
+
+    /** The directory and whether it is the backend's copy. */
+    @Synchronized
+    private fun read(maxAge: Long): Pair<Map<String, HandleEntry>, Boolean> {
+        entries?.let { if (now() - fetchedAt in 0..maxAge) return it to fromBackend }
+        val stream = fetchStream?.let { f -> runCatching { readStream(f) }.getOrNull() }
+        val out = stream ?: chainDirectory(maxAge)
         entries = out
+        fromBackend = stream != null
         fetchedAt = now()
-        return out
+        return out to fromBackend
     }
 
     /** The chain's own directory (Query/Handles, every page), from cache when younger than [maxAge]. */
@@ -256,7 +272,12 @@ class HandleDirectory(
      */
     fun resolveForPayment(input: String): Resolution {
         val h = Handles.parse(input) ?: return Resolution.NotPayable("\"${input.trim().take(40)}\" is not a handle")
-        val e = fresh()[h] ?: return Resolution.NotPayable("@$h is not claimed by anyone")
+        val (dir, backend) = read(FRESH_SECONDS)
+        if (requireBackend() && !backend) {
+            invalidate()
+            return Resolution.NotPayable(UNCONFIRMED_OVER_HTTP)
+        }
+        val e = dir[h] ?: return Resolution.NotPayable("@$h is not claimed by anyone")
         if (e.statusAt(now()) != HandleEntry.LIVE) return Resolution.NotPayable("@$h has lapsed and names no address now")
         val c = chainDirectory(FRESH_SECONDS)[h]
         if (c == null || c.address != e.address || c.statusAt(now()) != HandleEntry.LIVE) {
@@ -277,6 +298,8 @@ class HandleDirectory(
         const val MAX_PAGES = MAX_ROWS / PAGE
         const val FRESH_SECONDS = 60L
         const val STREAM_RESTARTS = 3
+        const val UNCONFIRMED_OVER_HTTP = "Your node is reached over plain http, so a handle is paid only when Earth's directory " +
+            "confirms it, and it could not be read. Try again, or pay the address itself."
         private val STATUSES = setOf(HandleEntry.LIVE, HandleEntry.RENEWAL, HandleEntry.FREE)
 
         /** 0 < expires_at <= renewal_until <= now + [Handles.MAX_AHEAD_SECONDS]. */

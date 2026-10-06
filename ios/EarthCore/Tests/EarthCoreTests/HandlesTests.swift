@@ -126,6 +126,20 @@ final class HandlesTests: PrivacyTestCase {
         if case .payable = try await chain.handleDirectory().resolveForPayment("alice") { XCTFail("forged address paid") }
         chain.forgeHandleAddress = nil
 
+        // R2-MK-01: an http own node never resolves a payment alone. With the
+        // backend unreachable the node's pages are all there is: refused.
+        func overHTTP(_ blind: Bool) -> HandleDirectory {
+            HandleDirectory(fetchChainPage: { [chain] s, l in chain.handlesPage(start: s, limit: l) },
+                            fetchStream: { [chain] f, l in
+                                if blind { throw URLError(.cannotConnectToHost) }
+                                return try await chain.handles(fromIndex: f, limit: l)
+                            },
+                            now: { [chain] in chain.now }, requireBackend: { true })
+        }
+        if case .notPayable = try await overHTTP(false).resolveForPayment("alice") { XCTFail("backend copy agreed, yet refused") }
+        guard case let .notPayable(why) = try await overHTTP(true).resolveForPayment("alice") else { return XCTFail("paid from the node alone") }
+        XCTAssertEqual(HandleDirectory.unconfirmedOverHTTP, why)
+
         // A handle never claimed, or one that lapsed, pays nobody.
         if case .payable = try await chain.handleDirectory().resolveForPayment("nobody") { XCTFail("unclaimed paid") }
         if case .payable = try await chain.handleDirectory().resolveForPayment("not a handle!") { XCTFail("not a handle") }
