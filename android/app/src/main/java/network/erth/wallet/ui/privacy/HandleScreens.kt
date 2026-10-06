@@ -511,9 +511,14 @@ internal const val SWITCH_NOTE = "Switching moves your personhood to a fresh ide
     "only to the passport's live identity. Anything not moved stays with the old identity until it lapses, and the new " +
     "identity cannot claim a handle or cast a caretaker vote until then (up to a year)."
 
-/** Which fresh identity a compromise calls for: a new wallet for the phrase, the next generation for the secret alone. */
+/**
+ * Which fresh identity a compromise calls for: the next generation only for
+ * a secret that leaked by itself, outside the phone. The wallet holds the
+ * key every generation derives from in memory, so a memory compromise
+ * exposes them all, and so does the phrase: a new wallet then.
+ */
 internal const val FRESH_IDENTITY_NOTE = "Your passport is registered to this wallet's next identity, derived from the " +
-    "same recovery phrase. Use it if you think this identity's secret alone was exposed, which is rare: the wallet " +
-    "derives it from the phrase and keeps it only in memory. It does not help if your recovery phrase may be exposed: " +
-    "anyone with the phrase can derive every identity of this wallet. Then create a new wallet, with a new phrase, " +
-    "and switch to it."
+    "same recovery phrase. This helps only if this identity's secret leaked by itself outside this phone, for example " +
+    "in a proof's witness file or a log. It does not help if this phone may be compromised or your recovery phrase may " +
+    "be exposed: the wallet holds the key every identity of this wallet derives from in memory, and anyone with that " +
+    "key or the phrase can derive them all. Then create a new wallet, with a new phrase, and switch to it."
