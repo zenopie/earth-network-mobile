@@ -131,15 +131,6 @@ class RegistrationActivity : ComponentActivity() {
 
                 val ctx = this@RegistrationActivity
 
-                // A wallet whose identity registered before cannot register
-                // again (personhood 1130): said before the passport is read.
-                var blocked: String? by remember { mutableStateOf(null) }
-                LaunchedEffect(Unit) {
-                    blocked = withContext(Dispatchers.IO) {
-                        runCatching { PrivacySession.wallet(ctx).identityUsed() }.getOrDefault(false)
-                    }.let { if (it) PrivacyWallet.IDENTITY_USED else null }
-                }
-
                 // The fee is paid from shielded ERTH, so the balance that
                 // matters is the synced pool's, not the transparent account's.
                 // A new human has none: that is what the gas grant is for.
@@ -195,9 +186,10 @@ class RegistrationActivity : ComponentActivity() {
                             }
                             .onFailure { e ->
                                 val failure = (e as? PassportSession.FailureException)?.failure
-                                // This wallet's identity registered before (1130): nothing to retry here.
+                                // The identity prepared registered meanwhile (1130): the wallet
+                                // moved on to its next one, and a new scan proves with it.
                                 val used = (failure as? PassportSession.Failure.Error)?.cause is PrivacyWallet.IdentityUsed
-                                stage = if (used) NfcStage.Failed(PrivacyWallet.IDENTITY_USED, canRetry = false) else when (failure) {
+                                stage = if (used) NfcStage.Failed(PrivacyWallet.IDENTITY_USED, canRetry = true) else when (failure) {
                                     PassportSession.Failure.WrongMrz -> NfcStage.Failed(
                                         "The chip refused those details. Check the " +
                                             "passport number and dates.",
@@ -303,6 +295,11 @@ class RegistrationActivity : ComponentActivity() {
                                     gasWork = null
                                 }
                                 if (result is GasGrant.Result.Refused) {
+                                    // Its identity used before (1130, the chain's own set): the
+                                    // next registration proves with the next generation.
+                                    if (result.message == PrivacyWallet.IDENTITY_USED) {
+                                        withContext(Dispatchers.IO) { runCatching { PrivacySession.wallet(ctx).identityRefused(ready.prep) } }
+                                    }
                                     gasError = result.message
                                     return@launch
                                 }
@@ -379,7 +376,6 @@ class RegistrationActivity : ComponentActivity() {
                     when (step) {
                         Step.Intro -> RegistrationIntroScreen(
                             onStart = { step = Step.Camera },
-                            blocked = blocked,
                             modifier = inset,
                         )
                         Step.Camera -> MrzCameraScreen(

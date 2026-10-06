@@ -1277,6 +1277,11 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** (height, leaf index) of every zeroing. */
     val zeroed = ArrayList<Pair<Long, Long>>()
 
+    /** [idc]'s registration ends (its lease lapsed): the chain's sweep zeroes its leaf, in the next block. */
+    fun lapse(idc: Fr) {
+        registeredIdc.entries.filter { it.value == idc }.map { it.key }.forEach { zeroLeaf(it) }
+    }
+
     private fun zeroLeaf(index: Long) {
         if (identityTree.leaf(index) == Fr.ZERO) return
         identityTree.update(index, Fr.ZERO)

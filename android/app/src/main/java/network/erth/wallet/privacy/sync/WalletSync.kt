@@ -290,21 +290,30 @@ class WalletSync(
         /** Bytes of the record memo's tag. */
         const val REG_TAG_BYTES = 16
 
-        /** The record's tag: the first 16 bytes of H(TAG_RECTAG, nk, dsc_key, U64(built_at)). Only the owner (nk) can make one. */
-        fun regTag(nk: Fr, dscKey: Fr, builtAt: Long): ByteArray =
-            Privacy.h(Privacy.TAG_RECTAG, nk, dscKey, Privacy.u64(builtAt)).toBytes().copyOf(REG_TAG_BYTES)
+        /**
+         * The record's tag: the first 16 bytes of H(TAG_RECTAG, nk, dsc_key,
+         * U64(built_at)), with U64(generation) appended for an identity
+         * generation >= 1 (PrivacyKeys). Only the owner (nk) can make one;
+         * the tag alone says which generation registered.
+         */
+        fun regTag(nk: Fr, dscKey: Fr, builtAt: Long, generation: Int = 0): ByteArray =
+            (if (generation == 0) Privacy.h(Privacy.TAG_RECTAG, nk, dscKey, Privacy.u64(builtAt))
+            else Privacy.h(Privacy.TAG_RECTAG, nk, dscKey, Privacy.u64(builtAt), Privacy.u64(generation.toLong()))).toBytes().copyOf(REG_TAG_BYTES)
 
-        /** The 64-byte memo of a registration record note. */
-        fun regMemo(nk: Fr, dscKey: Fr, country: String, builtAt: Long): ByteArray {
+        /** The 64-byte memo of a registration record note for identity [generation]. */
+        fun regMemo(nk: Fr, dscKey: Fr, country: String, builtAt: Long, generation: Int = 0): ByteArray {
             val b = java.nio.ByteBuffer.allocate(NoteCipher.MEMO_BYTES)
             b.put(REG_MAGIC)
             val c = country.uppercase().takeIf { it.length == 2 && it.all { ch -> ch in 'A'..'Z' } }
             b.put(c?.toByteArray(Charsets.US_ASCII) ?: ByteArray(2))
             b.putLong(builtAt)
             b.put(dscKey.toBytes())
-            b.put(regTag(nk, dscKey, builtAt))
+            b.put(regTag(nk, dscKey, builtAt, generation))
             return b.array()
         }
+
+        /** A registration record: what the leaf is matched by, and the identity generation it registered. */
+        data class RegMemo(val dscKey: Fr, val country: String, val builtAt: Long, val generation: Int = 0)
 
         /**
          * (dsc_key, country, built_at) if [memo] is a version-2 registration
@@ -313,7 +322,7 @@ class WalletSync(
          * leaf search per leaf at its height. The tag is checked before
          * anything else is done with it.
          */
-        fun parseRegMemo(nk: Fr, memo: ByteArray): Triple<Fr, String, Long>? {
+        fun parseRegMemo(nk: Fr, memo: ByteArray, maxGeneration: Int = 0): RegMemo? {
             val m = memo.copyOf(NoteCipher.MEMO_BYTES)
             if (!m.copyOf(3).contentEquals(REG_MAGIC)) return null
             val b = java.nio.ByteBuffer.wrap(m, 3, m.size - 3)
@@ -327,8 +336,9 @@ class WalletSync(
             val dsc = runCatching { Fr.fromBytes(ByteArray(32).also { b.get(it) }) }.getOrNull() ?: return null
             val tag = ByteArray(REG_TAG_BYTES).also { b.get(it) }
             if (m.copyOfRange(3 + 2 + 8 + 32 + REG_TAG_BYTES, m.size).any { it.toInt() != 0 }) return null
-            if (!java.security.MessageDigest.isEqual(tag, regTag(nk, dsc, builtAt))) return null
-            return Triple(dsc, country, builtAt)
+            // Generations 0..[maxGeneration], each tag tried in turn.
+            val g = (0..maxGeneration).firstOrNull { java.security.MessageDigest.isEqual(tag, regTag(nk, dsc, builtAt, it)) } ?: return null
+            return RegMemo(dsc, country, builtAt, g)
         }
 
         /** Unlock memo: "EU", version 1 (PRIVACY_FORMATS.md §6). */
@@ -385,30 +395,39 @@ class WalletSync(
         /** The most options a caretaker split names (x/allocation MaxVoterOptions). */
         const val MAX_SPLIT_OPTIONS = 20
 
+        /** [generation]: the identity generation the record is about, from its tag. */
         sealed interface StateRecord {
-            data class Handle(val kind: Int, val handle: String) : StateRecord
+            val generation: Int
+            data class Handle(val kind: Int, val handle: String, override val generation: Int = 0) : StateRecord
             /** [split] null: held, but the split was not recorded. */
-            data class Caretaker(val kind: Int, val expiresAt: Long, val split: Map<Long, Long>?) : StateRecord
+            data class Caretaker(val kind: Int, val expiresAt: Long, val split: Map<Long, Long>?, override val generation: Int = 0) : StateRecord
         }
 
-        private fun stateTag(nk: Fr, body: ByteArray): ByteArray =
-            Privacy.h(Privacy.TAG_STATETAG, nk, Privacy.bytes(body.copyOf(STATE_TAG_AT))).toBytes().copyOf(REG_TAG_BYTES)
+        /** H(TAG_STATETAG, nk, Bytes(memo[0..48))), with U64(generation) appended for a generation >= 1. */
+        private fun stateTag(nk: Fr, body: ByteArray, generation: Int): ByteArray {
+            val b = Privacy.bytes(body.copyOf(STATE_TAG_AT))
+            return (if (generation == 0) Privacy.h(Privacy.TAG_STATETAG, nk, b)
+            else Privacy.h(Privacy.TAG_STATETAG, nk, b, Privacy.u64(generation.toLong()))).toBytes().copyOf(REG_TAG_BYTES)
+        }
 
-        private fun sealState(nk: Fr, body: ByteArray): ByteArray {
+        private fun sealState(nk: Fr, body: ByteArray, generation: Int): ByteArray {
             val m = body.copyOf(NoteCipher.MEMO_BYTES)
-            stateTag(nk, m).copyInto(m, STATE_TAG_AT)
+            stateTag(nk, m, generation).copyInto(m, STATE_TAG_AT)
             return m
         }
 
-        /** A handle record for the identity whose nk is [nk]: HOLDS [handle], or RELEASED / MOVED_OUT (no handle). */
-        fun handleMemo(nk: Fr, kind: Int, handle: String = ""): ByteArray {
+        /**
+         * A handle record for identity [generation] of the wallet whose nk is
+         * [nk]: HOLDS [handle], or RELEASED / MOVED_OUT (no handle).
+         */
+        fun handleMemo(nk: Fr, kind: Int, handle: String = "", generation: Int = 0): ByteArray {
             require(kind in RECORD_HOLDS..RECORD_MOVED_OUT)
             require(if (kind == RECORD_HOLDS) network.erth.wallet.privacy.handles.Handles.valid(handle) else handle.isEmpty())
             val b = ByteArray(STATE_TAG_AT)
             HANDLE_MAGIC.copyInto(b)
             b[3] = kind.toByte()
             handle.toByteArray(Charsets.US_ASCII).copyInto(b, 4)
-            return sealState(nk, b)
+            return sealState(nk, b, generation)
         }
 
         /**
@@ -416,7 +435,7 @@ class WalletSync(
          * seconds), or CLEARED / MOVED_OUT. A split whose entries do not fit
          * 40 bytes is marked unrecorded (its expiry still is).
          */
-        fun caretakerMemo(nk: Fr, kind: Int, expiresAt: Long = 0, split: Map<Long, Long> = emptyMap()): ByteArray {
+        fun caretakerMemo(nk: Fr, kind: Int, expiresAt: Long = 0, split: Map<Long, Long> = emptyMap(), generation: Int = 0): ByteArray {
             require(kind in RECORD_HOLDS..RECORD_MOVED_OUT)
             val b = ByteArray(STATE_TAG_AT)
             CARETAKER_MAGIC.copyInto(b)
@@ -437,7 +456,7 @@ class WalletSync(
                 else e.copyInto(b, SPLIT_AT)
             }
             b[3] = k.toByte()
-            return sealState(nk, b)
+            return sealState(nk, b, generation)
         }
 
         /**
@@ -445,12 +464,19 @@ class WalletSync(
          * is [nk]'s (anyone can send this wallet a value-0 note with any
          * memo; only the holder of nk can tag one). Checked before use.
          */
-        fun parseStateMemo(nk: Fr, memo: ByteArray): StateRecord? {
+        fun parseStateMemo(nk: Fr, memo: ByteArray, maxGeneration: Int = 0): StateRecord? {
             val m = memo.copyOf(NoteCipher.MEMO_BYTES)
             val head = m.copyOf(3)
             val isHandle = head.contentEquals(HANDLE_MAGIC)
             if (!isHandle && !head.contentEquals(CARETAKER_MAGIC)) return null
-            if (!java.security.MessageDigest.isEqual(m.copyOfRange(STATE_TAG_AT, STATE_TAG_AT + REG_TAG_BYTES), stateTag(nk, m))) return null
+            val tag = m.copyOfRange(STATE_TAG_AT, STATE_TAG_AT + REG_TAG_BYTES)
+            val g = (0..maxGeneration).firstOrNull { java.security.MessageDigest.isEqual(tag, stateTag(nk, m, it)) } ?: return null
+            return parseStateBody(m, isHandle)?.let {
+                when (it) { is StateRecord.Handle -> it.copy(generation = g); is StateRecord.Caretaker -> it.copy(generation = g) }
+            }
+        }
+
+        private fun parseStateBody(m: ByteArray, isHandle: Boolean): StateRecord? {
             if (m.copyOfRange(STATE_TAG_AT + REG_TAG_BYTES, m.size).any { it.toInt() != 0 }) return null
             val kind = m[3].toInt() and 0xff
             if (isHandle) {
@@ -505,8 +531,12 @@ class WalletSync(
          * cursor), or the record's tx failed in its block ([height] void).
          * A held split's expiry is bounded like any other lease time.
          */
-        fun applyStateRecord(s: PrivacyState, position: Long, height: Long, rec: StateRecord, now: Long) {
-            if (height in s.voidRecordHeights) return
+        fun applyStateRecord(st: PrivacyState, position: Long, height: Long, rec: StateRecord, now: Long) {
+            if (height in st.voidRecordHeights) return
+            // What its generation holds; a later generation than the wallet
+            // acts as registered (only a registered identity writes one).
+            st.actAs(rec.generation)
+            val s = st.slot(rec.generation)
             when (rec) {
                 is StateRecord.Handle -> {
                     if (position <= s.handleRecordPos) return
@@ -547,7 +577,7 @@ class WalletSync(
          * MOVED_OUT one an outgoing move (kept, confirmed, until recorded in
          * its target).
          */
-        private fun settleMoves(s: PrivacyState, kind: String, recordKind: Int, matches: (PendingMove) -> Boolean) {
+        private fun settleMoves(s: IdentitySlot, kind: String, recordKind: Int, matches: (PendingMove) -> Boolean) {
             val incoming = when (recordKind) { RECORD_HOLDS -> true; RECORD_MOVED_OUT -> false; else -> return }
             s.pendingMoves.replaceAll { if (it.kind == kind && it.incoming == incoming && matches(it)) it.copy(confirmed = true) else it }
             // A confirmed outgoing move fixes the switch target.
@@ -559,6 +589,16 @@ class WalletSync(
 
         /** Record notes kept (newest first); only this wallet's own registrations carry a valid tag. */
         const val MAX_RECORDS = 32
+
+        /**
+         * Generations past the highest the wallet knows whose record tags
+         * are tried: a 1130 refusal skips one with no record of it.
+         */
+        const val GENERATION_LOOKAHEAD = 8
+
+        /** The highest generation whose record tags [s]'s sync tries. */
+        fun maxRecordGeneration(s: PrivacyState): Int =
+            minOf(PrivacyKeys.MAX_GENERATION, maxOf(s.generation, s.nextGeneration()) + GENERATION_LOOKAHEAD)
 
         /** Identity leaves kept per record (registrations sharing its block). */
         const val MAX_RECORD_LEAVES = 64
@@ -950,13 +990,14 @@ class WalletSync(
         // A value past 2^63-1 is not one the wallet can hold (Amounts).
         if (note.value < 0L) return null
         if (note.value == 0L) {
-            parseRegMemo(keys.nk, note.memo)?.let { (dsc, country, builtAt) ->
+            val gens = maxRecordGeneration(s)
+            parseRegMemo(keys.nk, note.memo, gens)?.let { (dsc, country, builtAt, generation) ->
                 if (s.regRecords.none { it.position == r.position }) {
-                    s.regRecords.add(RegRecord(r.height, r.position, dsc, country, builtAt))
+                    s.regRecords.add(RegRecord(r.height, r.position, dsc, country, builtAt, generation = generation))
                     if (s.regRecords.size > MAX_RECORDS) s.regRecords.remove(s.regRecords.minBy { it.height })
                 }
             }
-            parseStateMemo(keys.nk, note.memo)?.let { applyStateRecord(s, r.position, r.height, it, now()) }
+            parseStateMemo(keys.nk, note.memo, gens)?.let { applyStateRecord(s, r.position, r.height, it, now()) }
             // An unlock's record: the owner-tag counter of the position it closed.
             parseUnlockMemo(keys.nk, note.memo)?.let { c -> if (c > s.closedOtagMax) s.closedOtagMax = c }
             return null
@@ -1300,13 +1341,16 @@ class WalletSync(
             if (found != null) rec = rec.copy(status = RecordStatus.MATCHED)
             s.regRecords[k] = rec
             found?.let { (index, country, at, pred) ->
-                val cur = s.identity
+                // The newest match is the identity: its generation's, which the wallet acts as from now on.
+                val slot = s.slot(rec.generation)
+                val cur = slot.identity
                 // At an index at least the identity's: a match there replaces
                 // one made before (an identity from an unverified
                 // tree, or another time, is re-matched rather than kept).
                 if (cur == null || index >= cur.leafIndex) {
-                    s.identity = IdentityRecord(index, rec.dscKey, country, at, cur?.takeIf { it.leafIndex == index }?.passportNullifier ?: "", verified = true, predecessorAt = pred)
+                    slot.identity = IdentityRecord(index, rec.dscKey, country, at, cur?.takeIf { it.leafIndex == index }?.passportNullifier ?: "", verified = true, predecessorAt = pred)
                 }
+                s.actAs(rec.generation)
                 return
             }
             if (budget <= 0) return
@@ -1322,14 +1366,15 @@ class WalletSync(
      * own block time for a switch or re-entry, 0 for a passport never seen
      * before, so those are the only two values to try.
      */
-    private fun predecessorOf(leaf: Fr, dscKey: Fr, country: Fr, t: Long): Long? =
-        (if (t == 0L) listOf(0L) else listOf(0L, t)).firstOrNull { Privacy.identityLeaf(keys.idc, dscKey, country, t, it) == leaf }
+    private fun predecessorOf(idc: Fr, leaf: Fr, dscKey: Fr, country: Fr, t: Long): Long? =
+        (if (t == 0L) listOf(0L) else listOf(0L, t)).firstOrNull { Privacy.identityLeaf(idc, dscKey, country, t, it) == leaf }
 
-    /** The match if a leaf of [rec] is ours at activated_at = [t]. */
+    /** The match if a leaf of [rec] is ours (its generation's idc) at activated_at = [t]. */
     private fun tryTime(rec: RegRecord, leaves: List<Pair<Long, Fr>>, t: Long): LeafMatch? {
         val countries = (listOf(countryOrZero(rec.country)) + ALL_COUNTRIES).distinct()
+        val idc = keys.idc(rec.generation)
         return leaves.firstNotNullOfOrNull { (i, leaf) ->
-            countries.firstNotNullOfOrNull { c -> predecessorOf(leaf, rec.dscKey, c, t)?.let { LeafMatch(i, c, t, it) } }
+            countries.firstNotNullOfOrNull { c -> predecessorOf(idc, leaf, rec.dscKey, c, t)?.let { LeafMatch(i, c, t, it) } }
         }
     }
 
@@ -1378,6 +1423,7 @@ class WalletSync(
         var cursor = rec.cursor
         var work = rec.work
         var spent = 0L
+        val idc = keys.idc(rec.generation)
         while (cursor < total) {
             val narrow = cursor < narrowSteps
             val countries = if (narrow) hinted else others
@@ -1392,7 +1438,7 @@ class WalletSync(
             val t = runCatching { Math.addExact(rec.builtAt, off) }.getOrNull() ?: continue
             if (!timeOk(t)) continue
             for ((i, leaf) in leaves) for (c in countries) {
-                predecessorOf(leaf, rec.dscKey, c, t)?.let { pred ->
+                predecessorOf(idc, leaf, rec.dscKey, c, t)?.let { pred ->
                     return LeafMatch(i, c, t, pred) to rec.copy(status = RecordStatus.MATCHED, cursor = cursor, work = work)
                 }
             }
@@ -1417,9 +1463,11 @@ class WalletSync(
             return
         }
         val leaf = store.identityTree.leaf(index)
-        val m = countryFor(leaf, p.dscKey, activatedAt, p.countryHint)
+        val m = countryFor(leaf, p.dscKey, activatedAt, p.countryHint, p.generation)
         if (m != null) {
-            s.identity = IdentityRecord(index, p.dscKey, m.first, activatedAt, p.passportNullifier, verified = true, predecessorAt = m.second)
+            // The registration's generation: the wallet acts as it from now on.
+            s.slot(p.generation).identity = IdentityRecord(index, p.dscKey, m.first, activatedAt, p.passportNullifier, verified = true, predecessorAt = m.second)
+            s.actAs(p.generation)
             s.pendingRegistration = null
         } else {
             s.pendingRegistration = p.copy(
@@ -1430,16 +1478,19 @@ class WalletSync(
     }
 
     /** (country, predecessor_at) with which [leaf] is ours at [activatedAt], or null. */
-    internal fun countryFor(leaf: Fr, dscKey: Fr, activatedAt: Long, hint: String = ""): Pair<Fr, Long>? {
+    internal fun countryFor(leaf: Fr, dscKey: Fr, activatedAt: Long, hint: String = "", generation: Int = 0): Pair<Fr, Long>? {
         if (leaf == Fr.ZERO) return null
         val hinted = listOf(countryOrZero(hint))
-        return (hinted + ALL_COUNTRIES).firstNotNullOfOrNull { c -> predecessorOf(leaf, dscKey, c, activatedAt)?.let { c to it } }
+        val idc = keys.idc(generation)
+        return (hinted + ALL_COUNTRIES).firstNotNullOfOrNull { c -> predecessorOf(idc, leaf, dscKey, c, activatedAt)?.let { c to it } }
     }
 
+    /** Whether the identity the wallet acts as is registered: its leaf is in the tree as recorded (LIVE), zeroed since, or none. */
     fun identityStatus(): IdentityStatus {
-        val id = store.state.identity ?: return IdentityStatus.NONE
+        val s = store.state
+        val id = s.identity ?: return IdentityStatus.NONE
         if (id.leafIndex >= store.identityTree.size) return IdentityStatus.NONE
-        val want = Privacy.identityLeaf(keys.idc, id.dscKey, id.country, id.activatedAt, id.predecessorAt)
+        val want = Privacy.identityLeaf(keys.idc(s.generation), id.dscKey, id.country, id.activatedAt, id.predecessorAt)
         return if (store.identityTree.leaf(id.leafIndex) == want) IdentityStatus.LIVE else IdentityStatus.ZEROED
     }
 }

@@ -61,10 +61,11 @@ fun PersonhoodScreen(
     onBringHandle: () -> Unit = {},
     onBringVote: () -> Unit = {},
     onCheckMoves: () -> Unit = {},
-    /** Not registered, but this wallet's identity was registered before (switched away or lapsed): the chain refuses it again. */
-    identityUsed: Boolean = false,
-    /** Opens wallet creation: a used identity registers again only as a new wallet. */
-    onNewWallet: () -> Unit = {},
+    /**
+     * Not registered now, but registered before (lapsed, or switched away):
+     * a renewal registers this wallet's next identity (same phrase).
+     */
+    registeredBefore: Boolean = false,
 ) {
     val dimens = EarthTheme.dimens
     val shape = RoundedCornerShape(EarthDimensions.Radius.radius3xl)
@@ -117,9 +118,8 @@ fun PersonhoodScreen(
                 text = if (registered) {
                     "This wallet counts as one person in the human allocation stream, " +
                         "and earns ANML."
-                } else if (identityUsed) {
-                    "This wallet's identity was registered before. Its registration was switched to another " +
-                        "wallet, or has ended."
+                } else if (registeredBefore) {
+                    RENEW_HEADLINE
                 } else {
                     "Register to count as one person in the human allocation stream."
                 },
@@ -177,11 +177,7 @@ fun PersonhoodScreen(
             // handle and caretaker vote over with move proofs (MoveOfferCard).
             Spacer(Modifier.height(dimens.space32))
             Text(
-                text = "Your registration stays with this wallet until it " +
-                    "expires. To move it to another wallet, switch identity: " +
-                    "register the same passport there, then bring your handle " +
-                    "and caretaker vote over from the new wallet. Nothing is " +
-                    "paid the second time. A passport can switch once per day (UTC).",
+                text = SWITCH_EXPLAINER,
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
                 textAlign = TextAlign.Center,
@@ -193,23 +189,22 @@ fun PersonhoodScreen(
                 modifier = Modifier.fillMaxWidth(),
                 colors = network.erth.wallet.ui.designsystem.component.EarthButtonDefaults.secondaryColors(),
             )
-        } else if (identityUsed) {
+        } else if (registeredBefore) {
             // The chain keeps every identity it ever registered (used_idcs) and
-            // refuses it again (1130), so this wallet cannot register a second
-            // time: a return after a switch or a lapse is a new wallet.
+            // refuses it again (1130), so a renewal registers this wallet's
+            // next identity (PrivacyKeys generations): one recovery phrase
+            // holds them all, and the previous one's handle and vote move over.
             Spacer(Modifier.height(dimens.space24))
             Text(
-                text = "Each identity can register only once. To count as a person again, create a new wallet " +
-                    "and register your passport there. If this passport's registration is still live in " +
-                    "another wallet, registering in the new one switches it there.",
+                text = RENEW_EXPLAINER,
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textSecondary,
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(dimens.space16))
             EarthButton(
-                text = "Create a new wallet",
-                onClick = onNewWallet,
+                text = "Renew registration",
+                onClick = onRegister,
                 modifier = Modifier.fillMaxWidth(),
                 colors = brandButtonColors(),
             )
@@ -234,3 +229,15 @@ fun PersonhoodScreen(
         Spacer(Modifier.height(dimens.space32))
     }
 }
+
+/** Not registered now, registered before. */
+internal const val RENEW_HEADLINE = "Your registration in this wallet has ended, or was switched to another wallet."
+
+internal const val RENEW_EXPLAINER = "Renew to count as a person again. The wallet registers your passport to its " +
+    "next identity, derived from the same recovery phrase: no new wallet or phrase is needed. A handle or caretaker " +
+    "vote your previous identity still holds can be brought over from this screen afterwards."
+
+internal const val SWITCH_EXPLAINER = "Your registration lasts a year; renewing then registers this wallet's next " +
+    "identity, from the same recovery phrase. To move it to another wallet, or to a fresh identity in this one, " +
+    "switch identity, then bring your handle and caretaker vote over from the Identity screen. Nothing is paid " +
+    "the second time. A passport can switch once per day (UTC)."

@@ -263,7 +263,7 @@ class RestoreTest : WalletTest() {
             "4552024652000000006ab13b80" + "00".repeat(31) + "4d" + "1d3756b83dfd918fa510770bc257079b" + "000000",
             m.joinToString("") { "%02x".format(it.toInt() and 0xff) },
         )
-        assertEquals(Triple(Fr.of(77), "FR", 1_790_000_000L), WalletSync.parseRegMemo(k.nk, m))
+        assertEquals(WalletSync.Companion.RegMemo(Fr.of(77), "FR", 1_790_000_000L, 0), WalletSync.parseRegMemo(k.nk, m))
         // Another wallet's nk, a flipped tag bit, version 1, or junk past the tag: not a record.
         assertEquals(null, WalletSync.parseRegMemo(Fr.of(5), m))
         assertEquals(null, WalletSync.parseRegMemo(k.nk, m.copyOf().also { it[50] = (it[50].toInt() xor 1).toByte() }))

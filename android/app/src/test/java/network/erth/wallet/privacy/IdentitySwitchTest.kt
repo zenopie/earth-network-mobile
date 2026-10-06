@@ -182,21 +182,28 @@ class IdentitySwitchTest : WalletTest() {
         assertEquals("b", a.store.state.switchTarget)
     }
 
-    /** An identity registers once (personhood 1130): the switched-away wallet cannot register again, restored or not. */
+    /**
+     * An identity registers once (personhood 1130): the switched-away wallet
+     * registers again only with its next generation, restored or not, and a
+     * wallet that never registered starts at generation 0.
+     */
     @Test
-    fun aSwitchBackToAnEarlierIdentityIsRefused() {
+    fun aSwitchBackToAnEarlierWalletProvesWithItsNextIdentity() {
         val chain = FakeChain()
         val (a, b, _) = switched(chain, "999")
-        assertTrue(a.identityUsed())
-        assertTrue(b.identityUsed())
-        assertTrue(runCatching { a.prepareRegistration(null) }.exceptionOrNull() is PrivacyWallet.IdentityUsed)
-        // Restored from the phrase: its registration record says the identity is spent.
+        assertTrue(a.registeredBefore())
+        assertTrue(b.registeredBefore())
+        assertEquals(1, a.prepareRegistration(null).generation)
+        // Restored from the phrase: its registration record says generation 0 is spent.
         val restored = wallet(chain, alice)
         restored.sync()
-        assertTrue(restored.identityUsed())
-        assertTrue(runCatching { restored.prepareRegistration(null) }.exceptionOrNull() is PrivacyWallet.IdentityUsed)
-        // A wallet that never registered is a valid target.
-        assertFalse(wallet(chain, "letter advice cage absurd amount doctor acoustic avoid letter advice cage above").identityUsed())
+        assertTrue(restored.registeredBefore())
+        assertEquals(1, restored.nextGeneration())
+        assertEquals(a.keys.idc(1), restored.prepareRegistration(null).idc)
+        // A wallet that never registered starts at its first identity.
+        val c = wallet(chain, carol)
+        assertFalse(c.registeredBefore())
+        assertEquals(0, c.nextGeneration())
         assertTrue(chain.usedIdcs.contains(a.keys.idc) && chain.usedIdcs.contains(b.keys.idc))
     }
 

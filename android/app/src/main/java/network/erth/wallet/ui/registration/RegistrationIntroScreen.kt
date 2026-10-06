@@ -48,8 +48,6 @@ import network.erth.wallet.ui.theme.EarthTheme
 fun RegistrationIntroScreen(
     onStart: () -> Unit,
     modifier: Modifier = Modifier,
-    /** Why this wallet cannot register (its identity registered before), or null. */
-    blocked: String? = null,
 ) {
     val dimens = EarthTheme.dimens
 
@@ -108,23 +106,15 @@ fun RegistrationIntroScreen(
         // A passport registered from another wallet moves here (a switch):
         // what the old identity holds stays there unless it was moved first.
         Text(
-            text = "Already registered from another wallet? Registering here switches your " +
-                "identity to this wallet. Once the switch lands, bring your handle and caretaker " +
-                "vote over from this wallet's Identity screen, before you switch again. A passport " +
-                "can switch once per day (UTC), and only to a wallet that has never registered.",
+            text = REGISTRATION_SWITCH_NOTE,
             style = EarthTypography.textXs,
             color = EarthColors.Text.textTertiary,
         )
 
-        blocked?.let {
-            Spacer(Modifier.height(dimens.space16))
-            Text(text = it, style = EarthTypography.textSm, color = EarthColors.Utility.ErrorRed.utilityError700)
-        }
         Spacer(Modifier.height(dimens.space24))
         EarthButton(
             text = "Start",
             onClick = onStart,
-            enabled = blocked == null,
             modifier = Modifier.fillMaxWidth(),
             colors = brandButtonColors(),
         )
@@ -167,3 +157,10 @@ private fun StepRow(number: Int, title: String, detail: String) {
         }
     }
 }
+
+/** Each registration proves with a fresh identity of this wallet (its next generation), so any wallet can register. */
+internal const val REGISTRATION_SWITCH_NOTE = "Already registered from another wallet? Registering here switches your " +
+    "identity to this wallet. Once the switch lands, bring your handle and caretaker vote over from this wallet's " +
+    "Identity screen, before you switch again. Each registration uses a fresh identity of this wallet, derived from " +
+    "its recovery phrase. A passport can switch once per day (UTC)."
+

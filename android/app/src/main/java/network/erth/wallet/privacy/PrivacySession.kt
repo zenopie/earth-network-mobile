@@ -147,7 +147,7 @@ object PrivacySession {
      * can move, as the move proof needs both identity secrets).
      */
     data class MoveOffer(
-        /** The predecessor's wallet index and name. */
+        /** The predecessor's wallet index and name ([SELF] and "" for an earlier identity of this wallet). */
         val fromIndex: Int,
         val fromName: String,
         /** Its handle ("" none) and whether it is live (only a live one moves). */
@@ -162,9 +162,18 @@ object PrivacySession {
         val feeErth: Long,
         /** When the wallet suggests moving (PrivacyWallet.suggestedMoveAt; 0 when there is nothing to move). */
         val suggestedAt: Long = 0,
+        /** The predecessor is this wallet's own identity generation [fromGeneration] (re-entry or a fresh identity): one phrase, one fee payer. */
+        val fromGeneration: Int = -1,
     ) {
         val anything: Boolean get() = handle.isNotEmpty() || voteLive || inFlight.isNotEmpty()
+        val withinWallet: Boolean get() = fromIndex == SELF
     }
+
+    /** [MoveOffer.fromIndex] of an earlier identity of the selected wallet. */
+    const val SELF = -1
+
+    /** How many of a wallet's own earlier generations Identity looks back over for its predecessor. */
+    private const val OWN_LOOKBACK = 8
 
     /**
      * Finds the predecessor among this phone's wallets by the succession leaf
@@ -177,17 +186,37 @@ object PrivacySession {
         val w = wallet(app)
         val id = w.store.state.identity?.takeIf { it.verified } ?: return null
         if (w.identityStatus() != network.erth.wallet.privacy.sync.WalletSync.IdentityStatus.LIVE) return null
+        val now = System.currentTimeMillis() / 1000
+        // This wallet's own earlier identity first (a re-entry after a lapse, or
+        // a fresh identity): the chain appends the succession right after the
+        // new leaf, so only that leaf is looked at for each.
+        val g = w.generation
+        for (k in (g - 1) downTo maxOf(0, g - OWN_LOOKBACK)) {
+            if (w.successionIndex(w.keys.idc(k), w.idc, id.leafIndex + 1, nearOnly = true) == null) continue
+            val st = w.store.state.slot(k)
+            val handleExp = w.handleExpiresAt(k)
+            val offer = MoveOffer(
+                fromIndex = SELF, fromName = "",
+                handle = st.handle, handleLive = st.handle.isNotEmpty() && (handleExp == 0L || handleExp > now),
+                voteLive = w.caretakerLive(k), voteExpiresAt = w.caretakerExpiresAt(k),
+                inFlight = w.outgoingMoves(k).filter { !it.confirmed },
+                feeErth = w.poolBalances()[PrivacyWallet.FEE] ?: 0L,
+                fromGeneration = k,
+            )
+            return if (offer.anything) offer.copy(suggestedAt = w.suggestedMoveAt()) else offer.also { w.clearMoveSuggestion() }
+        }
         val selected = SecureWalletManager.getSelectedWalletIndex()
         for (info in SecureWalletManager.listWallets()) {
             if (info.index == selected) continue
             val keys = runCatching { keysOf(app, info.index) }.getOrNull() ?: continue
-            if (keys.idc == w.keys.idc) continue
-            w.successionIndex(keys.idc, w.keys.idc, id.leafIndex + 1) ?: continue
             val p = walletFor(app, keys)
+            // The identity that wallet acts as: the one the passport registered before this.
+            val pIdc = p.idc
+            if (pIdc == w.idc) continue
+            w.successionIndex(pIdc, w.idc, id.leafIndex + 1) ?: continue
             runCatching { p.sync() }
             runCatching { p.resolvePendingMoves() }
             val st = p.store.state
-            val now = System.currentTimeMillis() / 1000
             val handleExp = p.handleExpiresAt()
             val offer = MoveOffer(
                 fromIndex = info.index, fromName = info.name,
@@ -208,15 +237,18 @@ object PrivacySession {
     fun selfAsSuccessor(context: Context): PrivacyWallet.Successor {
         val w = wallet(context.applicationContext)
         val id = w.store.state.identity?.takeIf { it.verified } ?: throw IllegalStateException("this wallet's registration has not been verified yet; sync, then try again")
-        return PrivacyWallet.Successor(w.keys, id)
+        return PrivacyWallet.Successor(w.keys, id, w.generation)
     }
 
-    /** What a switch target already holds: a registration, a handle. */
+    /**
+     * What a switch target already holds: a registration, a handle. A
+     * target registers its next unused identity, so any wallet can be one.
+     */
     data class TargetInfo(
         val storeId: String,
         val registered: Boolean,
-        /** Its identity registered before: the chain refuses a switch to it (1130). */
-        val used: Boolean,
+        /** It has a live registration of its own (a switch there replaces it with that wallet's next identity). */
+        val live: Boolean,
         val handle: String,
         /** Why it cannot take this identity's handle / caretaker vote, or null. */
         val handleRefusal: String? = null,
@@ -230,8 +262,8 @@ object PrivacySession {
         val now = System.currentTimeMillis() / 1000
         return TargetInfo(
             // A registration it sent that can still land counts: one that failed may be replayed.
-            id, st != null && (st.identity != null || st.pendingRegistration != null || st.registrationKeepUntil > now),
-            st != null && (st.identity != null || st.regRecords.isNotEmpty()), st?.handle.orEmpty(),
+            id, st != null && (st.pendingRegistration?.let { it.leafIndex == null && it.failure == null } == true || st.registrationKeepUntil > now),
+            st?.identity != null, st?.handle.orEmpty(),
             st?.let { PrivacyWallet.targetRefusal(it, network.erth.wallet.privacy.sync.PendingMove.HANDLE, now) },
             st?.let { PrivacyWallet.targetRefusal(it, network.erth.wallet.privacy.sync.PendingMove.CARETAKER, now) },
         )

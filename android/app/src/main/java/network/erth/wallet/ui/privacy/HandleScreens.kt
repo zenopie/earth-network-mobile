@@ -226,17 +226,22 @@ fun HandleScreen(
     }
 }
 
+/** [SwitchIdentityScreen]'s target for a fresh identity in this wallet (its next generation). */
+const val SWITCH_TO_SELF = -1
+
 /**
- * A voluntary switch of identity: the same passport registered from another
- * of this phone's wallets. The chain zeroes this wallet's leaf and makes a
- * new one there. Once the switch has landed, the new identity can bring this
- * one's handle and caretaker vote over ([MoveOfferCard], on Identity in the
- * new wallet): a move proves knowledge of both identities' secrets, so it
- * comes after the switch and needs both recovery phrases on this phone.
+ * A voluntary switch of identity: the same passport registered to a fresh
+ * identity, another of this phone's wallets' or this wallet's next one
+ * (PrivacyKeys generations). The chain zeroes the live leaf and makes a new
+ * one. Once the switch has landed, the new identity can bring this one's
+ * handle and caretaker vote over ([MoveOfferCard], on Identity where it
+ * registered): a move proves knowledge of both identities' secrets, so it
+ * comes after the switch and needs both on this phone (one phrase, for a
+ * fresh identity here).
  *
- * The new wallet's recovery phrase is shown only after a fresh unlock and
+ * Another wallet's recovery phrase is shown only after a fresh unlock and
  * is dropped when the screen is paused or left; the backup box needs the
- * phrase shown first.
+ * phrase shown first. A fresh identity here needs no new phrase.
  */
 @Composable
 fun SwitchIdentityScreen(
@@ -250,8 +255,6 @@ fun SwitchIdentityScreen(
     targetWarning: String?,
     onTargetChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
-    /** Why the chosen target cannot be switched to (its identity registered before), or null. */
-    targetBlocked: String? = null,
     /**
      * What this identity's predecessor (on this phone) still holds that has
      * not moved here, or null: a move goes one step, so a further switch
@@ -287,15 +290,7 @@ fun SwitchIdentityScreen(
     Page(modifier) {
         EarthLabel("Switch identity")
         Spacer(Modifier.height(dimens.space8))
-        Note(
-            "Switching moves your personhood to another wallet: register the same passport there and " +
-                "this wallet stops counting as you. Once the switch lands, open Identity in the new wallet " +
-                "to bring your handle and caretaker vote over; each is a private move proven with both " +
-                "wallets' recovery phrases, which stay on this phone. Do it before switching again: a move " +
-                "goes only to the passport's live identity. Anything not moved stays with this wallet until " +
-                "it lapses, and the new identity cannot claim a handle or cast a caretaker vote until then " +
-                "(up to a year).",
-        )
+        Note(SWITCH_NOTE)
         Spacer(Modifier.height(dimens.space8))
         Note(
             "A switch from a wallet whose recovery phrase is lost cannot move anything: the move needs " +
@@ -318,7 +313,24 @@ fun SwitchIdentityScreen(
         Spacer(Modifier.height(dimens.space16))
         EarthLabel("Switch to")
         val others = wallets.filter { it.index != currentIndex }
-        if (others.isEmpty()) Note("You have no other wallet on this phone. Create one first.")
+        run {
+            fun pick() {
+                if (target == SWITCH_TO_SELF) return
+                target = SWITCH_TO_SELF; phrase = null; backedUp = false
+                onTargetChange(SWITCH_TO_SELF)
+            }
+            Row(
+                Modifier.fillMaxWidth().clickable { pick() }.padding(vertical = dimens.space8),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(checked = target == SWITCH_TO_SELF, onCheckedChange = { pick() })
+                Column {
+                    Text("A fresh identity in this wallet", style = EarthTypography.textMd, color = EarthColors.Text.textPrimary)
+                    Text("Same recovery phrase", style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
+                }
+            }
+        }
+        if (target == SWITCH_TO_SELF) Note(FRESH_IDENTITY_NOTE)
         others.forEach { w ->
             fun pick() {
                 if (target == w.index) return
@@ -336,9 +348,8 @@ fun SwitchIdentityScreen(
                 }
             }
         }
-        targetBlocked?.let {
-            Text(it, style = EarthTypography.textSm, color = EarthColors.Utility.ErrorRed.utilityError700)
-        } ?: targetWarning?.let { Note(it) }
+        if (others.isEmpty()) Note("You have no other wallet on this phone. Create one to switch to it.")
+        targetWarning?.let { Note(it) }
         EarthButton(
             text = "Create a new wallet",
             onClick = onCreateWallet,
@@ -346,8 +357,9 @@ fun SwitchIdentityScreen(
             colors = EarthButtonDefaults.secondaryColors(),
         )
         Spacer(Modifier.height(dimens.space16))
+        val self = target == SWITCH_TO_SELF
         val shown = phrase
-        if (shown != null) {
+        if (shown != null && !self) {
             // Kept out of screenshots and the recents thumbnail while shown.
             network.erth.wallet.ui.components.SecureScreen()
             Card {
@@ -359,29 +371,32 @@ fun SwitchIdentityScreen(
             }
             Note("Write these words down, in order, and keep them offline. Anyone with them controls that wallet.")
         }
-        EarthButton(
-            text = if (shown == null) "Show the new wallet's recovery phrase" else "Hide the recovery phrase",
-            onClick = { if (shown == null) confirming = true else phrase = null },
-            enabled = target != null,
-            modifier = Modifier.fillMaxWidth(),
-            colors = EarthButtonDefaults.secondaryColors(),
-        )
-        Spacer(Modifier.height(dimens.space8))
-        // Ticked only once the phrase was shown for this target.
+        // Ticked only once the phrase was shown for this target. A fresh
+        // identity here is this wallet's own phrase: nothing new to back up.
         val canTick = target != null && revealedFor == target
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = backedUp && canTick, onCheckedChange = { backedUp = it }, enabled = canTick)
-            Text(
-                if (canTick) "I have backed up the new wallet's recovery phrase" else "Show the new wallet's recovery phrase to confirm you have backed it up",
-                style = EarthTypography.textSm, color = EarthColors.Text.textPrimary,
+        if (!self) {
+            EarthButton(
+                text = if (shown == null) "Show the new wallet's recovery phrase" else "Hide the recovery phrase",
+                onClick = { if (shown == null) confirming = true else phrase = null },
+                enabled = target != null,
+                modifier = Modifier.fillMaxWidth(),
+                colors = EarthButtonDefaults.secondaryColors(),
             )
+            Spacer(Modifier.height(dimens.space8))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = backedUp && canTick, onCheckedChange = { backedUp = it }, enabled = canTick)
+                Text(
+                    if (canTick) "I have backed up the new wallet's recovery phrase" else "Show the new wallet's recovery phrase to confirm you have backed it up",
+                    style = EarthTypography.textSm, color = EarthColors.Text.textPrimary,
+                )
+            }
+            Spacer(Modifier.height(dimens.space16))
         }
-        Spacer(Modifier.height(dimens.space16))
         val t = target
         EarthButton(
-            text = "Switch: register there",
+            text = if (self) "Switch: register a fresh identity" else "Switch: register there",
             onClick = { if (t != null) onContinue(t) },
-            enabled = t != null && backedUp && canTick && targetBlocked == null && (unmoved == null || strandAccepted),
+            enabled = t != null && (self || (backedUp && canTick)) && (unmoved == null || strandAccepted),
             modifier = Modifier.fillMaxWidth(),
             colors = brandButtonColors(),
         )
@@ -427,8 +442,14 @@ fun MoveOfferCard(
         EarthLabel("From your previous identity")
         Spacer(Modifier.height(dimens.space8))
         Note(
-            "This identity replaced the one in ${offer.fromName}. You can bring what it holds here with no wait, " +
-                "while this is still the passport's live identity. The fee comes from ${offer.fromName}'s private ERTH.",
+            if (offer.withinWallet) {
+                "This identity replaced your previous one in this wallet (a renewal or a fresh identity). You can " +
+                    "bring what it holds here with no wait, while this is still the passport's live identity. The fee " +
+                    "comes from this wallet's private ERTH."
+            } else {
+                "This identity replaced the one in ${offer.fromName}. You can bring what it holds here with no wait, " +
+                    "while this is still the passport's live identity. The fee comes from ${offer.fromName}'s private ERTH."
+            },
         )
         if (offer.suggestedAt > 0) {
             Spacer(Modifier.height(dimens.space8))
@@ -482,3 +503,17 @@ fun MoveOfferCard(
 /** A suggested move time, in the phone's time zone. */
 private fun moveTime(at: Long): String =
     java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(at * 1000))
+
+internal const val SWITCH_NOTE = "Switching moves your personhood to a fresh identity: another wallet's, or this " +
+    "wallet's next one. Your passport is registered again and your current identity stops counting as you. Once the " +
+    "switch lands, open Identity where you registered to bring your handle and caretaker vote over; each is a private " +
+    "move proven with both identities' secrets, which stay on this phone. Do it before switching again: a move goes " +
+    "only to the passport's live identity. Anything not moved stays with the old identity until it lapses, and the new " +
+    "identity cannot claim a handle or cast a caretaker vote until then (up to a year)."
+
+/** Which fresh identity a compromise calls for: a new wallet for the phrase, the next generation for the secret alone. */
+internal const val FRESH_IDENTITY_NOTE = "Your passport is registered to this wallet's next identity, derived from the " +
+    "same recovery phrase. Use it if you think this identity's secret alone was exposed, which is rare: the wallet " +
+    "derives it from the phrase and keeps it only in memory. It does not help if your recovery phrase may be exposed: " +
+    "anyone with the phrase can derive every identity of this wallet. Then create a new wallet, with a new phrase, " +
+    "and switch to it."

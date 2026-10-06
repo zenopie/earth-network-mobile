@@ -60,6 +60,8 @@ data class PendingRegistration(
     val countryHint: String,
     /** Why the last attempt to resolve it failed, for the UI (null: waiting for the indexer). */
     val failure: String? = null,
+    /** The identity generation it registers (PrivacyKeys): its leaf is matched with that generation's idc. */
+    val generation: Int = 0,
 )
 
 /**
@@ -96,6 +98,8 @@ data class RegRecord(
     val chainTime: Long? = null,
     /** How many leaves [tried] was tried against: more leaves later reopen the record. */
     val leavesTried: Int = 0,
+    /** The identity generation the registration was for, from the record's tag (PRIVACY_FORMATS.md §6). */
+    val generation: Int = 0,
 )
 
 /**
@@ -182,6 +186,108 @@ data class CarriedMark(val at: Long, val until: Long?, val tx: String?)
 data class PositionLease(val expiresAt: Long, val split: Map<Long, Long>)
 
 /**
+ * What one identity generation of the wallet holds (PrivacyKeys: one phrase,
+ * an identity secret per generation): its registration, handle, caretaker
+ * split and moves. The wallet acts as [PrivacyState.generation]; an earlier
+ * one keeps what it holds until moved on or lapsed.
+ */
+class IdentitySlot {
+    var identity: IdentityRecord? = null
+    /** When the caretaker split was last cast (unix seconds), and the split (option -> percent). */
+    var caretakerCastAt: Long = 0
+    var caretakerSplit: Map<Long, Long> = emptyMap()
+    /** When the split lapses (the chain's expires_at; 0: unknown, castAt + R). */
+    var caretakerExpiresAt: Long = 0
+    /** This identity moved its split away (MsgMoveCaretaker): it may never cast one again. */
+    var caretakerMovedOut: Boolean = false
+    /** This identity's handle ("" for none), as last claimed, renewed or moved in. */
+    var handle: String = ""
+    /** This identity moved its handle away (MsgMoveHandle): it may never claim one again. */
+    var handleMovedOut: Boolean = false
+    /** When [handle] last changed here (wallet clock): a directory read before it says nothing about it. */
+    var handleSetAt: Long = 0
+    /**
+     * When the handle [handleExpiresFor] stops being live (the chain's
+     * expires_at, from its bind or the chain's directory). Counts only while
+     * it is [handle]; otherwise unknown. Past it, a renewal or change is
+     * bounded like a claim and a move is refused.
+     */
+    var handleExpiresAt: Long = 0
+    var handleExpiresFor: String = ""
+    /** The caretaker split is held but its record did not carry it (restored from a state record). */
+    var caretakerSplitUnknown: Boolean = false
+    /** The newest handle / caretaker state record applied (note position; -1: none). */
+    var handleRecordPos: Long = -1
+    var caretakerRecordPos: Long = -1
+    /** Moves in flight, either way. */
+    val pendingMoves: MutableList<PendingMove> = ArrayList()
+    /** The store id of the wallet a switch moves to, fixed by its first move. */
+    var switchTarget: String = ""
+    /**
+     * After a switch to this identity: when the wallet suggests bringing the
+     * predecessor's handle and split over (a random delay after the switch,
+     * so a move does not link them by timing; 0: none drawn), and the leaf
+     * of the registration it was drawn for. A suggestion only: nothing moves
+     * unasked.
+     */
+    var moveSuggestedAt: Long = 0
+    var moveSuggestedLeaf: Long = -1
+
+    /** Whether it holds or did nothing (such a slot is not written). */
+    val empty: Boolean get() = identity == null && caretakerCastAt == 0L && caretakerSplit.isEmpty() && caretakerExpiresAt == 0L &&
+        !caretakerMovedOut && handle.isEmpty() && !handleMovedOut && handleSetAt == 0L && handleExpiresAt == 0L && handleExpiresFor.isEmpty() &&
+        !caretakerSplitUnknown && handleRecordPos == -1L && caretakerRecordPos == -1L && pendingMoves.isEmpty() && switchTarget.isEmpty() &&
+        moveSuggestedAt == 0L && moveSuggestedLeaf == -1L
+
+    /** A copy; [keepIdentity] filters the registration kept. */
+    fun copy(keepIdentity: (IdentityRecord) -> Boolean = { true }): IdentitySlot = IdentitySlot().also { c ->
+        c.identity = identity?.takeIf(keepIdentity)
+        c.caretakerCastAt = caretakerCastAt; c.caretakerSplit = caretakerSplit; c.caretakerExpiresAt = caretakerExpiresAt
+        c.caretakerMovedOut = caretakerMovedOut; c.handle = handle; c.handleMovedOut = handleMovedOut; c.handleSetAt = handleSetAt
+        c.handleExpiresAt = handleExpiresAt; c.handleExpiresFor = handleExpiresFor; c.caretakerSplitUnknown = caretakerSplitUnknown
+        c.handleRecordPos = handleRecordPos; c.caretakerRecordPos = caretakerRecordPos; c.pendingMoves.addAll(pendingMoves)
+        c.switchTarget = switchTarget; c.moveSuggestedAt = moveSuggestedAt; c.moveSuggestedLeaf = moveSuggestedLeaf
+    }
+
+    fun toJson(generation: Int): JSONObject = JSONObject().apply {
+        put("generation", generation)
+        identity?.let { id ->
+            put("identity", JSONObject().put("leaf_index", id.leafIndex).put("dsc_key", id.dscKey.toHex())
+                .put("country", id.country.toHex()).put("activated_at", id.activatedAt).put("passport_nullifier", id.passportNullifier)
+                .put("verified", id.verified).put("predecessor_at", id.predecessorAt))
+        }
+        put("caretaker_cast_at", caretakerCastAt)
+        put("caretaker_split", JSONObject().apply { caretakerSplit.forEach { (k, v) -> put(k.toString(), v) } })
+        put("caretaker_expires_at", caretakerExpiresAt); put("caretaker_moved_out", caretakerMovedOut)
+        put("handle", handle); put("handle_moved_out", handleMovedOut); put("handle_set_at", handleSetAt); put("handle_expires_at", handleExpiresAt); put("handle_expires_for", handleExpiresFor)
+        put("caretaker_split_unknown", caretakerSplitUnknown)
+        put("handle_record_pos", handleRecordPos); put("caretaker_record_pos", caretakerRecordPos)
+        put("pending_moves", JSONArray().apply { pendingMoves.forEach { put(PrivacyState.moveJson(it)) } })
+        put("switch_target", switchTarget)
+        put("move_suggested_at", moveSuggestedAt); put("move_suggested_leaf", moveSuggestedLeaf)
+    }
+
+    companion object {
+        /** From a slot object, or (a store from before generations) the state's own top-level fields. */
+        fun fromJson(j: JSONObject): IdentitySlot = IdentitySlot().apply {
+            j.optJSONObject("identity")?.let {
+                identity = IdentityRecord(it.getLong("leaf_index"), Fr.fromHex(it.getString("dsc_key")), Fr.fromHex(it.getString("country")),
+                    it.getLong("activated_at"), it.optString("passport_nullifier"), it.optBoolean("verified", false), it.optLong("predecessor_at", 0))
+            }
+            caretakerCastAt = j.optLong("caretaker_cast_at")
+            caretakerSplit = j.optJSONObject("caretaker_split")?.let { o -> o.keys().asSequence().associate { it.toLong() to o.getLong(it) } } ?: emptyMap()
+            caretakerExpiresAt = j.optLong("caretaker_expires_at"); caretakerMovedOut = j.optBoolean("caretaker_moved_out")
+            handle = j.optString("handle"); handleMovedOut = j.optBoolean("handle_moved_out"); handleSetAt = j.optLong("handle_set_at"); handleExpiresAt = j.optLong("handle_expires_at"); handleExpiresFor = j.optString("handle_expires_for")
+            caretakerSplitUnknown = j.optBoolean("caretaker_split_unknown")
+            handleRecordPos = j.optLong("handle_record_pos", -1); caretakerRecordPos = j.optLong("caretaker_record_pos", -1)
+            j.optJSONArray("pending_moves")?.let { a -> for (i in 0 until a.length()) pendingMoves.add(PrivacyState.moveFromJson(a.getJSONObject(i))) }
+            switchTarget = j.optString("switch_target")
+            moveSuggestedAt = j.optLong("move_suggested_at"); moveSuggestedLeaf = j.optLong("move_suggested_leaf", -1)
+        }
+    }
+}
+
+/**
  * What the wallet keeps between syncs: cursors into each indexer stream, its
  * own notes, its registration, and its own txs' bookkeeping. Small; the
  * trees live beside it in per-level files.
@@ -196,7 +302,55 @@ class PrivacyState {
     var identityNext: Long = 0
     var zeroedNext: Long = 0
     val notes: MutableList<OwnedNote> = ArrayList()
-    var identity: IdentityRecord? = null
+    /**
+     * The identity generation the wallet acts as (PrivacyKeys): the one its
+     * registration, handle and split below are. It moves up when a
+     * registration of a later generation lands, or a restore finds one.
+     */
+    var generation: Int = 0
+    /** The lowest generation a registration may use: raised past one the chain refused as used (1130). */
+    var generationFloor: Int = 0
+    /** Every generation's slot that holds anything (by generation). */
+    val slots: java.util.TreeMap<Int, IdentitySlot> = java.util.TreeMap()
+    fun slot(generation: Int): IdentitySlot = slots.getOrPut(generation) { IdentitySlot() }
+    /** The slot of [generation]: what the identity the wallet acts as holds. */
+    val current: IdentitySlot get() = slot(generation)
+    var identity: IdentityRecord?
+        get() = current.identity
+        set(v) { current.identity = v }
+
+    /**
+     * The highest generation whose idc may have been registered, -1 for
+     * none: one with a registration record (a registration of it reached a
+     * block, whether or not it succeeded: the record lands with the fee),
+     * a registration matched or committed, and every one below the floor.
+     * Skipping a generation whose registration failed costs nothing.
+     */
+    fun usedThrough(): Int {
+        var m = generationFloor - 1
+        regRecords.forEach { m = maxOf(m, it.generation) }
+        slots.forEach { (g, slot) -> if (slot.identity != null) m = maxOf(m, g) }
+        pendingRegistration?.let { if (it.leafIndex != null) m = maxOf(m, it.generation) }
+        return m
+    }
+
+    /**
+     * The generation the next registration (a first one, a re-entry, a
+     * fresh identity) uses: the lowest above every one that may have been
+     * registered. A sent registration that has not landed keeps its own:
+     * retrying it is the same identity.
+     */
+    fun nextGeneration(): Int {
+        val pending = pendingRegistration?.takeIf { it.leafIndex == null && it.failure == null }?.generation ?: -1
+        return maxOf(usedThrough() + 1, generationFloor, pending, 0)
+    }
+
+    /** A registration of [g] landed or was found: the wallet acts as it from now on (never back to an earlier one). */
+    fun actAs(g: Int) {
+        // Its slot made here, under the writer's lock, not by a reader's getOrPut.
+        slot(g)
+        if (g > generation) generation = g
+    }
     /** A committed registration not yet matched to its leaf. */
     var pendingRegistration: PendingRegistration? = null
     /**
@@ -229,47 +383,25 @@ class PrivacyState {
     var verifiedHeight: Long = 0
     /** UTC days a claim was broadcast for (so a claim is not offered twice). */
     val claimedDays: MutableSet<Long> = sortedSetOf()
-    /** When the caretaker split was last cast (unix seconds), and the split (option -> percent). */
-    var caretakerCastAt: Long = 0
-    var caretakerSplit: Map<Long, Long> = emptyMap()
-    /** When the split lapses (the chain's expires_at; 0: unknown, castAt + R). */
-    var caretakerExpiresAt: Long = 0
-    /** This identity moved its split away (MsgMoveCaretaker): it may never cast one again. */
-    var caretakerMovedOut: Boolean = false
-    /** This identity's handle ("" for none), as last claimed, renewed or moved in. */
-    var handle: String = ""
-    /** This identity moved its handle away (MsgMoveHandle): it may never claim one again. */
-    var handleMovedOut: Boolean = false
-    /** When [handle] last changed here (wallet clock): a directory read before it says nothing about it. */
-    var handleSetAt: Long = 0
-    /**
-     * When the handle [handleExpiresFor] stops being live (the chain's
-     * expires_at, from its bind or the chain's directory). Counts only while
-     * it is [handle]; otherwise unknown. Past it, a renewal or change is
-     * bounded like a claim and a move is refused.
-     */
-    var handleExpiresAt: Long = 0
-    var handleExpiresFor: String = ""
-    /** The caretaker split is held but its record did not carry it (restored from a state record). */
-    var caretakerSplitUnknown: Boolean = false
-    /** The newest handle / caretaker state record applied (note position; -1: none). */
-    var handleRecordPos: Long = -1
-    var caretakerRecordPos: Long = -1
+    // What the identity the wallet acts as holds: its slot's (IdentitySlot).
+    var caretakerCastAt: Long get() = current.caretakerCastAt; set(v) { current.caretakerCastAt = v }
+    var caretakerSplit: Map<Long, Long> get() = current.caretakerSplit; set(v) { current.caretakerSplit = v }
+    var caretakerExpiresAt: Long get() = current.caretakerExpiresAt; set(v) { current.caretakerExpiresAt = v }
+    var caretakerMovedOut: Boolean get() = current.caretakerMovedOut; set(v) { current.caretakerMovedOut = v }
+    var handle: String get() = current.handle; set(v) { current.handle = v }
+    var handleMovedOut: Boolean get() = current.handleMovedOut; set(v) { current.handleMovedOut = v }
+    var handleSetAt: Long get() = current.handleSetAt; set(v) { current.handleSetAt = v }
+    var handleExpiresAt: Long get() = current.handleExpiresAt; set(v) { current.handleExpiresAt = v }
+    var handleExpiresFor: String get() = current.handleExpiresFor; set(v) { current.handleExpiresFor = v }
+    var caretakerSplitUnknown: Boolean get() = current.caretakerSplitUnknown; set(v) { current.caretakerSplitUnknown = v }
+    var handleRecordPos: Long get() = current.handleRecordPos; set(v) { current.handleRecordPos = v }
+    var caretakerRecordPos: Long get() = current.caretakerRecordPos; set(v) { current.caretakerRecordPos = v }
+    val pendingMoves: MutableList<PendingMove> get() = current.pendingMoves
+    var switchTarget: String get() = current.switchTarget; set(v) { current.switchTarget = v }
+    var moveSuggestedAt: Long get() = current.moveSuggestedAt; set(v) { current.moveSuggestedAt = v }
+    var moveSuggestedLeaf: Long get() = current.moveSuggestedLeaf; set(v) { current.moveSuggestedLeaf = v }
     /** Heights of this wallet's txs that failed in their block: their state records are void. */
     val voidRecordHeights: MutableSet<Long> = sortedSetOf()
-    /** Moves in flight, either way. */
-    val pendingMoves: MutableList<PendingMove> = ArrayList()
-    /** The store id of the wallet a switch moves to, fixed by its first move. */
-    var switchTarget: String = ""
-    /**
-     * After a switch to this identity: when the wallet suggests bringing the
-     * predecessor's handle and split over (a random delay after the switch,
-     * so a move does not link them by timing; 0: none drawn), and the leaf
-     * of the registration it was drawn for. A suggestion only: nothing moves
-     * unasked.
-     */
-    var moveSuggestedAt: Long = 0
-    var moveSuggestedLeaf: Long = -1
     /** Undelegations whose payout has not arrived yet. */
     val pendingUnbonds: MutableList<PendingUnbond> = ArrayList()
     /** Every stake vote cast: (proposal, vote nullifier). */
@@ -305,7 +437,8 @@ class PrivacyState {
         pendingRegistration?.let { p ->
             put("pending_registration", JSONObject().put("tx_hash", p.txHash).put("leaf_index", p.leafIndex ?: JSONObject.NULL).put("dsc_key", p.dscKey.toHex())
                 .put("passport_nullifier", p.passportNullifier).put("public_signals", JSONArray(p.publicSignals))
-                .put("activated_at", p.activatedAt ?: JSONObject.NULL).put("country_hint", p.countryHint).put("failure", p.failure ?: JSONObject.NULL))
+                .put("activated_at", p.activatedAt ?: JSONObject.NULL).put("country_hint", p.countryHint).put("failure", p.failure ?: JSONObject.NULL)
+                .put("generation", p.generation))
         }
         if (registrationKeepUntil != 0L) put("registration_keep_until", registrationKeepUntil)
         put("reg_records", JSONArray().apply {
@@ -315,7 +448,8 @@ class PrivacyState {
                     .put("leaves", JSONArray().apply { it.leaves.forEach { (i, l) -> put(JSONArray().put(i).put(l.toHex())) } })
                     .put("status", it.status.name).put("cursor", it.cursor).put("work", it.work)
                     .put("time", it.time ?: JSONObject.NULL).put("tried", JSONArray(it.tried)).put("cover", JSONArray(it.cover))
-                    .put("cover_tries", it.coverTries).put("chain_time", it.chainTime ?: JSONObject.NULL).put("leaves_tried", it.leavesTried))
+                    .put("cover_tries", it.coverTries).put("chain_time", it.chainTime ?: JSONObject.NULL).put("leaves_tried", it.leavesTried)
+                    .put("generation", it.generation))
             }
         })
         put("roots_verified", rootsVerified); put("roots_error", rootsError ?: JSONObject.NULL)
@@ -323,22 +457,10 @@ class PrivacyState {
         put("notes_next", notesNext); put("notes_height", notesHeight)
         put("nullifiers_next", nullifiersNext); put("identity_next", identityNext); put("zeroed_next", zeroedNext)
         put("notes", JSONArray().apply { notes.forEach { put(noteJson(it)) } })
-        identity?.let { id ->
-            put("identity", JSONObject().put("leaf_index", id.leafIndex).put("dsc_key", id.dscKey.toHex())
-                .put("country", id.country.toHex()).put("activated_at", id.activatedAt).put("passport_nullifier", id.passportNullifier)
-                .put("verified", id.verified).put("predecessor_at", id.predecessorAt))
-        }
+        put("generation", generation); put("generation_floor", generationFloor)
+        put("identities", JSONArray().apply { slots.forEach { (g, slot) -> if (g == generation || !slot.empty) put(slot.toJson(g)) } })
         put("claimed_days", JSONArray(claimedDays.toList()))
-        put("caretaker_cast_at", caretakerCastAt)
-        put("caretaker_split", JSONObject().apply { caretakerSplit.forEach { (k, v) -> put(k.toString(), v) } })
-        put("caretaker_expires_at", caretakerExpiresAt); put("caretaker_moved_out", caretakerMovedOut)
-        put("handle", handle); put("handle_moved_out", handleMovedOut); put("handle_set_at", handleSetAt); put("handle_expires_at", handleExpiresAt); put("handle_expires_for", handleExpiresFor)
-        put("caretaker_split_unknown", caretakerSplitUnknown)
-        put("handle_record_pos", handleRecordPos); put("caretaker_record_pos", caretakerRecordPos)
         put("void_record_heights", JSONArray(voidRecordHeights.toList()))
-        put("pending_moves", JSONArray().apply { pendingMoves.forEach { put(moveJson(it)) } })
-        put("switch_target", switchTarget)
-        put("move_suggested_at", moveSuggestedAt); put("move_suggested_leaf", moveSuggestedLeaf)
         put("pending_unbonds", JSONArray().apply {
             pendingUnbonds.forEach { u ->
                 put(JSONObject().put("tx_hash", u.txHash).put("validator", u.validator).put("derth", u.derth).put("pc", u.pc.toHex())
@@ -377,7 +499,7 @@ class PrivacyState {
                 pendingRegistration = PendingRegistration(
                     p.getString("tx_hash"), if (p.isNull("leaf_index")) null else p.getLong("leaf_index"), Fr.fromHex(p.getString("dsc_key")), p.optString("passport_nullifier"),
                     (0 until (sigs?.length() ?: 0)).map { sigs!!.getString(it) }, if (p.isNull("activated_at")) null else p.getLong("activated_at"), p.optString("country_hint"),
-                    if (p.isNull("failure")) null else p.optString("failure"),
+                    if (p.isNull("failure")) null else p.optString("failure"), gen(p),
                 )
             }
             registrationKeepUntil = j.optLong("registration_keep_until", 0L)
@@ -392,7 +514,7 @@ class PrivacyState {
                             it.optLong("cursor"), it.optLong("work"),
                             opt(it, "time"),
                             longs(it.optJSONArray("tried")), longs(it.optJSONArray("cover")), it.optInt("cover_tries"),
-                            opt(it, "chain_time"), it.optInt("leaves_tried"),
+                            opt(it, "chain_time"), it.optInt("leaves_tried"), gen(it),
                         ),
                     )
                 }
@@ -403,21 +525,15 @@ class PrivacyState {
             notesNext = j.optLong("notes_next"); notesHeight = j.optLong("notes_height")
             nullifiersNext = j.optLong("nullifiers_next"); identityNext = j.optLong("identity_next"); zeroedNext = j.optLong("zeroed_next")
             j.optJSONArray("notes")?.let { a -> for (i in 0 until a.length()) notes.add(noteFromJson(a.getJSONObject(i))) }
-            j.optJSONObject("identity")?.let {
-                identity = IdentityRecord(it.getLong("leaf_index"), Fr.fromHex(it.getString("dsc_key")), Fr.fromHex(it.getString("country")),
-                    it.getLong("activated_at"), it.optString("passport_nullifier"), it.optBoolean("verified", false), it.optLong("predecessor_at", 0))
-            }
+            generation = gen(j); generationFloor = gen(j, "generation_floor")
+            val ids = j.optJSONArray("identities")
+            if (ids == null) {
+                // A store from before generations: its one identity is generation 0.
+                slots[0] = IdentitySlot.fromJson(j)
+            } else for (i in 0 until ids.length()) ids.getJSONObject(i).let { slots[gen(it)] = IdentitySlot.fromJson(it) }
+            slot(generation)
             j.optJSONArray("claimed_days")?.let { a -> for (i in 0 until a.length()) claimedDays.add(a.getLong(i)) }
-            caretakerCastAt = j.optLong("caretaker_cast_at")
-            caretakerSplit = j.optJSONObject("caretaker_split")?.let { o -> o.keys().asSequence().associate { it.toLong() to o.getLong(it) } } ?: emptyMap()
-            caretakerExpiresAt = j.optLong("caretaker_expires_at"); caretakerMovedOut = j.optBoolean("caretaker_moved_out")
-            handle = j.optString("handle"); handleMovedOut = j.optBoolean("handle_moved_out"); handleSetAt = j.optLong("handle_set_at"); handleExpiresAt = j.optLong("handle_expires_at"); handleExpiresFor = j.optString("handle_expires_for")
-            caretakerSplitUnknown = j.optBoolean("caretaker_split_unknown")
-            handleRecordPos = j.optLong("handle_record_pos", -1); caretakerRecordPos = j.optLong("caretaker_record_pos", -1)
             voidRecordHeights.addAll(longs(j.optJSONArray("void_record_heights")))
-            j.optJSONArray("pending_moves")?.let { a -> for (i in 0 until a.length()) pendingMoves.add(moveFromJson(a.getJSONObject(i))) }
-            switchTarget = j.optString("switch_target")
-            moveSuggestedAt = j.optLong("move_suggested_at"); moveSuggestedLeaf = j.optLong("move_suggested_leaf", -1)
             j.optJSONArray("pending_unbonds")?.let { a ->
                 for (i in 0 until a.length()) a.getJSONObject(i).let {
                     pendingUnbonds.add(PendingUnbond(it.getString("tx_hash"), it.getString("validator"), it.getLong("derth"), Fr.fromHex(it.getString("pc")),
@@ -452,12 +568,15 @@ class PrivacyState {
 
         private fun splitFromJson(o: JSONObject?): Map<Long, Long> = o?.let { s -> s.keys().asSequence().associate { it.toLong() to s.getLong(it) } } ?: emptyMap()
 
-        private fun moveJson(m: PendingMove) = JSONObject()
+        private fun gen(o: JSONObject, k: String = "generation"): Int =
+            o.optInt(k, 0).coerceIn(0, network.erth.wallet.privacy.keys.PrivacyKeys.MAX_GENERATION)
+
+        internal fun moveJson(m: PendingMove) = JSONObject()
             .put("kind", m.kind).put("tx_hash", m.txHash).put("timeout_height", m.timeoutHeight).put("incoming", m.incoming)
             .put("handle", m.handle).put("split", splitJson(m.split)).put("split_unknown", m.splitUnknown).put("expires_at", m.expiresAt)
             .put("target", m.target).put("recorded", m.recorded).put("confirmed", m.confirmed)
 
-        private fun moveFromJson(o: JSONObject) = PendingMove(
+        internal fun moveFromJson(o: JSONObject) = PendingMove(
             o.getString("kind"), o.getString("tx_hash"), o.optLong("timeout_height"), o.optBoolean("incoming"),
             o.optString("handle"), splitFromJson(o.optJSONObject("split")), o.optBoolean("split_unknown"), o.optLong("expires_at"),
             o.optString("target"), o.optBoolean("recorded"), o.optBoolean("confirmed"),
@@ -614,13 +733,11 @@ class PrivacyStore private constructor(
             nextOtagCounter = old.nextOtagCounter
             closedOtagMax = old.closedOtagMax
             if (old.chainId == chainId && old.genesis == genesis) {
-                identity = old.identity?.takeIf { it.verified }
+                // Every generation's slot: registrations (verified ones), handles, splits, moves.
+                keepSlots(old, this) { it.verified }
                 pendingRegistration = old.pendingRegistration
                 registrationKeepUntil = old.registrationKeepUntil
                 claimedDays.addAll(old.claimedDays)
-                caretakerCastAt = old.caretakerCastAt; caretakerSplit = old.caretakerSplit
-                caretakerExpiresAt = old.caretakerExpiresAt; caretakerMovedOut = old.caretakerMovedOut
-                handle = old.handle; handleMovedOut = old.handleMovedOut
                 keepHandleState(old, this)
                 pendingUnbonds.addAll(old.pendingUnbonds)
                 stakeVotes.addAll(old.stakeVotes)
@@ -633,9 +750,7 @@ class PrivacyStore private constructor(
             } else if (old.chainId == null) {
                 // Never synced: what a switch moved to this identity was
                 // recorded for the chain the app follows (PrivacySession.recorderFor).
-                caretakerCastAt = old.caretakerCastAt; caretakerSplit = old.caretakerSplit
-                caretakerExpiresAt = old.caretakerExpiresAt
-                handle = old.handle
+                keepSlots(old, this) { false }
                 keepHandleState(old, this)
             }
         }
@@ -648,15 +763,19 @@ class PrivacyStore private constructor(
      * reads them from the start), and moves in flight stay in flight.
      */
     private fun keepHandleState(old: PrivacyState, s: PrivacyState) {
-        s.handleSetAt = old.handleSetAt
-        s.handleExpiresAt = old.handleExpiresAt; s.handleExpiresFor = old.handleExpiresFor
-        s.caretakerSplitUnknown = old.caretakerSplitUnknown
-        s.handleRecordPos = old.handleRecordPos; s.caretakerRecordPos = old.caretakerRecordPos
         s.voidRecordHeights.addAll(old.voidRecordHeights)
-        s.pendingMoves.addAll(old.pendingMoves)
-        s.switchTarget = old.switchTarget
-        s.moveSuggestedAt = old.moveSuggestedAt; s.moveSuggestedLeaf = old.moveSuggestedLeaf
         s.verifiedHeight = old.verifiedHeight
+    }
+
+    /**
+     * Every generation's slot (what each identity holds and its moves, the
+     * records applied: see [keepHandleState]), the generation the wallet
+     * acts as and its floor; a registration only where [keepIdentity].
+     */
+    private fun keepSlots(old: PrivacyState, s: PrivacyState, keepIdentity: (IdentityRecord) -> Boolean) {
+        s.generation = old.generation
+        s.generationFloor = old.generationFloor
+        old.slots.forEach { (g, slot) -> s.slots[g] = slot.copy(keepIdentity) }
     }
 
     /**
@@ -676,7 +795,10 @@ class PrivacyStore private constructor(
             this.genesis = genesis
             nextOtagCounter = old.nextOtagCounter
             closedOtagMax = old.closedOtagMax
-            identity = old.identity
+            // The registration stays: every generation's, and which the wallet acts as.
+            generation = old.generation
+            generationFloor = old.generationFloor
+            old.slots.forEach { (g, slot) -> slot.identity?.let { id -> slot(g).identity = id } }
             pendingRegistration = old.pendingRegistration?.copy(failure = null)
             registrationKeepUntil = old.registrationKeepUntil
         }

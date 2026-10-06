@@ -39,6 +39,7 @@ import network.erth.wallet.privacy.sync.PendingUnbond
 import network.erth.wallet.privacy.sync.StakeVoteRecord
 import network.erth.wallet.privacy.sync.ChainRoots
 import network.erth.wallet.privacy.sync.IdentityRecord
+import network.erth.wallet.privacy.sync.IdentitySlot
 import network.erth.wallet.privacy.sync.PendingMove
 import network.erth.wallet.privacy.tx.MoveWitnessSpec
 import network.erth.wallet.privacy.prove.MoveWitness
@@ -266,6 +267,16 @@ class PrivacyWallet(
 
     val address: ShieldedAddress get() = keys.address
 
+    /**
+     * The identity generation this wallet acts as (PrivacyKeys): its
+     * registration, handle, split and votes are that identity's. A
+     * registration of a later one moves it up once it lands.
+     */
+    val generation: Int get() = store.state.generation
+
+    /** The idc of the identity this wallet acts as. */
+    val idc: Fr get() = keys.idc(generation)
+
     @Synchronized
     fun sync(): WalletSync.Result {
         fillPendingRegistration()
@@ -492,7 +503,7 @@ class PrivacyWallet(
         val root = tree.root()
         return MembershipWitnessSpec { signal ->
             MembershipWitness(
-                idSecret = keys.idSecret, dscKey = id.dscKey, country = id.country, activatedAt = id.activatedAt,
+                idSecret = keys.idSecret(generation), dscKey = id.dscKey, country = id.country, activatedAt = id.activatedAt,
                 predecessorAt = id.predecessorAt,
                 leafIndex = id.leafIndex, siblings = path, root = root, scope = scope, signal = signal,
                 excludedDsc = excludedDsc, excludedCountry = excludedCountry, maxActivation = maxActivation,
@@ -638,31 +649,49 @@ class PrivacyWallet(
         val anml: NoteOut, val erth: NoteOut, val gas: NoteOut, val referrer: String, val binding: Fr, val idc: Fr,
         /** [idc]'s secret: the proof's id_secret witness, which outputs [idc]. In memory only, like the keys it comes from. */
         val idSecret: Fr,
+        /** The identity generation registered ([idc] is its): this wallet's next unused one. */
+        val generation: Int = 0,
     )
 
     /**
-     * This wallet's identity has been registered before (personhood 1130):
-     * the chain keeps every idc it ever registered and refuses it again, by
-     * any passport. Its first registration, a switch to it and a re-entry
-     * all need a fresh identity: another wallet whose identity never
-     * registered. Nothing was sent.
+     * The identity this registration was prepared for has been registered
+     * since (a registration of it landed meanwhile, or the chain refused
+     * it as used, personhood 1130). The wallet moved on to its next
+     * identity: prepare again. Nothing was sent.
      */
     class IdentityUsed : IllegalStateException(IDENTITY_USED)
 
     /**
-     * Whether this wallet's identity has been registered before: a
-     * registration of it landed (its leaf, live or zeroed since, or a
-     * registration record a restore found). The chain refuses it again
-     * (1130). A sent registration that has not landed does not count: if
-     * it never lands the identity is still fresh, and a retry is its own.
+     * Whether an identity of this wallet has been registered before (a
+     * registration landed: its leaf, live or zeroed since, or a record a
+     * restore found). The chain refuses an idc again (1130), so the next
+     * registration uses the next generation ([nextGeneration]): a re-entry
+     * needs no new recovery phrase.
      */
-    fun identityUsed(): Boolean = store.state.let { it.identity != null || it.regRecords.isNotEmpty() }
+    fun registeredBefore(): Boolean = store.state.usedThrough() >= 0
+
+    /** The identity generation the next registration (a first one, a re-entry, a fresh identity) proves with. */
+    fun nextGeneration(): Int = synchronized(this) { store.state.nextGeneration() }
+
+    /**
+     * The chain refused [prep]'s identity as registered before (1130; the
+     * wallet's records missed it): the next registration uses a later one.
+     */
+    @Synchronized
+    fun identityRefused(prep: RegistrationPrep) {
+        val s = store.state
+        if (s.generationFloor <= prep.generation) {
+            s.generationFloor = minOf(prep.generation + 1, PrivacyKeys.MAX_GENERATION)
+            store.save()
+        }
+    }
 
     /** A referrer named by handle, resolved from the directory: the handle and the address it names now. */
     data class Referrer(val handle: String, val address: ShieldedAddress)
 
     fun prepareRegistration(referrer: Referrer?): RegistrationPrep {
-        if (identityUsed()) throw IdentityUsed()
+        // A fresh identity of this wallet's: the chain registers each idc once.
+        val gen = nextGeneration()
         val anml = mint("uanml")
         val erth = mint(FEE)
         val gas = mint(FEE)
@@ -671,8 +700,9 @@ class PrivacyWallet(
             require(it.address.ownerPk != keys.ownerPk) { "a registration cannot name its own wallet as its referrer" }
         }
         val aff = if (referrer == null) Fr.ZERO else Privacy.affiliateField(referrer.handle)
-        val binding = Privacy.registrationBinding(chainId, keys.idc, anml.pc, anml.ciphertext, erth.pc, erth.ciphertext, aff)
-        return RegistrationPrep(anml, erth, gas, referrer?.handle.orEmpty(), binding, keys.idc, keys.idSecret)
+        val idc = keys.idc(gen)
+        val binding = Privacy.registrationBinding(chainId, idc, anml.pc, anml.ciphertext, erth.pc, erth.ciphertext, aff)
+        return RegistrationPrep(anml, erth, gas, referrer?.handle.orEmpty(), binding, idc, keys.idSecret(gen), gen)
     }
 
     /** MsgRegister without its fee bundle: what /gas/register checks. */
@@ -705,7 +735,9 @@ class PrivacyWallet(
         // The proof's idc output is the chain's check that the registrant holds
         // the identity's secret; one proven with another's would be refused.
         require(PrivateMsgs.decimalField(publicSignals[IDC_SIGNAL]) == prep.idc) { "the passport proof registers another identity" }
-        if (identityUsed()) throw IdentityUsed()
+        require(prep.idc == keys.idc(prep.generation)) { "the registration names another wallet's identity" }
+        // One of this wallet's that landed since it was prepared: the chain would refuse it (1130).
+        if (prep.generation < nextGeneration()) throw IdentityUsed()
         require(PrivateMsgs.isCalendarDate(publicSignals[0])) { "the passport proof's current_date ${publicSignals[0]} is not a calendar date" }
         val base = registerMsg(prep, proof, publicSignals, signatureAlgorithm, dscDer)
         // Before any byte leaves: a registration that fails or is refused is
@@ -719,26 +751,34 @@ class PrivacyWallet(
         }
         val dscKey = PrivateMsgs.decimalField(publicSignals[3])
         val hint = dscCountry(dscDer)
-        val record = NoteOut.to(keys.address, FEE, 0, WalletSync.regMemo(keys.nk, dscKey, hint, now()))
+        // The record's tag names the generation: a restore matches the leaf with its idc.
+        val record = NoteOut.to(keys.address, FEE, 0, WalletSync.regMemo(keys.nk, dscKey, hint, now(), prep.generation))
         val pending = { hash: String, _: Long ->
             // By hash, the moment the node accepts it; the leaf comes later.
             store.state.pendingRegistration = PendingRegistration(
                 txHash = hash, leafIndex = null, dscKey = dscKey, passportNullifier = publicSignals.getOrElse(2) { "" },
-                publicSignals = publicSignals, activatedAt = null, countryHint = hint,
+                publicSignals = publicSignals, activatedAt = null, countryHint = hint, generation = prep.generation,
             )
             store.save()
         }
         val refused = { hash: String ->
             if (store.state.pendingRegistration?.txHash == hash) { store.state.pendingRegistration = null; store.save() }
         }
-        val result = run(accepted = pending, rejected = refused) { fee ->
-            Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee)))) { bs, _, _ -> base.toBuilder().setFee(bs[0]).build() }
+        val result = try {
+            run(accepted = pending, rejected = refused) { fee ->
+                Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee)))) { bs, _, _ -> base.toBuilder().setFee(bs[0]).build() }
+            }
+        } catch (e: Exception) {
+            // Used before, by the chain's own set (1130, refused in the ante at
+            // no cost): the next attempt proves with the next generation.
+            if (identityRefusal(e)) identityRefused(prep)
+            throw e
         }
         recordRegistration(result)
         // A switch: the move suggestion is drawn now, so its reminder comes
         // even if Identity is never opened.
         if (result.attr("register", "switched") == "true") {
-            result.attr("register", "leaf_index")?.toLongOrNull()?.let { leaf -> synchronized(this) { drawMoveSuggestion(leaf, result.time) } }
+            result.attr("register", "leaf_index")?.toLongOrNull()?.let { leaf -> synchronized(this) { drawMoveSuggestion(leaf, result.time, prep.generation) } }
         }
         return result
     }
@@ -883,21 +923,28 @@ class PrivacyWallet(
         }
     }
 
-    /** Whether this wallet holds a caretaker split the chain still counts (as far as it knows). */
-    fun caretakerLive(): Boolean = holdsSplit() && caretakerExpiresAt() > now()
+    /** Whether this wallet's identity (generation [g]) holds a caretaker split the chain still counts (as far as it knows). */
+    fun caretakerLive(g: Int = generation): Boolean = caretakerLive(store.state.slot(g))
 
-    private fun holdsSplit(): Boolean = store.state.caretakerSplit.isNotEmpty() || store.state.caretakerSplitUnknown
+    private fun caretakerLive(t: IdentitySlot): Boolean = holdsSplit(t) && caretakerExpiresAt(t) > now()
 
-    /** When the split lapses: the chain's expires_at, or its cast time + R. 0 for none. */
-    fun caretakerExpiresAt(): Long {
-        val s = store.state
-        if (!holdsSplit()) return 0
-        if (s.caretakerExpiresAt > 0) return s.caretakerExpiresAt
-        return runCatching { Math.addExact(s.caretakerCastAt, reads.personhoodParams().caretakerVoteSeconds) }.getOrDefault(0)
+    private fun holdsSplit(t: IdentitySlot = store.state.current): Boolean = t.caretakerSplit.isNotEmpty() || t.caretakerSplitUnknown
+
+    /** When the split of identity generation [g] lapses: the chain's expires_at, or its cast time + R. 0 for none. */
+    fun caretakerExpiresAt(g: Int = generation): Long = caretakerExpiresAt(store.state.slot(g))
+
+    private fun caretakerExpiresAt(t: IdentitySlot): Long {
+        if (!holdsSplit(t)) return 0
+        if (t.caretakerExpiresAt > 0) return t.caretakerExpiresAt
+        return runCatching { Math.addExact(t.caretakerCastAt, reads.personhoodParams().caretakerVoteSeconds) }.getOrDefault(0)
     }
 
-    /** A value-0 state record note (PRIVACY_FORMATS.md §6) to [to]'s own address, tagged with its nk. */
-    private fun stateRecord(to: PrivacyKeys, memo: (Fr) -> ByteArray): NoteOut = NoteOut.to(to.address, FEE, 0, memo(to.nk))
+    /**
+     * A value-0 state record note (PRIVACY_FORMATS.md §6) to [to]'s own
+     * address, tagged with its nk for identity [generation].
+     */
+    private fun stateRecord(to: PrivacyKeys, generation: Int, memo: (nk: Fr, generation: Int) -> ByteArray): NoteOut =
+        NoteOut.to(to.address, FEE, 0, memo(to.nk, generation))
 
     private fun leaseParam(v: Long, name: String): Long {
         require(v in 1..Handles.MAX_AHEAD_SECONDS) { "the node's $name ($v s) is out of range" }
@@ -926,9 +973,9 @@ class PrivacyWallet(
         val weights = weights(split)
         // The state record: what a wallet restored from the mnemonic finds. Its
         // expiry is the wallet's estimate; the chain's own (from the result) replaces it here.
-        val record = stateRecord(keys) { nk ->
-            if (split.isEmpty()) WalletSync.caretakerMemo(nk, WalletSync.RECORD_NONE)
-            else WalletSync.caretakerMemo(nk, WalletSync.RECORD_HOLDS, Handles.satAdd(now(), r0), split)
+        val record = stateRecord(keys, generation) { nk, g ->
+            if (split.isEmpty()) WalletSync.caretakerMemo(nk, WalletSync.RECORD_NONE, generation = g)
+            else WalletSync.caretakerMemo(nk, WalletSync.RECORD_HOLDS, Handles.satAdd(now(), r0), split, g)
         }
         val r = boundAttempt(wait) {
             run { fee ->
@@ -953,7 +1000,9 @@ class PrivacyWallet(
      * registration as its own store records it. A move proves knowledge of
      * both identity secrets, so a wallet whose phrase is lost can move nothing.
      */
-    data class Successor(val keys: PrivacyKeys, val identity: IdentityRecord)
+    data class Successor(val keys: PrivacyKeys, val identity: IdentityRecord, val generation: Int = 0) {
+        val idc: Fr get() = keys.idc(generation)
+    }
 
     /** A move cannot be made to that identity (nothing was sent). */
     class MoveNotPossible(message: String) : IllegalStateException(message)
@@ -962,13 +1011,14 @@ class PrivacyWallet(
      * Where the succession leaf H(TAG_SUCC, [idcOld], [idcNew]) sits in the
      * local identity tree, or null. The chain appends it right after the new
      * identity's leaf ([near]), in the same tx; the rest of the tree is
-     * searched only if it is not there. Local: nothing asked names it.
+     * searched only if it is not there (and not at all with [nearOnly]). Local: nothing asked names it.
      */
     // Under the wallet's lock, which a sync holds while it appends to the tree.
-    fun successionIndex(idcOld: Fr, idcNew: Fr, near: Long): Long? = synchronized(this) {
+    fun successionIndex(idcOld: Fr, idcNew: Fr, near: Long, nearOnly: Boolean = false): Long? = synchronized(this) {
         val want = Privacy.successionLeaf(idcOld, idcNew)
         val tree = store.identityTree
         if (near in 0 until tree.size && tree.leaf(near) == want) return near
+        if (nearOnly) return null
         var i = tree.size - 1
         while (i >= 0) { if (tree.leaf(i) == want) return i; i-- }
         null
@@ -980,10 +1030,11 @@ class PrivacyWallet(
      * the local tree's root (verified at the last sync, so one the chain
      * recorded; a move goes out within the root window of it).
      */
-    private fun moveStatement(scope: Fr, to: Successor): MoveWitnessSpec {
+    private fun moveStatement(scope: Fr, from: Int, to: Successor): MoveWitnessSpec {
         val id = to.identity
-        val newIdc = to.keys.idc
-        require(newIdc != keys.idc) { "a move goes to another identity" }
+        val newIdc = to.idc
+        val oldIdc = keys.idc(from)
+        require(newIdc != oldIdc) { "a move goes to another identity" }
         val leaf = Privacy.identityLeaf(newIdc, id.dscKey, id.country, id.activatedAt, id.predecessorAt)
         val tree = store.identityTree
         if (id.leafIndex >= tree.size) throw SyncFirst("this wallet has not synced the new identity's registration yet: sync, then try again")
@@ -992,13 +1043,13 @@ class PrivacyWallet(
             Fr.ZERO -> throw MoveNotPossible("the new identity is no longer the passport's live one (it switched again or lapsed): a move goes only to the live successor")
             else -> throw MoveNotPossible("the new wallet's registration record does not match the identity tree; sync it, then try again")
         }
-        val si = successionIndex(keys.idc, newIdc, id.leafIndex + 1)
+        val si = successionIndex(oldIdc, newIdc, id.leafIndex + 1)
             ?: throw MoveNotPossible("that identity did not directly succeed this one under this passport: a move goes only to the identity the passport registered next")
         val root = tree.root()
         val sp = tree.path(si)
         val lp = tree.path(id.leafIndex)
-        val oldSecret = keys.idSecret
-        val newSecret = to.keys.idSecret
+        val oldSecret = keys.idSecret(from)
+        val newSecret = to.keys.idSecret(to.generation)
         return MoveWitnessSpec { signal ->
             MoveWitness(
                 oldSecret = oldSecret, newSecret = newSecret, successionIndex = si, successionSiblings = sp,
@@ -1018,19 +1069,29 @@ class PrivacyWallet(
      * while its statement is read from it.
      */
     @Synchronized
-    fun moveCaretaker(to: Successor, recorder: MoveRecorder? = null): TxResult {
-        check(caretakerLive()) { "this identity holds no live caretaker vote to move" }
-        checkNoMove(PendingMove.CARETAKER)
-        val s = store.state
-        val move = PendingMove(PendingMove.CARETAKER, "", 0, incoming = false, split = s.caretakerSplit,
-            splitUnknown = s.caretakerSplitUnknown, expiresAt = caretakerExpiresAt(), target = recorder?.targetId.orEmpty())
+    fun moveCaretaker(to: Successor, recorder: MoveRecorder? = null): TxResult = moveCaretakerFrom(generation, to, recorder)
+
+    /**
+     * Moves the caretaker split of this wallet's earlier identity [from]
+     * (a lapse, then a re-entry; or a fresh identity) to the one it acts as
+     * now: one phrase holds both secrets. Paid from this wallet's ERTH.
+     */
+    @Synchronized
+    fun moveCaretakerWithin(from: Int): TxResult = moveCaretakerFrom(from, selfSuccessor(from), withinRecorder())
+
+    private fun moveCaretakerFrom(from: Int, to: Successor, recorder: MoveRecorder?): TxResult {
+        val t = store.state.slot(from)
+        check(caretakerLive(t)) { "this identity holds no live caretaker vote to move" }
+        checkNoMove(PendingMove.CARETAKER, t)
+        val move = PendingMove(PendingMove.CARETAKER, "", 0, incoming = false, split = t.caretakerSplit,
+            splitUnknown = t.caretakerSplitUnknown, expiresAt = caretakerExpiresAt(t), target = recorder?.targetId.orEmpty())
         // State records: moved out for this identity, held (split, expiry) for the new one.
         val outs = listOf(
-            stateRecord(keys) { WalletSync.caretakerMemo(it, WalletSync.RECORD_MOVED_OUT) },
-            stateRecord(to.keys) { WalletSync.caretakerMemo(it, WalletSync.RECORD_HOLDS, move.expiresAt, if (move.splitUnknown) emptyMap() else move.split) },
+            stateRecord(keys, from) { nk, g -> WalletSync.caretakerMemo(nk, WalletSync.RECORD_MOVED_OUT, generation = g) },
+            stateRecord(to.keys, to.generation) { nk, g -> WalletSync.caretakerMemo(nk, WalletSync.RECORD_HOLDS, move.expiresAt, if (move.splitUnknown) emptyMap() else move.split, g) },
         )
-        val mv = moveStatement(Privacy.caretakerScope(), to)
-        val r = moveRun(move, recorder) { fee ->
+        val mv = moveStatement(Privacy.caretakerScope(), from, to)
+        val r = moveRun(move, recorder, t) { fee ->
             Assembled(listOf(bundle(outs, mapOf(FEE to fee))), move = mv) { bs, _, _ ->
                 MsgMoveCaretaker.newBuilder().setFee(bs[0]).build()
             }
@@ -1053,8 +1114,30 @@ class PrivacyWallet(
         fun refusal(move: PendingMove): String? = null
     }
 
-    private fun checkNoMove(kind: String) =
-        check(store.state.pendingMoves.none { !it.incoming && it.kind == kind && !it.confirmed }) { "a move of this identity's $kind is waiting for the chain" }
+    private fun checkNoMove(kind: String, t: IdentitySlot = store.state.current) =
+        check(t.pendingMoves.none { !it.incoming && it.kind == kind && !it.confirmed }) { "a move of this identity's $kind is waiting for the chain" }
+
+    /** This wallet's identity as the successor of its earlier identity [from]: verified, live, and a later generation. */
+    private fun selfSuccessor(from: Int): Successor {
+        val g = generation
+        require(from in 0 until g) { "a move within this wallet goes from an earlier identity to the one it acts as" }
+        val id = store.state.identity?.takeIf { it.verified } ?: throw IllegalStateException("this wallet's registration has not been verified yet; sync, then try again")
+        return Successor(keys, id, g)
+    }
+
+    /**
+     * Writes a move within this wallet into the identity it acts as (its
+     * slot in the same store), like another wallet's [MoveRecorder].
+     */
+    private fun withinRecorder(): MoveRecorder {
+        val g = generation
+        return object : MoveRecorder {
+            override val targetId = "$WITHIN_TARGET$g"
+            override fun record(move: PendingMove) = recordIncoming(store, move, now(), g)
+            override fun rollback(move: PendingMove) = rollbackIncoming(store, move, now(), g)
+            override fun refusal(move: PendingMove): String? = synchronized(store) { targetRefusal(store.state.slot(g), move.kind, now()) }
+        }
+    }
 
     /**
      * Runs a move: recorded here (outgoing) and in the target (incoming)
@@ -1062,11 +1145,11 @@ class PrivacyWallet(
      * by the caller ([confirmMove]); anything else (a wait that timed out, a
      * tx that may yet land or fail) stays pending for [resolvePendingMoves].
      */
-    private fun moveRun(move: PendingMove, recorder: MoveRecorder?, assemble: (fee: Long) -> Assembled): TxResult {
+    private fun moveRun(move: PendingMove, recorder: MoveRecorder?, t: IdentitySlot, assemble: (fee: Long) -> Assembled): TxResult {
         recorder?.let { rc ->
             // The target a confirmed move went to, or one a move
             // still in flight names; a refused, failed or expired move frees it.
-            val fixed = switchTargetNow()
+            val fixed = switchTargetNow(t)
             check(fixed.isEmpty() || fixed == rc.targetId) { "this identity's moves already went to another wallet's identity" }
             rc.refusal(move)?.let { throw IllegalStateException(it) }
         }
@@ -1074,13 +1157,12 @@ class PrivacyWallet(
             accepted = { hash, timeout ->
                 val p = move.copy(txHash = hash, timeoutHeight = timeout)
                 val ok = recorder?.let { rc -> runCatching { rc.record(p.copy(incoming = true, target = "", recorded = true)) }.isSuccess } ?: true
-                val s = store.state
-                s.pendingMoves.add(p.copy(recorded = ok))
+                t.pendingMoves.add(p.copy(recorded = ok))
                 store.save()
             },
             rejected = { hash ->
-                store.state.pendingMoves.removeAll { it.txHash == hash && !it.incoming }
-                clearSwitchTargetIfUnmoved(store.state)
+                t.pendingMoves.removeAll { it.txHash == hash && !it.incoming }
+                clearSwitchTargetIfUnmoved(t)
                 store.save()
                 recorder?.let { rc -> runCatching { rc.rollback(move.copy(txHash = hash, incoming = true)) } }
             },
@@ -1093,40 +1175,43 @@ class PrivacyWallet(
      * confirmed move went to, else the one a move still in flight names
      * (empty: any).
      */
-    private fun switchTargetNow(): String = store.state.let { s ->
+    private fun switchTargetNow(s: IdentitySlot): String =
         s.switchTarget.ifEmpty { s.pendingMoves.firstOrNull { !it.incoming && !it.confirmed && it.target.isNotEmpty() }?.target.orEmpty() }
-    }
 
     /**
      * Frees the switch target when nothing moved: no handle or
      * split moved out and no move of this identity confirmed or in flight.
      * Returns whether it changed.
      */
-    private fun clearSwitchTargetIfUnmoved(s: network.erth.wallet.privacy.sync.PrivacyState): Boolean {
+    private fun clearSwitchTargetIfUnmoved(s: IdentitySlot): Boolean {
         if (s.switchTarget.isEmpty() || s.handleMovedOut || s.caretakerMovedOut || s.pendingMoves.any { !it.incoming }) return false
         s.switchTarget = ""
         return true
     }
 
-    /** The move [hash] is in a block and succeeded: this identity no longer holds what it moved. */
+    /**
+     * The move [hash] is in a block and succeeded: the identity that moved
+     * no longer holds what it moved (every slot: a move within this wallet
+     * is in two of them, outgoing and incoming).
+     */
     private fun confirmMove(hash: String) {
-        val s = store.state
-        val i = s.pendingMoves.indexOfFirst { it.txHash == hash }
-        if (i < 0) return
-        val p = s.pendingMoves[i]
-        if (!p.incoming) {
-            if (p.kind == PendingMove.HANDLE) { s.handle = ""; s.handleMovedOut = true; s.handleSetAt = now() }
-            else { s.caretakerSplit = emptyMap(); s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0; s.caretakerMovedOut = true }
-            // The target is fixed only by a confirmed move.
-            if (s.switchTarget.isEmpty() && p.target.isNotEmpty()) s.switchTarget = p.target
+        for (s in store.state.slots.values) {
+            val i = s.pendingMoves.indexOfFirst { it.txHash == hash && !it.confirmed }
+            if (i < 0) continue
+            val p = s.pendingMoves[i]
+            if (!p.incoming) {
+                if (p.kind == PendingMove.HANDLE) { s.handle = ""; s.handleMovedOut = true; s.handleSetAt = now() }
+                else { s.caretakerSplit = emptyMap(); s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0; s.caretakerMovedOut = true }
+                // The target is fixed only by a confirmed move.
+                if (s.switchTarget.isEmpty() && p.target.isNotEmpty()) s.switchTarget = p.target
+            }
+            if (p.incoming || p.recorded) s.pendingMoves.removeAt(i) else s.pendingMoves[i] = p.copy(confirmed = true)
         }
-        if (p.incoming || p.recorded) s.pendingMoves.removeAt(i) else s.pendingMoves[i] = p.copy(confirmed = true)
         store.save()
     }
 
-    /** The move [p] is definitely not in the chain (refused, failed in its block, or gone past its timeout_height). */
-    private fun dropMove(p: PendingMove) {
-        val s = store.state
+    /** The move [p] of slot [s] is definitely not in the chain (refused, failed in its block, or gone past its timeout_height). */
+    private fun dropMove(p: PendingMove, s: IdentitySlot) {
         s.pendingMoves.removeAll { it.txHash == p.txHash && it.incoming == p.incoming }
         if (p.incoming) undoIncoming(s, p, now()) else clearSwitchTargetIfUnmoved(s)
         store.save()
@@ -1141,31 +1226,37 @@ class PrivacyWallet(
      */
     @Synchronized
     fun resolvePendingMoves(): Boolean {
-        val s = store.state
-        // A switch target fixed by a move that never landed is freed.
-        if (clearSwitchTargetIfUnmoved(s)) store.save()
-        for (p in s.pendingMoves.toList()) {
-            if (p.confirmed) continue
-            val r = runCatching { chain.tx(p.txHash) }.getOrNull()
-            when {
-                r != null && r.code == 0 -> confirmMove(p.txHash)
-                r != null -> { s.voidRecordHeights.add(r.height); dropMove(p) }
-                // A timeout no sane tip gives is settled by the tx's status alone.
-                !PrivateTxEngine.timeoutSane(p.timeoutHeight, s.verifiedHeight) -> {
-                    val st = runCatching { roots.txStatus(p.txHash) }.getOrNull()
-                    if (st == network.erth.wallet.privacy.sync.TxStatus.MISSING) dropMove(p)
-                }
-                else -> {
-                    val tip = runCatching { chain.tipHeight() }.getOrNull() ?: continue
-                    if (tip > p.timeoutHeight) dropMove(p)
+        val st = store.state
+        for (s in st.slots.values.toList()) {
+            // A switch target fixed by a move that never landed is freed.
+            if (clearSwitchTargetIfUnmoved(s)) store.save()
+            for (p in s.pendingMoves.toList()) {
+                if (p.confirmed || s.pendingMoves.none { it == p }) continue
+                val r = runCatching { chain.tx(p.txHash) }.getOrNull()
+                when {
+                    r != null && r.code == 0 -> confirmMove(p.txHash)
+                    r != null -> { st.voidRecordHeights.add(r.height); dropMove(p, s) }
+                    // A timeout no sane tip gives is settled by the tx's status alone.
+                    !PrivateTxEngine.timeoutSane(p.timeoutHeight, st.verifiedHeight) -> {
+                        val ts = runCatching { roots.txStatus(p.txHash) }.getOrNull()
+                        if (ts == network.erth.wallet.privacy.sync.TxStatus.MISSING) dropMove(p, s)
+                    }
+                    else -> {
+                        val tip = runCatching { chain.tipHeight() }.getOrNull() ?: continue
+                        if (tip > p.timeoutHeight) dropMove(p, s)
+                    }
                 }
             }
         }
-        return s.pendingMoves.any { !it.confirmed }
+        return st.slots.values.any { s -> s.pendingMoves.any { !it.confirmed } }
     }
 
-    /** Moves away from this identity that the chain has not confirmed yet, and confirmed ones not yet recorded in their target. */
-    fun outgoingMoves(): List<PendingMove> = store.state.pendingMoves.filter { !it.incoming }
+    /**
+     * Moves away from identity generation [g] (default: the one this wallet
+     * acts as) that the chain has not confirmed yet, and confirmed ones not
+     * yet recorded in their target.
+     */
+    fun outgoingMoves(g: Int = generation): List<PendingMove> = store.state.slot(g).pendingMoves.filter { !it.incoming }
 
     /**
      * When the wallet suggests bringing the predecessor's handle and
@@ -1185,11 +1276,13 @@ class PrivacyWallet(
         return drawMoveSuggestion(id.leafIndex, id.activatedAt)
     }
 
-    private fun drawMoveSuggestion(leaf: Long, activatedAt: Long): Long {
+    private fun drawMoveSuggestion(leaf: Long, activatedAt: Long, g: Int = generation): Long {
         val span = (MOVE_DELAY_MAX_SECONDS - MOVE_DELAY_MIN_SECONDS).toInt()
         val at = Handles.satAdd(activatedAt, MOVE_DELAY_MIN_SECONDS + java.security.SecureRandom().nextInt(span + 1))
-        store.state.moveSuggestedAt = at
-        store.state.moveSuggestedLeaf = leaf
+        // The registered generation's: the wallet may not act as it yet (its leaf not matched).
+        val t = store.state.slot(g)
+        t.moveSuggestedAt = at
+        t.moveSuggestedLeaf = leaf
         store.save()
         return at
     }
@@ -1212,9 +1305,8 @@ class PrivacyWallet(
     /** Marks a confirmed move recorded in its target (a retried [MoveRecorder.record] succeeded). */
     @Synchronized
     fun markRecorded(hash: String) {
-        val s = store.state
+        val s = store.state.slots.values.firstOrNull { t -> t.pendingMoves.any { it.txHash == hash && !it.incoming } } ?: return
         val i = s.pendingMoves.indexOfFirst { it.txHash == hash && !it.incoming }
-        if (i < 0) return
         val p = s.pendingMoves[i]
         if (p.confirmed) s.pendingMoves.removeAt(i) else s.pendingMoves[i] = p.copy(recorded = true)
         store.save()
@@ -1249,7 +1341,7 @@ class PrivacyWallet(
         val (maxPred, wait) = leaseStatement(predecessorBound(lb, lb.handleLeaseSeconds), held) { HandleNotLive(store.state.handle, it) }
         val addr = address.encode()
         val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, maxPred)
-        val record = stateRecord(keys) { WalletSync.handleMemo(it, WalletSync.RECORD_HOLDS, handle) }
+        val record = stateRecord(keys, generation) { nk, g -> WalletSync.handleMemo(nk, WalletSync.RECORD_HOLDS, handle, g) }
         val r = boundAttempt(wait) {
             run { fee ->
                 Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee))), membership = m) { bs, _, mem ->
@@ -1273,10 +1365,9 @@ class PrivacyWallet(
      * When this identity's handle stops being live, as the chain last said
      * (its bind, or its directory); 0 when the wallet does not know.
      */
-    fun handleExpiresAt(): Long {
-        val s = store.state
-        return if (s.handle.isNotEmpty() && s.handleExpiresFor == s.handle) s.handleExpiresAt else 0
-    }
+    fun handleExpiresAt(g: Int = generation): Long = handleExpiresAt(store.state.slot(g))
+
+    private fun handleExpiresAt(s: IdentitySlot): Long = if (s.handle.isNotEmpty() && s.handleExpiresFor == s.handle) s.handleExpiresAt else 0
 
     /** Releases this identity's handle at once (anyone may claim it). */
     fun releaseHandle(): TxResult {
@@ -1284,7 +1375,7 @@ class PrivacyWallet(
         check(store.state.handle.isNotEmpty()) { "this identity holds no handle to release" }
         checkNoMove(PendingMove.HANDLE)
         val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, Privacy.NO_BOUND)
-        val record = stateRecord(keys) { WalletSync.handleMemo(it, WalletSync.RECORD_NONE) }
+        val record = stateRecord(keys, generation) { nk, g -> WalletSync.handleMemo(nk, WalletSync.RECORD_NONE, generation = g) }
         val r = run { fee ->
             Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee))), membership = m) { bs, _, mem ->
                 MsgBindHandle.newBuilder().setFee(bs[0]).setMembership(mem).setMaxPredecessor(Privacy.NO_BOUND).build()
@@ -1301,22 +1392,30 @@ class PrivacyWallet(
      * the wallet's lock throughout, like [moveCaretaker].
      */
     @Synchronized
-    fun moveHandle(to: Successor, recorder: MoveRecorder? = null, expected: String? = null): TxResult {
-        val handle = store.state.handle
+    fun moveHandle(to: Successor, recorder: MoveRecorder? = null, expected: String? = null): TxResult =
+        moveHandleFrom(generation, to, recorder, expected)
+
+    /** Moves the handle of this wallet's earlier identity [from] to the one it acts as now (see [moveCaretakerWithin]). */
+    @Synchronized
+    fun moveHandleWithin(from: Int, expected: String? = null): TxResult = moveHandleFrom(from, selfSuccessor(from), withinRecorder(), expected)
+
+    private fun moveHandleFrom(from: Int, to: Successor, recorder: MoveRecorder?, expected: String?): TxResult {
+        val t = store.state.slot(from)
+        val handle = t.handle
         check(handle.isNotEmpty()) { "this identity holds no handle to move" }
         // The handle the confirm sheet named: refused if this identity's is no longer that one.
         if (expected != null) check(handle == expected) { "this identity's handle is no longer @$expected; nothing was sent" }
-        checkNoMove(PendingMove.HANDLE)
+        checkNoMove(PendingMove.HANDLE, t)
         // MsgMoveHandle refuses a handle that is not live (its renewal period).
-        handleExpiresAt().takeIf { it > 0 }?.let { if (it <= chainNow()) throw HandleNotMovable(handle) }
+        handleExpiresAt(t).takeIf { it > 0 }?.let { if (it <= chainNow()) throw HandleNotMovable(handle) }
         val move = PendingMove(PendingMove.HANDLE, "", 0, incoming = false, handle = handle, target = recorder?.targetId.orEmpty())
         // State records: moved out for this identity, held for the new one.
         val outs = listOf(
-            stateRecord(keys) { WalletSync.handleMemo(it, WalletSync.RECORD_MOVED_OUT) },
-            stateRecord(to.keys) { WalletSync.handleMemo(it, WalletSync.RECORD_HOLDS, handle) },
+            stateRecord(keys, from) { nk, g -> WalletSync.handleMemo(nk, WalletSync.RECORD_MOVED_OUT, generation = g) },
+            stateRecord(to.keys, to.generation) { nk, g -> WalletSync.handleMemo(nk, WalletSync.RECORD_HOLDS, handle, g) },
         )
-        val mv = moveStatement(Privacy.handleScope(), to)
-        val r = moveRun(move, recorder) { fee ->
+        val mv = moveStatement(Privacy.handleScope(), from, to)
+        val r = moveRun(move, recorder, t) { fee ->
             Assembled(listOf(bundle(outs, mapOf(FEE to fee))), move = mv) { bs, _, _ ->
                 MsgMoveHandle.newBuilder().setFee(bs[0]).setHandle(handle).build()
             }
@@ -1378,7 +1477,7 @@ class PrivacyWallet(
     }
 
     /** This identity's handle-scope nullifier as a directory entry's owner (64 lowercase hex). */
-    fun handleOwner(): String = Privacy.scopeNullifier(keys.idSecret, Privacy.handleScope()).toHex().lowercase(java.util.Locale.ROOT)
+    fun handleOwner(): String = Privacy.scopeNullifier(keys.idSecret(generation), Privacy.handleScope()).toHex().lowercase(java.util.Locale.ROOT)
 
     // ---- assembly -----------------------------------------------------------
 
@@ -2549,8 +2648,8 @@ class PrivacyWallet(
          * now holds, and the move as pending until its own wallet settles it
          * by hash. Used by the mover for the other wallet's store.
          */
-        fun recordIncoming(store: PrivacyStore, p: PendingMove, now: Long) = synchronized(store) {
-            val s = store.state
+        fun recordIncoming(store: PrivacyStore, p: PendingMove, now: Long, generation: Int? = null) = synchronized(store) {
+            val s = generation?.let { store.state.slot(it) } ?: store.state.current
             if (p.kind == PendingMove.HANDLE) { s.handle = p.handle; s.handleSetAt = now }
             else {
                 s.caretakerSplit = p.split; s.caretakerSplitUnknown = p.splitUnknown || p.split.isEmpty()
@@ -2568,7 +2667,9 @@ class PrivacyWallet(
          * or it holds one of its own (a handle; a live caretaker split) that
          * the move would overwrite here. Null: it can.
          */
-        fun targetRefusal(s: network.erth.wallet.privacy.sync.PrivacyState, kind: String, now: Long): String? = when (kind) {
+        fun targetRefusal(s: network.erth.wallet.privacy.sync.PrivacyState, kind: String, now: Long): String? = targetRefusal(s.current, kind, now)
+
+        fun targetRefusal(s: IdentitySlot, kind: String, now: Long): String? = when (kind) {
             PendingMove.HANDLE -> when {
                 s.handleMovedOut -> "that wallet's identity already moved a handle away; it can never hold one again"
                 s.handle.isNotEmpty() -> "that wallet already holds @${s.handle}"
@@ -2582,14 +2683,14 @@ class PrivacyWallet(
         }
 
         /** Undoes [recordIncoming] for a move that definitely did not happen. */
-        fun rollbackIncoming(store: PrivacyStore, p: PendingMove, now: Long) = synchronized(store) {
-            val s = store.state
+        fun rollbackIncoming(store: PrivacyStore, p: PendingMove, now: Long, generation: Int? = null) = synchronized(store) {
+            val s = generation?.let { store.state.slot(it) } ?: store.state.current
             s.pendingMoves.removeAll { it.txHash == p.txHash && it.incoming }
             undoIncoming(s, p, now)
             store.save()
         }
 
-        internal fun undoIncoming(s: network.erth.wallet.privacy.sync.PrivacyState, p: PendingMove, now: Long) {
+        internal fun undoIncoming(s: IdentitySlot, p: PendingMove, now: Long) {
             if (p.kind == PendingMove.HANDLE) {
                 if (s.handle == p.handle) { s.handle = ""; s.handleSetAt = now }
             } else if (s.caretakerSplit == p.split && s.caretakerSplitUnknown == (p.splitUnknown || p.split.isEmpty())) {
@@ -2776,6 +2877,9 @@ class PrivacyWallet(
 
         const val SECONDS_PER_DAY = 86_400L
 
+        /** A move within the wallet names its target as this, followed by the generation moved to. */
+        const val WITHIN_TARGET = "generation:"
+
         /** The suggested wait before a move after a switch: drawn uniformly between these (hours to days). */
         const val MOVE_DELAY_MIN_SECONDS = 6 * 3600L
         const val MOVE_DELAY_MAX_SECONDS = 3 * 86_400L
@@ -2785,9 +2889,15 @@ class PrivacyWallet(
         /** The idc's index among them (the chain's params.idc_index). */
         const val IDC_SIGNAL = 4
         /** What a wallet says when its identity was registered before (personhood 1130). */
-        const val IDENTITY_USED = "This identity has been registered before. Switch to a new wallet: " +
-            "the chain accepts each identity once, so a registration, a switch or a return after a lapse " +
-            "goes to a wallet whose identity never registered."
+        const val IDENTITY_USED = "This identity has been registered before, and the chain accepts each identity once. " +
+            "The wallet has moved on to your next identity, from the same recovery phrase: start the registration again."
+
+        /** The chain's text for personhood 1130 (ErrIdcUsed). */
+        const val IDENTITY_USED_TEXT = "identity commitment has been registered before"
+
+        /** Whether [e] (or a cause) is the chain refusing an identity as used (1130). */
+        fun identityRefusal(e: Throwable): Boolean =
+            generateSequence(e) { it.cause }.take(8).any { it.message?.contains(IDENTITY_USED_TEXT) == true }
 
         /**
          * The chain's current_date_max_skew_seconds (48 h): a registration

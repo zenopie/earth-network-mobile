@@ -26,13 +26,39 @@ import javax.crypto.spec.SecretKeySpec
  * A child's 32-byte private key k becomes a secret by
  * HMAC-SHA512(key = "earth.privacy.v1", label || k): reduced mod p for the
  * field secrets (64 bytes, so uniform), its first 32 bytes for ek.
+ *
+ * Identity generations: the chain accepts each idc once (personhood 1130),
+ * so every registration after the first (a re-entry after a lapse, a fresh
+ * identity) needs a new identity secret. Generation g >= 1 appends g to the
+ * identity child's HMAC input; generation 0 is the identity above, unchanged:
+ *
+ *     id_secret_0 = HMAC-SHA512("earth.privacy.v1", "id_secret" || k)              mod p
+ *     id_secret_g = HMAC-SHA512("earth.privacy.v1", "id_secret" || k || u32 BE g)  mod p
+ *
+ * One phrase holds every generation; nk and ek (notes, the shielded
+ * address) are the same for all of them.
  */
 class PrivacyKeys private constructor(
-    val idSecret: Fr,
+    /** The identity child's 32-byte private key (m/2026'/118'/0'/0'), from which every generation's secret comes. */
+    private val idNode: ByteArray,
     val nk: Fr,
     private val ekSecret: ByteArray,
 ) {
+    /** Generation 0's identity secret and commitment (the first identity). */
+    val idSecret: Fr = idSecret(0)
     val idc: Fr = Privacy.idc(idSecret)
+
+    private val idcs = HashMap<Int, Fr>().apply { put(0, idc) }
+
+    /** Generation [generation]'s identity secret (see the class comment). */
+    fun idSecret(generation: Int): Fr {
+        require(generation in 0..MAX_GENERATION) { "identity generation $generation is out of range" }
+        val c = if (generation == 0) ByteArray(0) else java.nio.ByteBuffer.allocate(4).putInt(generation).array()
+        return Fr.fromWideBytes(hmac(ID_LABEL + idNode + c))
+    }
+
+    /** Generation [generation]'s idc = H(TAG_ID, id_secret_g). */
+    fun idc(generation: Int): Fr = synchronized(idcs) { idcs.getOrPut(generation) { Privacy.idc(idSecret(generation)) } }
     val ownerPk: Fr = Privacy.ownerPk(nk)
     val ekPub: ByteArray = X25519PrivateKeyParameters(ekSecret, 0).generatePublicKey().encoded
     val address: ShieldedAddress = ShieldedAddress(ownerPk, ekPub)
@@ -64,6 +90,10 @@ class PrivacyKeys private constructor(
     companion object {
         const val PURPOSE = 2026
         private const val COIN = 118
+        private val ID_LABEL = "id_secret".toByteArray()
+
+        /** The highest identity generation a wallet derives: far past any lifetime of yearly registrations. */
+        const val MAX_GENERATION = 10_000
         private val HMAC_KEY = "earth.privacy.v1".toByteArray()
 
         fun fromMnemonic(words: List<String>): PrivacyKeys {
@@ -84,7 +114,7 @@ class PrivacyKeys private constructor(
                 hmac(label.toByteArray() + hard(keys, i).privKeyBytes)
             val ek = secret(2, "ek").copyOf(32)
             return PrivacyKeys(
-                idSecret = Fr.fromWideBytes(secret(0, "id_secret")),
+                idNode = hard(keys, 0).privKeyBytes,
                 nk = Fr.fromWideBytes(secret(1, "nk")),
                 ekSecret = ek,
             )

@@ -37,11 +37,11 @@ class ChainErrorsTest : WalletTest() {
         assertNull(ChainErrors.explain(1127, "dex"))
     }
 
-    /** 1130: an identity registers once; the wallet says to switch to a new one. */
+    /** 1130: an identity registers once; the wallet moves on to its next identity and says to start again. */
     @Test
     fun usedIdentityIsPlain() {
         val used = ChainErrors.explain(1130, "personhood")!!
-        assertTrue(used, "Switch to a new wallet" in used)
+        assertTrue(used, "next identity" in used)
         assertEquals(used, ChainErrors.explain("rpc error: identity commitment has been registered before; register a fresh identity"))
         assertNull(ChainErrors.explain(1130, "dex"))
     }

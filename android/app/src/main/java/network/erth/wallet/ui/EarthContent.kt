@@ -67,6 +67,7 @@ import network.erth.wallet.ui.privacy.PrivacyActionsViewModel
 import network.erth.wallet.ui.privacy.HandleScreen
 import network.erth.wallet.ui.privacy.PersonalState
 import network.erth.wallet.ui.privacy.SwitchIdentityScreen
+import network.erth.wallet.ui.privacy.SWITCH_TO_SELF
 import network.erth.wallet.privacy.Reminders
 import network.erth.wallet.privacy.handles.Handles
 import network.erth.wallet.ui.privacy.RemovalBallotsScreen
@@ -436,13 +437,18 @@ internal fun EarthContent(
                         action = if (handle) "Bring @${offer.handle} to this identity" else "Bring your Caretaker split to this identity",
                         msgTypeUrl = if (handle) PrivateMsgs.MOVE_HANDLE else PrivateMsgs.MOVE_CARETAKER,
                         balanceUerth = 0L,
-                        // Not this wallet: the fee comes out of the identity this one replaced.
-                        rows = listOf("Fee paid by" to "${offer.fromName} (its private ERTH)"),
+                        // The identity this one replaced pays: another wallet's, or this one's.
+                        rows = listOf("Fee paid by" to if (offer.withinWallet) "This wallet (its private ERTH)" else "${offer.fromName} (its private ERTH)"),
                     ),
-                    // The previous wallet pays: its private ERTH.
                     shieldedErth = offer.feeErth,
                     onSuccess = { offerTick++; privacy.refreshPersonal() },
-                    run = { ctx ->
+                    run = run@{ ctx ->
+                        if (offer.withinWallet) {
+                            // This wallet's earlier identity: one phrase holds both secrets.
+                            val w = PrivacySession.wallet(ctx)
+                            w.sync()
+                            return@run (if (handle) w.moveHandleWithin(offer.fromGeneration, expected = offer.handle) else w.moveCaretakerWithin(offer.fromGeneration)).hash
+                        }
                         // Proven with both identities' secrets: this wallet's (the successor)
                         // and the previous one's, which builds and pays for the tx.
                         val to = PrivacySession.selfAsSuccessor(ctx)
@@ -460,11 +466,7 @@ internal fun EarthContent(
                 onClaim = onClaimAnml,
                 onHandle = { nav.push(EarthRoute.Handle) },
                 onSwitch = { nav.push(EarthRoute.SwitchIdentity) },
-                identityUsed = loaded.identityUsed,
-                onNewWallet = {
-                    wallets.beginCreate()
-                    nav.push(EarthRoute.CreateWallet)
-                },
+                registeredBefore = loaded.registeredBefore,
                 handle = personal?.handle.orEmpty(),
                 moveOffer = moveOffer,
                 onBringHandle = { bring(PendingMove.HANDLE) },
@@ -472,7 +474,7 @@ internal fun EarthContent(
                 onCheckMoves = {
                     scope.launch {
                         withContext(Dispatchers.IO) {
-                            moveOffer?.let { o ->
+                            moveOffer?.takeIf { !it.withinWallet }?.let { o ->
                                 runCatching {
                                     val from = PrivacySession.walletAt(context, o.fromIndex)
                                     from.resolvePendingMoves()
@@ -552,7 +554,6 @@ internal fun EarthContent(
             LaunchedEffect(Unit) { privacy.refreshPersonal(); wallets.refresh() }
             // What a chosen target already holds.
             var targetWarning by remember { mutableStateOf<String?>(null) }
-            var targetBlocked by remember { mutableStateOf<String?>(null) }
             // One step only: what this identity's predecessor still holds that has not moved here.
             var unmoved by remember { mutableStateOf<String?>(null) }
             LaunchedEffect(Unit) {
@@ -562,24 +563,23 @@ internal fun EarthContent(
                         it.handle.takeIf { h -> h.isNotEmpty() }?.let { h -> "@$h" },
                         "your caretaker vote".takeIf { _ -> it.voteLive },
                     ).joinToString(" and ").ifEmpty { "a move still in flight" }
-                    "${it.fromName}, the identity this one replaced, still holds $what."
+                    if (it.withinWallet) "Your previous identity in this wallet still holds $what."
+                    else "${it.fromName}, the identity this one replaced, still holds $what."
                 }
             }
             val walletList = walletsState?.wallets.orEmpty()
             fun check(idx: Int) {
+                if (idx == SWITCH_TO_SELF) { targetWarning = null; return }
                 scope.launch {
                     val info = withContext(Dispatchers.IO) { runCatching { PrivacySession.targetInfo(context, idx) }.getOrNull() }
-                    // The chain registers an identity once (1130): a wallet that registered before is no target.
-                    targetBlocked = if (info?.used == true) {
-                        "That wallet's identity has been registered before, and the chain accepts each identity only once. " +
-                            "Switch to a wallet that has never registered, or create a new one."
-                    } else null
                     // What a move after the switch could not bring there, said up front.
+                    // Any wallet can be a target: it registers its next unused identity.
                     targetWarning = when {
                         info == null -> null
                         info.handleRefusal != null || info.voteRefusal != null ->
                             listOfNotNull(info.handleRefusal?.let { "Your handle cannot be brought there: $it." }, info.voteRefusal?.let { "Your caretaker vote cannot be brought there: $it." }).joinToString(" ")
-                        info.registered -> "That wallet sent a registration in the last two days that can still land. If it lands, that wallet's identity is used and the chain refuses this switch to it."
+                        info.live -> "That wallet has a live registration of its own. Switching there replaces it with that wallet's next identity; what its current identity holds stays with it unless moved."
+                        info.registered -> "That wallet sent a registration in the last two days that can still land. If it lands first, this switch is refused; try again once it has."
                         else -> null
                     }
                 }
@@ -588,13 +588,13 @@ internal fun EarthContent(
                 wallets = walletList,
                 currentIndex = walletsState?.selectedIndex ?: SecureWalletManager.getSelectedWalletIndex(),
                 targetWarning = targetWarning,
-                targetBlocked = targetBlocked,
                 unmoved = unmoved,
                 onTargetChange = ::check,
                 onContinue = { target ->
-                    // The new wallet registers the same passport: the chain
-                    // treats it as a switch (this wallet's leaf is zeroed).
-                    onSwitchWallet(target)
+                    // The target registers the same passport to its next
+                    // identity: the chain treats it as a switch (the live
+                    // leaf is zeroed). A fresh identity stays in this wallet.
+                    if (target != SWITCH_TO_SELF) onSwitchWallet(target)
                     nav.pop()
                     onRegister()
                 },
