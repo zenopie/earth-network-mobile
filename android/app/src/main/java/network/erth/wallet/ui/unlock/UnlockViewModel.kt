@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,13 +31,29 @@ class UnlockViewModel(app: Application) : AndroidViewModel(app) {
     val lockout: StateFlow<String?> = _lockout.asStateFlow()
 
     private var checking = false
+    private var ticker: Job? = null
 
     init {
         refreshLockout()
     }
 
     fun refreshLockout() {
-        _lockout.value = UnlockAttempts.status(getApplication()).message
+        setLockout(UnlockAttempts.status(getApplication()).message)
+    }
+
+    /**
+     * While the backoff runs, re-read it every second: the screen is inert
+     * until it clears, so nothing else would ever ask again.
+     */
+    private fun setLockout(message: String?) {
+        _lockout.value = message
+        if (message == null || ticker?.isActive == true) return
+        ticker = viewModelScope.launch {
+            while (_lockout.value != null) {
+                delay(1_000)
+                _lockout.value = UnlockAttempts.status(getApplication()).message
+            }
+        }
     }
 
     /**
@@ -65,7 +83,7 @@ class UnlockViewModel(app: Application) : AndroidViewModel(app) {
 
         val status = UnlockAttempts.status(ctx)
         if (status.lockedOut) {
-            _lockout.value = status.message
+            setLockout(status.message)
             return
         }
 
@@ -82,7 +100,7 @@ class UnlockViewModel(app: Application) : AndroidViewModel(app) {
 
         if (result.exceptionOrNull() is SessionManager.WrongSecretException) {
             val after = UnlockAttempts.recordFailure(ctx)
-            _lockout.value = after.message
+            setLockout(after.message)
             _error.value = if (after.lockedOut) {
                 null
             } else {
@@ -98,7 +116,7 @@ class UnlockViewModel(app: Application) : AndroidViewModel(app) {
 
         UnlockAttempts.recordSuccess(ctx)
         _error.value = null
-        _lockout.value = null
+        setLockout(null)
     }
 
     /**

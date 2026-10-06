@@ -87,6 +87,8 @@ fun UnlockScreen(
     }
 
     val locked = lockoutMessage != null
+    // The digits that tripped the backoff are not the start of the next try.
+    LaunchedEffect(locked) { if (locked) pin = "" }
 
     fun press(digit: String) {
         if (locked || pin.length >= 6) return

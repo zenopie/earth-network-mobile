@@ -1,6 +1,7 @@
 package network.erth.wallet.ui.unlock
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -10,6 +11,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.wallet.SessionManager
@@ -30,6 +32,13 @@ fun ConfirmUnlockDialog(onConfirmed: (secret: String) -> Unit, onDismiss: () -> 
     var error by remember { mutableStateOf<String?>(null) }
     var lockout by remember { mutableStateOf(UnlockAttempts.status(context).message) }
     var checking by remember { mutableStateOf(false) }
+    // The keypad is inert while the backoff runs, so re-read it until it clears.
+    LaunchedEffect(lockout != null) {
+        while (lockout != null) {
+            delay(1_000)
+            lockout = UnlockAttempts.status(context).message
+        }
+    }
     Dialog(
         onDismissRequest = onDismiss,
         // The PIN pad is not screenshot or recorded.
