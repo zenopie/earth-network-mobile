@@ -60,9 +60,17 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// The idc's index among them (the chain's params.idc_index).
     public static let idcSignal = 4
     /// What a wallet says when its identity was registered before (personhood 1130). As Android's IDENTITY_USED.
-    public static let identityUsedMessage = "This identity has been registered before. Switch to a new wallet: "
-        + "the chain accepts each identity once, so a registration, a switch or a return after a lapse "
-        + "goes to a wallet whose identity never registered."
+    public static let identityUsedMessage = "This identity has been registered before, and the chain accepts each identity once. "
+        + "The wallet has moved on to your next identity, from the same recovery phrase: start the registration again."
+    /// The chain's text for personhood 1130 (ErrIdcUsed).
+    public static let identityUsedText = "identity commitment has been registered before"
+    /// A move within the wallet names its target as this, followed by the generation moved to.
+    public static let withinTarget = "generation:"
+
+    /// Whether `error` is the chain refusing an identity as used (1130).
+    public static func identityRefusal(_ error: Swift.Error) -> Bool {
+        "\(error) \(error.localizedDescription)".contains(identityUsedText)
+    }
     /// The suggested wait before a move after a switch: drawn uniformly between these (hours to days).
     public static let moveDelayMinSeconds: Int64 = 6 * 3600
     public static let moveDelayMaxSeconds: Int64 = 3 * 86_400
@@ -89,6 +97,14 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     public var address: ShieldedAddress { keys.address }
+
+    /// The identity generation this wallet acts as (PrivacyKeys): its
+    /// registration, handle, split and votes are that identity's. A
+    /// registration of a later one moves it up once it lands.
+    public var generation: Int { snapshot.generation }
+
+    /// The idc of the identity this wallet acts as.
+    public var idc: Fr { keys.idc(generation) }
 
     // MARK: - snapshot
 
@@ -128,8 +144,13 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let saveError: String?
         /// The genesis the synced data is from.
         public let genesis: String?
-        /// A registration of this identity landed (`PrivacyWallet.identityUsed`).
-        public let identityUsed: Bool
+        /// The identity generation the wallet acts as, and the one its next registration uses.
+        public let generation: Int
+        public let nextGeneration: Int
+        /// A registration of one of this wallet's identities landed (`PrivacyWallet.registeredBefore`).
+        public let registeredBefore: Bool
+        /// Every generation's slot (what each identity holds), for the moves within the wallet.
+        public let identities: [Int: IdentitySlot]
         /// The suggested move time after a switch (`moveSuggestedAt` in the state: 0 none, -1 nothing left).
         public let moveSuggestedAt: Int64
 
@@ -146,7 +167,10 @@ public final class PrivacyWallet: @unchecked Sendable {
             self.maxActions = maxActions
             self.saveError = saveError
             genesis = s.genesis
-            identityUsed = s.identity != nil || !s.regRecords.isEmpty
+            generation = s.generation
+            nextGeneration = s.nextGeneration()
+            registeredBefore = s.usedThrough() >= 0
+            identities = s.identities
             moveSuggestedAt = s.moveSuggestedAt
         }
 
@@ -533,7 +557,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         let tree = store.identityTree
         let path = tree.path(id.leafIndex)
         let root = tree.root()
-        let idSecret = keys.idSecret
+        let idSecret = keys.idSecret(store.state.generation)
         return MembershipWitnessSpec { signal in
             try MembershipWitness(idSecret: idSecret, dscKey: id.dscKey, country: id.country, activatedAt: id.activatedAt,
                                   predecessorAt: id.predecessorAt,
@@ -640,24 +664,52 @@ public final class PrivacyWallet: @unchecked Sendable {
         /// `idc`'s secret: the proof's id_secret witness, which outputs `idc`.
         /// In memory only, like the keys it comes from.
         public let idSecret: Fr
+        /// The identity generation registered (`idc` is its): this wallet's next unused one.
+        public var generation: Int = 0
     }
 
-    /// This wallet's identity has been registered before (personhood 1130):
-    /// the chain keeps every idc it ever registered and refuses it again, by
-    /// any passport. Its first registration, a switch to it and a re-entry
-    /// all need a fresh identity: another wallet whose identity never
-    /// registered. Nothing was sent.
+    /// The identity this registration was prepared for has been registered
+    /// since (a registration of it landed meanwhile, or the chain refused it
+    /// as used, personhood 1130). The wallet moved on to its next identity:
+    /// prepare again. Nothing was sent.
     public struct IdentityUsed: Swift.Error, LocalizedError, Equatable {
         public init() {}
         public var errorDescription: String? { PrivacyWallet.identityUsedMessage }
     }
 
-    /// Whether this wallet's identity has been registered before: a
-    /// registration of it landed (its leaf, live or zeroed since, or a
-    /// registration record a restore found). The chain refuses it again
-    /// (1130). A sent registration that has not landed does not count: if it
-    /// never lands the identity is still fresh, and a retry is its own.
-    public func identityUsed() -> Bool { snapshot.identityUsed }
+    /// Whether an identity of this wallet has been registered before (a
+    /// registration landed: its leaf, live or zeroed since, or a record a
+    /// restore found). The chain refuses an idc again (1130), so the next
+    /// registration uses the next generation (`nextGeneration`): a re-entry
+    /// needs no new recovery phrase.
+    public func registeredBefore() -> Bool { snapshot.registeredBefore }
+
+    /// The identity generation the next registration (a first one, a re-entry, a fresh identity) proves with.
+    public func nextGeneration() -> Int { snapshot.nextGeneration }
+
+    /// The chain refused `prep`'s identity as registered before (1130; the
+    /// wallet's records missed it): the next registration uses a later one.
+    public func identityRefused(_ prep: RegistrationPrep) async {
+        await lockedNoThrow { identityRefusedLocked(prep) }
+    }
+
+    /// The same, for a registration known by the idc it named (the gas service's refusal of its message).
+    public func identityRefused(idc: Data) async {
+        await lockedNoThrow {
+            guard let f = try? Fr(bytes: idc) else { return }
+            let top = store.state.nextGeneration()
+            guard let g = (0 ... top).first(where: { keys.idc($0) == f }) else { return }
+            guard store.state.generationFloor <= g else { return }
+            store.mutate { $0.generationFloor = min(g + 1, PrivacyKeys.maxGeneration) }
+            persistNoThrow()
+        }
+    }
+
+    private func identityRefusedLocked(_ prep: RegistrationPrep) {
+        guard store.state.generationFloor <= prep.generation else { return }
+        store.mutate { $0.generationFloor = min(prep.generation + 1, PrivacyKeys.maxGeneration) }
+        persistNoThrow()
+    }
 
     /// A referrer named by handle, resolved from the directory: the handle and the address it names now.
     public struct Referrer: Sendable, Equatable {
@@ -668,7 +720,8 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     public func prepareRegistration(referrer: Referrer?) async throws -> RegistrationPrep {
         try await locked {
-            if store.state.identity != nil || !store.state.regRecords.isEmpty { throw IdentityUsed() }
+            // A fresh identity of this wallet's: the chain registers each idc once.
+            let gen = store.state.nextGeneration()
             let anml = try mint("uanml")
             let erth = try mint("uerth")
             let gas = try mint("uerth")
@@ -678,10 +731,11 @@ public final class PrivacyWallet: @unchecked Sendable {
                 try require(r.address.ownerPK != keys.ownerPK, "a registration cannot name its own wallet as its referrer")
                 aff = PrivacyHash.affiliateField(handle: r.handle)
             }
-            let binding = PrivacyHash.registrationBinding(chainID: chainID, idc: keys.idc, pcAnml: anml.pc, ctAnml: anml.ciphertext, pcErth: erth.pc,
+            let idc = keys.idc(gen)
+            let binding = PrivacyHash.registrationBinding(chainID: chainID, idc: idc, pcAnml: anml.pc, ctAnml: anml.ciphertext, pcErth: erth.pc,
                                                           ctErth: erth.ciphertext, affiliate: aff)
             return RegistrationPrep(anml: anml, erth: erth, gas: gas, referrer: referrer?.handle ?? "",
-                                    binding: binding, idc: keys.idc, idSecret: keys.idSecret)
+                                    binding: binding, idc: idc, idSecret: keys.idSecret(gen), generation: gen)
         }
     }
 
@@ -709,7 +763,9 @@ public final class PrivacyWallet: @unchecked Sendable {
             // The proof's idc output is the chain's check that the registrant holds
             // the identity's secret; one proven with another's would be refused.
             try require(try PrivateMsgs.decimalField(publicSignals[Self.idcSignal]) == prep.idc, "the passport proof registers another identity")
-            if store.state.identity != nil || !store.state.regRecords.isEmpty { throw IdentityUsed() }
+            try require(prep.idc == keys.idc(prep.generation), "the registration names another wallet's identity")
+            // One of this wallet's that landed since it was prepared: the chain would refuse it (1130).
+            if prep.generation < store.state.nextGeneration() { throw IdentityUsed() }
             try require(PrivateMsgs.isCalendarDate(publicSignals[0]), "the passport proof's current_date \(publicSignals[0]) is not a calendar date")
             let base = registerMsg(prep, proof: proof, publicSignals: publicSignals, signatureAlgorithm: signatureAlgorithm, dscDer: dscDer)
             // Before any byte leaves: a registration that fails or is refused
@@ -722,32 +778,42 @@ public final class PrivacyWallet: @unchecked Sendable {
             try store.save()
             let dscKey = try PrivateMsgs.decimalField(publicSignals[3])
             let hint = Self.dscCountry(dscDer)
+            // The record's tag names the generation: a restore matches the leaf with its idc.
             let record = try NoteOut.to(keys.address, denom: Self.fee, value: 0,
-                                        memo: WalletSync.regMemo(nk: keys.nk, dscKey: dscKey, country: hint, builtAt: UInt64(max(0, now()))))
+                                        memo: WalletSync.regMemo(nk: keys.nk, dscKey: dscKey, country: hint, builtAt: UInt64(max(0, now())),
+                                                                 generation: prep.generation))
             let pending: (String, UInt64) -> Void = { [self] hash, _ in
                 // By hash, the moment the node accepts it; the leaf comes later.
                 store.mutate {
                     $0.pendingRegistration = PendingRegistration(
                         txHash: hash, leafIndex: nil, dscKey: dscKey, passportNullifier: publicSignals[2],
-                        publicSignals: publicSignals, activatedAt: nil, countryHint: hint)
+                        publicSignals: publicSignals, activatedAt: nil, countryHint: hint, generation: prep.generation)
                 }
                 persistNoThrow()
             }
             let refused: (String) -> Void = { [self] hash in
                 if store.state.pendingRegistration?.txHash == hash { store.mutate { $0.pendingRegistration = nil }; persistNoThrow() }
             }
-            let result = try await run(accepted: pending, rejected: refused) { fee in
-                Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)]) { bs, _, _ in
-                    var m = base
-                    m.fee = bs[0]
-                    return m
+            let result: TxResult
+            do {
+                result = try await run(accepted: pending, rejected: refused) { fee in
+                    Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)]) { bs, _, _ in
+                        var m = base
+                        m.fee = bs[0]
+                        return m
+                    }
                 }
+            } catch {
+                // Used before, by the chain's own set (1130, refused in the ante at
+                // no cost): the next attempt proves with the next generation.
+                if Self.identityRefusal(error) { identityRefusedLocked(prep) }
+                throw error
             }
             try recordPendingLocked(result)
             // A switch: the move suggestion is drawn now, so its reminder comes
             // even if Identity is never opened.
             if result.attr("register", "switched") == "true", let leaf = result.attr("register", "leaf_index").flatMap(Int64.init) {
-                drawMoveSuggestion(leaf: leaf, activatedAt: result.time)
+                drawMoveSuggestion(leaf: leaf, activatedAt: result.time, generation: prep.generation)
             }
             return result
         }
@@ -886,9 +952,10 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// A value-0 state record note (PRIVACY_FORMATS.md 6) to `to`'s own address, tagged with its nk.
-    private func stateRecord(_ to: PrivacyKeys, _ memo: (Fr) -> Data) throws -> NoteOut {
-        try NoteOut.to(to.address, denom: Self.fee, value: 0, memo: memo(to.nk))
+    /// A value-0 state record note (PRIVACY_FORMATS.md 6) to `to`'s own
+    /// address, tagged with its nk for identity `generation`.
+    private func stateRecord(_ to: PrivacyKeys, _ generation: Int, _ memo: (Fr, Int) -> Data) throws -> NoteOut {
+        try NoteOut.to(to.address, denom: Self.fee, value: 0, memo: memo(to.nk, generation))
     }
 
     private static func leaseParam(_ v: Int64, _ name: String) throws -> Int64 {
@@ -900,13 +967,15 @@ public final class PrivacyWallet: @unchecked Sendable {
         split.sorted { $0.key < $1.key }.map { Msg.AllocationWeight(optionID: $0.key, percent: $0.value) }
     }
 
-    /// When the split lapses: the chain's expires_at, or its cast time + R. 0 for none.
-    public func caretakerExpiresAt() async -> Int64 {
+    /// When the split of identity generation `g` (default: the one the
+    /// wallet acts as) lapses: the chain's expires_at, or its cast time + R. 0 for none.
+    public func caretakerExpiresAt(generation g: Int? = nil) async -> Int64 {
         let snap = snapshot
-        if snap.caretakerSplit.isEmpty && !snap.caretakerSplitUnknown { return 0 }
-        if snap.caretakerExpiresAt > 0 { return snap.caretakerExpiresAt }
+        let t = snap.identities[g ?? snap.generation] ?? IdentitySlot()
+        if t.caretakerSplit.isEmpty && !t.caretakerSplitUnknown { return 0 }
+        if t.caretakerExpiresAt > 0 { return t.caretakerExpiresAt }
         guard let r = try? await reads.personhoodParams().caretakerVoteSeconds else { return 0 }
-        let (v, o) = snap.caretakerCastAt.addingReportingOverflow(r)
+        let (v, o) = t.caretakerCastAt.addingReportingOverflow(r)
         return o ? 0 : v
     }
 
@@ -922,10 +991,12 @@ public final class PrivacyWallet: @unchecked Sendable {
         return snap.caretakerExpiresAt > 0 ? false : nil
     }
 
-    /// Whether this wallet holds a caretaker split the chain still counts (as far as it knows).
-    public func caretakerLive() async -> Bool {
-        if snapshot.caretakerSplit.isEmpty && !snapshot.caretakerSplitUnknown { return false }
-        return await caretakerExpiresAt() > now()
+    /// Whether this wallet's identity (generation `g`; default the one it acts as) holds a caretaker split the chain still counts (as far as it knows).
+    public func caretakerLive(generation g: Int? = nil) async -> Bool {
+        let snap = snapshot
+        let t = snap.identities[g ?? snap.generation] ?? IdentitySlot()
+        if t.caretakerSplit.isEmpty && !t.caretakerSplitUnknown { return false }
+        return await caretakerExpiresAt(generation: g) > now()
     }
 
     /// Casts, refreshes or (empty) clears the caretaker split, option id ->
@@ -950,9 +1021,9 @@ public final class PrivacyWallet: @unchecked Sendable {
             // The state record: what a wallet restored from the mnemonic finds. Its
             // expiry is the wallet's estimate; the chain's own (from the result) replaces it here.
             let estimate = Handles.satAdd(now(), r0)
-            let record = try stateRecord(keys) { nk in
-                split.isEmpty ? WalletSync.caretakerMemo(nk: nk, kind: WalletSync.recordNone)
-                    : WalletSync.caretakerMemo(nk: nk, kind: WalletSync.recordHolds, expiresAt: estimate, split: split)
+            let record = try stateRecord(keys, store.state.generation) { nk, g in
+                split.isEmpty ? WalletSync.caretakerMemo(nk: nk, kind: WalletSync.recordNone, generation: g)
+                    : WalletSync.caretakerMemo(nk: nk, kind: WalletSync.recordHolds, expiresAt: estimate, split: split, generation: g)
             }
             let r = try await boundAttempt(wait) {
                 try await run { fee in
@@ -981,7 +1052,12 @@ public final class PrivacyWallet: @unchecked Sendable {
     public struct Successor: Sendable {
         public let keys: PrivacyKeys
         public let identity: IdentityRecord
-        public init(keys: PrivacyKeys, identity: IdentityRecord) { self.keys = keys; self.identity = identity }
+        /// The successor's identity generation (its wallet's PrivacyKeys).
+        public let generation: Int
+        public init(keys: PrivacyKeys, identity: IdentityRecord, generation: Int = 0) {
+            self.keys = keys; self.identity = identity; self.generation = generation
+        }
+        public var idc: Fr { keys.idc(generation) }
     }
 
     /// A move cannot be made to that identity (nothing was sent).
@@ -999,14 +1075,15 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// local identity tree, or nil. The chain appends it right after the new
     /// identity's leaf (`near`), in the same tx; the rest of the tree is
     /// searched only if it is not there. Local: nothing asked names it.
-    public func successionIndex(idcOld: Fr, idcNew: Fr, near: UInt64) async -> UInt64? {
-        await locked { successionIndexLocked(idcOld: idcOld, idcNew: idcNew, near: near) }
+    public func successionIndex(idcOld: Fr, idcNew: Fr, near: UInt64, nearOnly: Bool = false) async -> UInt64? {
+        await locked { successionIndexLocked(idcOld: idcOld, idcNew: idcNew, near: near, nearOnly: nearOnly) }
     }
 
-    private func successionIndexLocked(idcOld: Fr, idcNew: Fr, near: UInt64) -> UInt64? {
+    private func successionIndexLocked(idcOld: Fr, idcNew: Fr, near: UInt64, nearOnly: Bool = false) -> UInt64? {
         let want = PrivacyHash.successionLeaf(idcOld: idcOld, idcNew: idcNew)
         let tree = store.identityTree
         if near < tree.size, tree.leaf(near) == want { return near }
+        if nearOnly { return nil }
         var i = tree.size
         while i > 0 { i -= 1; if tree.leaf(i) == want { return i } }
         return nil
@@ -1016,10 +1093,11 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// succession leaf (this identity, `to`) and `to`'s live leaf, both under
     /// the local tree's root (verified at the last sync, so one the chain
     /// recorded; a move goes out within the root window of it).
-    private func moveStatement(scope: Fr, to: Successor) throws -> MoveWitnessSpec {
+    private func moveStatement(scope: Fr, from: Int, to: Successor) throws -> MoveWitnessSpec {
         let id = to.identity
-        let newIdc = to.keys.idc
-        try require(newIdc != keys.idc, "a move goes to another identity")
+        let newIdc = to.idc
+        let oldIdc = keys.idc(from)
+        try require(newIdc != oldIdc, "a move goes to another identity")
         let leaf = PrivacyHash.identityLeaf(idc: newIdc, dscKey: id.dscKey, country: id.country, activatedAt: id.activatedAt, predecessorAt: id.predecessorAt)
         let tree = store.identityTree
         guard id.leafIndex < tree.size else { throw MoveSyncFirst() }
@@ -1028,14 +1106,14 @@ public final class PrivacyWallet: @unchecked Sendable {
             throw MoveNotPossible(message: "the new identity is no longer the passport's live one (it switched again or lapsed): a move goes only to the live successor")
         }
         guard at == leaf else { throw MoveNotPossible(message: "the new wallet's registration record does not match the identity tree; sync it, then try again") }
-        guard let si = successionIndexLocked(idcOld: keys.idc, idcNew: newIdc, near: id.leafIndex &+ 1) else {
+        guard let si = successionIndexLocked(idcOld: oldIdc, idcNew: newIdc, near: id.leafIndex &+ 1) else {
             throw MoveNotPossible(message: "that identity did not directly succeed this one under this passport: a move goes only to the identity the passport registered next")
         }
         let root = tree.root()
         let sp = tree.path(si)
         let lp = tree.path(id.leafIndex)
-        let oldSecret = keys.idSecret
-        let newSecret = to.keys.idSecret
+        let oldSecret = keys.idSecret(from)
+        let newSecret = to.keys.idSecret(to.generation)
         return try MoveWitnessSpec { signal in
             try MoveWitness(oldSecret: oldSecret, newSecret: newSecret, successionIndex: si, successionSiblings: sp, dscKey: id.dscKey,
                             country: id.country, activatedAt: id.activatedAt, predecessorAt: id.predecessorAt, leafIndex: id.leafIndex,
@@ -1049,25 +1127,40 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// keeps its vote. This wallet pays the fee. This identity may never cast
     /// one again (ErrCaretakerMovedOut, 1126).
     public func moveCaretaker(to: Successor, recorder: MoveRecorder? = nil) async throws -> TxResult {
+        try await moveCaretaker(from: nil, to: to, recorder: recorder)
+    }
+
+    /// Moves the caretaker split of this wallet's earlier identity `from` (a
+    /// lapse, then a re-entry; or a fresh identity) to the one it acts as
+    /// now: one phrase holds both secrets. Paid from this wallet's ERTH.
+    public func moveCaretakerWithin(from: Int) async throws -> TxResult {
+        try await moveCaretaker(from: from, to: nil, recorder: nil)
+    }
+
+    private func moveCaretaker(from f: Int?, to t: Successor?, recorder rc: MoveRecorder?) async throws -> TxResult {
         let mx = await maxActions()
-        let live = await caretakerLive()
-        let exp = await caretakerExpiresAt()
+        let from = f ?? generation
+        let live = await caretakerLive(generation: from)
+        let exp = await caretakerExpiresAt(generation: from)
         return try await locked {
+            let to = try t ?? selfSuccessorLocked(from: from)
+            let recorder = f == nil ? rc : withinRecorder()
             try require(live, "this identity holds no live caretaker vote to move")
-            try checkNoMove(PendingMove.caretakerKind)
-            let st = store.state
+            try checkNoMove(PendingMove.caretakerKind, generation: from)
+            let st = store.state.slot(from)
             let move = PendingMove(kind: PendingMove.caretakerKind, txHash: "", timeoutHeight: 0, incoming: false, split: st.caretakerSplit,
                                    splitUnknown: st.caretakerSplitUnknown, expiresAt: exp, target: recorder?.targetID ?? "")
             // State records: moved out for this identity, held (split, expiry) for the new one.
             let outs = [
-                try stateRecord(keys) { WalletSync.caretakerMemo(nk: $0, kind: WalletSync.recordMovedOut) },
-                try stateRecord(to.keys) {
-                    WalletSync.caretakerMemo(nk: $0, kind: WalletSync.recordHolds, expiresAt: move.expiresAt, split: move.splitUnknown ? [:] : move.split)
+                try stateRecord(keys, from) { WalletSync.caretakerMemo(nk: $0, kind: WalletSync.recordMovedOut, generation: $1) },
+                try stateRecord(to.keys, to.generation) {
+                    WalletSync.caretakerMemo(nk: $0, kind: WalletSync.recordHolds, expiresAt: move.expiresAt, split: move.splitUnknown ? [:] : move.split,
+                                             generation: $1)
                 },
             ]
-            let mv = try moveStatement(scope: PrivacyHash.caretakerScope(), to: to)
+            let mv = try moveStatement(scope: PrivacyHash.caretakerScope(), from: from, to: to)
             let placeholder = MoveProof(proof: Data(), root: Data(), oldNullifier: Data(), newNullifier: Data())
-            let r = try await moveRun(move, recorder) { fee in
+            let r = try await moveRun(move, recorder, generation: from) { fee in
                 Assembled(bundles: [try self.bundle(outs, release: [Self.fee: fee], maxActions: mx)], move: mv) { bs, _, _ in
                     MsgMoveCaretaker(fee: bs[0], move: placeholder)
                 }
@@ -1094,7 +1187,9 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// its identity moved one away already (the chain refuses that owner),
     /// or it holds one of its own (a handle; a live caretaker split) that the
     /// move would overwrite here. Nil: it can.
-    public static func targetRefusal(_ s: PrivacyState, kind: String, now: Int64) -> String? {
+    public static func targetRefusal(_ s: PrivacyState, kind: String, now: Int64) -> String? { targetRefusal(s.current, kind: kind, now: now) }
+
+    public static func targetRefusal(_ s: IdentitySlot, kind: String, now: Int64) -> String? {
         if kind == PendingMove.handleKind {
             if s.handleMovedOut { return "that wallet's identity already moved a handle away; it can never hold one again" }
             if !s.handle.isEmpty { return "that wallet already holds @\(s.handle)" }
@@ -1108,8 +1203,8 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// The wallet this identity's moves must go to: the one a
     /// confirmed move went to, else the one a move still in flight names
     /// (empty: any).
-    private func switchTargetNow() -> String {
-        let s = store.state
+    private func switchTargetNow(generation g: Int) -> String {
+        let s = store.state.slot(g)
         if !s.switchTarget.isEmpty { return s.switchTarget }
         return s.pendingMoves.first { !$0.incoming && !$0.confirmed && !$0.target.isEmpty }?.target ?? ""
     }
@@ -1118,26 +1213,51 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// split moved out and no move of this identity confirmed or in flight.
     /// Returns whether it changed.
     @discardableResult
-    static func clearSwitchTargetIfUnmoved(_ s: inout PrivacyState) -> Bool {
+    static func clearSwitchTargetIfUnmoved(_ s: inout IdentitySlot) -> Bool {
         if s.switchTarget.isEmpty || s.handleMovedOut || s.caretakerMovedOut || s.pendingMoves.contains(where: { !$0.incoming }) { return false }
         s.switchTarget = ""
         return true
     }
 
-    private func checkNoMove(_ kind: String) throws {
-        try require(!store.state.pendingMoves.contains { !$0.incoming && $0.kind == kind && !$0.confirmed },
+    private func checkNoMove(_ kind: String, generation g: Int? = nil) throws {
+        try require(!store.state.slot(g ?? store.state.generation).pendingMoves.contains { !$0.incoming && $0.kind == kind && !$0.confirmed },
                     "a move of this identity's \(kind) is waiting for the chain")
     }
+
+    /// This wallet's identity as the successor of its earlier identity `from`: verified, live, and a later generation.
+    private func selfSuccessorLocked(from: Int) throws -> Successor {
+        let g = store.state.generation
+        try require(from >= 0 && from < g, "a move within this wallet goes from an earlier identity to the one it acts as")
+        guard let id = store.state.identity, id.verified else {
+            throw PrivacyError("This wallet's registration has not been verified yet; sync, then try again.")
+        }
+        return Successor(keys: keys, identity: id, generation: g)
+    }
+
+    /// Writes a move within this wallet into the identity it acts as (its
+    /// slot in the same store), like another wallet's `MoveRecorder`.
+    private struct WithinRecorder: MoveRecorder, @unchecked Sendable {
+        let store: PrivacyStore
+        let generation: Int
+        let now: @Sendable () -> Int64
+        var targetID: String { PrivacyWallet.withinTarget + String(generation) }
+        func record(_ move: PendingMove) throws { try PrivacyWallet.recordIncoming(store, move, now: now(), generation: generation) }
+        func rollback(_ move: PendingMove) throws { try PrivacyWallet.rollbackIncoming(store, move, now: now(), generation: generation) }
+        func refusal(_ move: PendingMove) -> String? { PrivacyWallet.targetRefusal(store.state.slot(generation), kind: move.kind, now: now()) }
+    }
+
+    private func withinRecorder() -> MoveRecorder { WithinRecorder(store: store, generation: store.state.generation, now: now) }
 
     /// Runs a move: recorded here (outgoing) and in the target (incoming)
     /// before the broadcast; a refusal undoes both; a confirmed tx is applied
     /// by the caller (`confirmMove`); anything else (a wait that timed out, a
     /// tx that may yet land or fail) stays pending for `resolvePendingMoves`.
-    private func moveRun(_ move: PendingMove, _ recorder: MoveRecorder?, _ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
+    private func moveRun(_ move: PendingMove, _ recorder: MoveRecorder?, generation g: Int,
+                         _ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
         if let rc = recorder {
             // The target a confirmed move went to, or one a move
             // still in flight names; a refused, failed or expired move frees it.
-            let fixed = switchTargetNow()
+            let fixed = switchTargetNow(generation: g)
             try require(fixed.isEmpty || fixed == rc.targetID, "this identity already moved to another wallet; switch to that one")
             if let why = rc.refusal(move) { throw PrivacyError(why) }
         }
@@ -1152,12 +1272,14 @@ public final class PrivacyWallet: @unchecked Sendable {
             }
             p.recorded = ok
             let pm = p
-            store.mutate { s in s.pendingMoves.append(pm) }
+            store.mutate { $0.withSlot(g) { s in s.pendingMoves.append(pm) } }
             persistNoThrow()
         }, rejected: { [self] hash in
-            store.mutate { s in
-                s.pendingMoves.removeAll { $0.txHash == hash && !$0.incoming }
-                Self.clearSwitchTargetIfUnmoved(&s)
+            store.mutate {
+                $0.withSlot(g) { s in
+                    s.pendingMoves.removeAll { $0.txHash == hash && !$0.incoming }
+                    Self.clearSwitchTargetIfUnmoved(&s)
+                }
             }
             persistNoThrow()
             if let rc = recorder {
@@ -1168,28 +1290,36 @@ public final class PrivacyWallet: @unchecked Sendable {
         }, assemble)
     }
 
-    /// The move `hash` is in a block and succeeded: this identity no longer holds what it moved.
+    /// The move `hash` is in a block and succeeded: the identity that moved
+    /// no longer holds what it moved (every slot: a move within this wallet
+    /// is in two of them, outgoing and incoming).
     private func confirmMove(_ hash: String) {
         let t = now()
-        store.mutate { s in
-            guard let i = s.pendingMoves.firstIndex(where: { $0.txHash == hash }) else { return }
-            let p = s.pendingMoves[i]
-            if !p.incoming {
-                if p.kind == PendingMove.handleKind { s.handle = ""; s.handleMovedOut = true; s.handleSetAt = t }
-                else { s.caretakerSplit = [:]; s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0; s.caretakerMovedOut = true }
-                // The target is fixed only by a confirmed move.
-                if s.switchTarget.isEmpty, !p.target.isEmpty { s.switchTarget = p.target }
+        store.mutate { st in
+            for g in st.identities.keys.sorted() {
+                st.withSlot(g) { s in
+                    guard let i = s.pendingMoves.firstIndex(where: { $0.txHash == hash && !$0.confirmed }) else { return }
+                    let p = s.pendingMoves[i]
+                    if !p.incoming {
+                        if p.kind == PendingMove.handleKind { s.handle = ""; s.handleMovedOut = true; s.handleSetAt = t }
+                        else { s.caretakerSplit = [:]; s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0; s.caretakerMovedOut = true }
+                        // The target is fixed only by a confirmed move.
+                        if s.switchTarget.isEmpty, !p.target.isEmpty { s.switchTarget = p.target }
+                    }
+                    if p.incoming || p.recorded { s.pendingMoves.remove(at: i) } else { s.pendingMoves[i].confirmed = true }
+                }
             }
-            if p.incoming || p.recorded { s.pendingMoves.remove(at: i) } else { s.pendingMoves[i].confirmed = true }
         }
     }
 
-    /// The move `p` is definitely not in the chain (refused, failed in its block, or gone past its timeout_height).
-    private func dropMove(_ p: PendingMove) {
+    /// The move `p` of generation `g`'s slot is definitely not in the chain (refused, failed in its block, or gone past its timeout_height).
+    private func dropMove(_ p: PendingMove, generation g: Int) {
         let t = now()
-        store.mutate { s in
-            s.pendingMoves.removeAll { $0.txHash == p.txHash && $0.incoming == p.incoming }
-            if p.incoming { Self.undoIncoming(&s, p, now: t) } else { Self.clearSwitchTargetIfUnmoved(&s) }
+        store.mutate {
+            $0.withSlot(g) { s in
+                s.pendingMoves.removeAll { $0.txHash == p.txHash && $0.incoming == p.incoming }
+                if p.incoming { Self.undoIncoming(&s, p, now: t) } else { Self.clearSwitchTargetIfUnmoved(&s) }
+            }
         }
     }
 
@@ -1204,24 +1334,33 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     private func resolvePendingMovesLocked() async -> Bool {
-        // A target fixed by a move that never landed (a store from an earlier version) is freed.
-        store.mutate { Self.clearSwitchTargetIfUnmoved(&$0) }
-        for p in store.state.pendingMoves where !p.confirmed {
-            let r = try? await chain.tx(p.txHash)
-            if let r, r.code == 0 { confirmMove(p.txHash) }
-            else if let r { store.mutate { _ = $0.voidRecordHeights.insert(r.height) }; dropMove(p) }
-            // A timeout no sane tip gives is settled by the tx's status alone.
-            else if !PrivateTxEngine.timeoutSane(p.timeoutHeight, verifiedNow: store.state.verifiedHeight) {
-                if await roots.txStatus(p.txHash) == .missing { dropMove(p) }
+        for g in store.state.identities.keys.sorted() {
+            // A target fixed by a move that never landed (a store from an earlier version) is freed.
+            store.mutate { $0.withSlot(g) { Self.clearSwitchTargetIfUnmoved(&$0) } }
+            for p in store.state.slot(g).pendingMoves where !p.confirmed {
+                // Settled already through the other slot of a move within the wallet.
+                guard store.state.slot(g).pendingMoves.contains(p) else { continue }
+                let r = try? await chain.tx(p.txHash)
+                if let r, r.code == 0 { confirmMove(p.txHash) }
+                else if let r { store.mutate { _ = $0.voidRecordHeights.insert(r.height) }; dropMove(p, generation: g) }
+                // A timeout no sane tip gives is settled by the tx's status alone.
+                else if !PrivateTxEngine.timeoutSane(p.timeoutHeight, verifiedNow: store.state.verifiedHeight) {
+                    if await roots.txStatus(p.txHash) == .missing { dropMove(p, generation: g) }
+                }
+                else if let tip = try? await chain.tipHeight(), tip > p.timeoutHeight { dropMove(p, generation: g) }
             }
-            else if let tip = try? await chain.tipHeight(), tip > p.timeoutHeight { dropMove(p) }
         }
         persistNoThrow()
-        return store.state.pendingMoves.contains { !$0.confirmed }
+        return store.state.identities.values.contains { $0.pendingMoves.contains { !$0.confirmed } }
     }
 
-    /// Moves away from this identity that the chain has not confirmed yet, and confirmed ones not yet recorded in their target.
-    public func outgoingMoves() -> [PendingMove] { snapshot.pendingMoves.filter { !$0.incoming } }
+    /// Moves away from identity generation `g` (default: the one this
+    /// wallet acts as) that the chain has not confirmed yet, and confirmed
+    /// ones not yet recorded in their target.
+    public func outgoingMoves(generation g: Int? = nil) -> [PendingMove] {
+        let snap = snapshot
+        return (snap.identities[g ?? snap.generation] ?? IdentitySlot()).pendingMoves.filter { !$0.incoming }
+    }
 
     /// When the wallet suggests bringing the predecessor's handle and
     /// caretaker split to this identity: a delay drawn once per registration,
@@ -1241,9 +1380,10 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     @discardableResult
-    private func drawMoveSuggestion(leaf: Int64, activatedAt: Int64) -> Int64 {
+    private func drawMoveSuggestion(leaf: Int64, activatedAt: Int64, generation g: Int? = nil) -> Int64 {
         let at = Handles.satAdd(activatedAt, Int64.random(in: Self.moveDelayMinSeconds ... Self.moveDelayMaxSeconds))
-        store.mutate { $0.moveSuggestedAt = at; $0.moveSuggestedLeaf = leaf }
+        // The registered generation's: the wallet may not act as it yet (its leaf not matched).
+        store.mutate { $0.withSlot(g ?? $0.generation) { $0.moveSuggestedAt = at; $0.moveSuggestedLeaf = leaf } }
         persistNoThrow()
         return at
     }
@@ -1267,9 +1407,12 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Marks a confirmed move recorded in its target (a retried `MoveRecorder.record` succeeded).
     public func markRecorded(_ hash: String) async {
         await lockedNoThrow {
-            store.mutate { s in
-                guard let i = s.pendingMoves.firstIndex(where: { $0.txHash == hash && !$0.incoming }) else { return }
-                if s.pendingMoves[i].confirmed { s.pendingMoves.remove(at: i) } else { s.pendingMoves[i].recorded = true }
+            store.mutate { st in
+                guard let g = st.identities.first(where: { $0.value.pendingMoves.contains { $0.txHash == hash && !$0.incoming } })?.key else { return }
+                st.withSlot(g) { s in
+                    guard let i = s.pendingMoves.firstIndex(where: { $0.txHash == hash && !$0.incoming }) else { return }
+                    if s.pendingMoves[i].confirmed { s.pendingMoves.remove(at: i) } else { s.pendingMoves[i].recorded = true }
+                }
             }
             persistNoThrow()
         }
@@ -1278,8 +1421,8 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Writes `p` (a move to this store's identity) into `store`: what it now
     /// holds, and the move as pending until its own wallet settles it by hash
     /// Used by the mover for the other wallet's store.
-    public static func recordIncoming(_ store: PrivacyStore, _ p: PendingMove, now: Int64) throws {
-        store.mutate { s in
+    public static func recordIncoming(_ store: PrivacyStore, _ p: PendingMove, now: Int64, generation: Int? = nil) throws {
+        store.mutate { st in st.withSlot(generation ?? st.generation) { s in
             if p.kind == PendingMove.handleKind { s.handle = p.handle; s.handleSetAt = now }
             else {
                 s.caretakerSplit = p.split; s.caretakerSplitUnknown = p.splitUnknown || p.split.isEmpty
@@ -1290,20 +1433,20 @@ public final class PrivacyWallet: @unchecked Sendable {
                 inc.incoming = true; inc.target = ""; inc.recorded = true; inc.confirmed = false
                 s.pendingMoves.append(inc)
             }
-        }
+        } }
         try store.save()
     }
 
     /// Undoes `recordIncoming` for a move that definitely did not happen.
-    public static func rollbackIncoming(_ store: PrivacyStore, _ p: PendingMove, now: Int64) throws {
-        store.mutate { s in
+    public static func rollbackIncoming(_ store: PrivacyStore, _ p: PendingMove, now: Int64, generation: Int? = nil) throws {
+        store.mutate { st in st.withSlot(generation ?? st.generation) { s in
             s.pendingMoves.removeAll { $0.txHash == p.txHash && $0.incoming }
             undoIncoming(&s, p, now: now)
-        }
+        } }
         try store.save()
     }
 
-    static func undoIncoming(_ s: inout PrivacyState, _ p: PendingMove, now: Int64) {
+    static func undoIncoming(_ s: inout IdentitySlot, _ p: PendingMove, now: Int64) {
         if p.kind == PendingMove.handleKind {
             if s.handle == p.handle { s.handle = ""; s.handleSetAt = now }
         } else if s.caretakerSplit == p.split && s.caretakerSplitUnknown == (p.splitUnknown || p.split.isEmpty) {
@@ -1344,7 +1487,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let addr = (address ?? keys.address).encode()
             let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: maxPred)
-            let record = try stateRecord(keys) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordHolds, handle: handle) }
+            let record = try stateRecord(keys, store.state.generation) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordHolds, handle: handle, generation: $1) }
             let r = try await boundAttempt(wait) {
                 try await run { fee in
                     Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
@@ -1367,10 +1510,10 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// When this identity's handle stops being live, as the chain last said
     /// (its bind, or its directory); 0 when the wallet does not know.
-    public func handleExpiresAt() async -> Int64 { await locked { handleExpiresAtLocked() } }
+    public func handleExpiresAt(generation g: Int? = nil) async -> Int64 { await locked { handleExpiresAtLocked(generation: g) } }
 
-    private func handleExpiresAtLocked() -> Int64 {
-        let s = store.state
+    private func handleExpiresAtLocked(generation g: Int? = nil) -> Int64 {
+        let s = store.state.slot(g ?? store.state.generation)
         return !s.handle.isEmpty && s.handleExpiresFor == s.handle ? s.handleExpiresAt : 0
     }
 
@@ -1391,7 +1534,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             try checkNoMove(PendingMove.handleKind)
             let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: PrivacyHash.noBound)
-            let record = try stateRecord(keys) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordNone) }
+            let record = try stateRecord(keys, store.state.generation) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordNone, generation: $1) }
             let r = try await run { fee in
                 Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
                     MsgBindHandle(fee: bs[0], membership: mem!, handle: "", address: "", maxPredecessor: PrivacyHash.noBound)
@@ -1409,26 +1552,38 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// `expected`: the handle the confirm sheet named; the move is refused if
     /// this identity's handle is no longer that one.
     public func moveHandle(to: Successor, recorder: MoveRecorder? = nil, expected: String? = nil) async throws -> TxResult {
+        try await moveHandle(from: nil, to: to, recorder: recorder, expected: expected)
+    }
+
+    /// Moves the handle of this wallet's earlier identity `from` to the one it acts as now (see `moveCaretakerWithin`).
+    public func moveHandleWithin(from: Int, expected: String? = nil) async throws -> TxResult {
+        try await moveHandle(from: from, to: nil, recorder: nil, expected: expected)
+    }
+
+    private func moveHandle(from f: Int?, to tt: Successor?, recorder rc: MoveRecorder?, expected: String?) async throws -> TxResult {
         let mx = await maxActions()
         let t = await chainNow()
         return try await locked {
-            let handle = store.state.handle
+            let from = f ?? store.state.generation
+            let to = try tt ?? selfSuccessorLocked(from: from)
+            let recorder = f == nil ? rc : withinRecorder()
+            let handle = store.state.slot(from).handle
             try require(!handle.isEmpty, "this identity holds no handle to move")
             if let expected { try require(handle == expected, "this identity's handle is no longer @\(expected); nothing was sent") }
-            try checkNoMove(PendingMove.handleKind)
+            try checkNoMove(PendingMove.handleKind, generation: from)
             // MsgMoveHandle refuses a handle that is not live (its renewal period).
-            let exp = handleExpiresAtLocked()
+            let exp = handleExpiresAtLocked(generation: from)
             if exp > 0, exp <= t { throw HandleNotMovable(handle: handle) }
             let move = PendingMove(kind: PendingMove.handleKind, txHash: "", timeoutHeight: 0, incoming: false, handle: handle,
                                    target: recorder?.targetID ?? "")
             // State records: moved out for this identity, held for the new one.
             let outs = [
-                try stateRecord(keys) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordMovedOut) },
-                try stateRecord(to.keys) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordHolds, handle: handle) },
+                try stateRecord(keys, from) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordMovedOut, generation: $1) },
+                try stateRecord(to.keys, to.generation) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordHolds, handle: handle, generation: $1) },
             ]
-            let mv = try moveStatement(scope: PrivacyHash.handleScope(), to: to)
+            let mv = try moveStatement(scope: PrivacyHash.handleScope(), from: from, to: to)
             let placeholder = MoveProof(proof: Data(), root: Data(), oldNullifier: Data(), newNullifier: Data())
-            let r = try await moveRun(move, recorder) { fee in
+            let r = try await moveRun(move, recorder, generation: from) { fee in
                 Assembled(bundles: [try self.bundle(outs, release: [Self.fee: fee], maxActions: mx)], move: mv) { bs, _, _ in
                     MsgMoveHandle(fee: bs[0], move: placeholder, handle: handle)
                 }
@@ -1498,7 +1653,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     /// This identity's handle-scope nullifier as a directory entry's owner (64 lowercase hex).
-    public var handleOwner: String { PrivacyHash.scopeNullifier(idSecret: keys.idSecret, scope: PrivacyHash.handleScope()).hex }
+    public var handleOwner: String { PrivacyHash.scopeNullifier(idSecret: keys.idSecret(store.state.generation), scope: PrivacyHash.handleScope()).hex }
 
     // MARK: - assembly
 

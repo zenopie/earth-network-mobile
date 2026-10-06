@@ -13,11 +13,27 @@ import Foundation
 /// A child's 32-byte private key k becomes a secret by
 /// HMAC-SHA512(key = "earth.privacy.v1", label || k): reduced mod p for the
 /// field secrets (64 bytes, so uniform), its first 32 bytes for ek.
+///
+/// Identity generations: the chain accepts each idc once (personhood 1130),
+/// so every registration after the first (a re-entry after a lapse, a fresh
+/// identity) needs a new identity secret. Generation g >= 1 appends g to the
+/// identity child's HMAC input; generation 0 is the identity above, unchanged:
+///
+///     id_secret_0 = HMAC-SHA512("earth.privacy.v1", "id_secret" || k)              mod p
+///     id_secret_g = HMAC-SHA512("earth.privacy.v1", "id_secret" || k || u32 BE g)  mod p
+///
+/// One phrase holds every generation; nk and ek (notes, the shielded
+/// address) are the same for all of them. As Android.
 public final class PrivacyKeys: @unchecked Sendable {
     public static let purpose: UInt32 = 2026
     private static let coin: UInt32 = 118
     private static let hmacKey = Data("earth.privacy.v1".utf8)
+    /// The highest identity generation a wallet derives: far past any lifetime of yearly registrations.
+    public static let maxGeneration = 10_000
 
+    /// The identity child's 32-byte private key (m/2026'/118'/0'/0'), from which every generation's secret comes.
+    private let idNode: Data
+    /// Generation 0's identity secret and commitment (the first identity).
     public let idSecret: Fr
     public let nk: Fr
     private let ekSecret: Data
@@ -26,12 +42,16 @@ public final class PrivacyKeys: @unchecked Sendable {
     public let ownerPK: Fr
     public let ekPub: Data
     public let address: ShieldedAddress
+    private let idcLock = NSLock()
+    private var idcs: [Int: Fr] = [:]
 
-    private init(idSecret: Fr, nk: Fr, ekSecret: Data) throws {
-        self.idSecret = idSecret
+    private init(idNode: Data, nk: Fr, ekSecret: Data) throws {
+        self.idNode = idNode
+        self.idSecret = try Self.generationSecret(idNode, 0)
         self.nk = nk
         self.ekSecret = ekSecret
         idc = PrivacyHash.idc(idSecret)
+        idcs[0] = idc
         ownerPK = PrivacyHash.ownerPK(nk)
         ekPub = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: ekSecret).publicKey.rawRepresentation
         address = try ShieldedAddress(ownerPK: ownerPK, ekPub: ekPub)
@@ -52,13 +72,34 @@ public final class PrivacyKeys: @unchecked Sendable {
             hmac(Data(label.utf8) + (try keys.child(index: i | 0x8000_0000)).privateKey)
         }
         return try PrivacyKeys(
-            idSecret: Fr.fromWideBytes(secret(0, "id_secret")),
+            idNode: try keys.child(index: 0x8000_0000).privateKey,
             nk: Fr.fromWideBytes(secret(1, "nk")),
             ekSecret: Data(try secret(2, "ek").prefix(32))
         )
     }
 
     static func hmac(_ data: Data) -> Data { Hashes.hmacSHA512(key: hmacKey, message: data) }
+
+    private static func generationSecret(_ idNode: Data, _ generation: Int) throws -> Fr {
+        let g = UInt32(generation)
+        let c = generation == 0 ? Data() : Data([UInt8(g >> 24 & 0xff), UInt8(g >> 16 & 0xff), UInt8(g >> 8 & 0xff), UInt8(g & 0xff)])
+        return try Fr.fromWideBytes(hmac(Data("id_secret".utf8) + idNode + c))
+    }
+
+    /// Generation `generation`'s identity secret (see the type's comment).
+    public func idSecret(_ generation: Int) -> Fr {
+        precondition((0 ... Self.maxGeneration).contains(generation), "identity generation \(generation) is out of range")
+        return try! Self.generationSecret(idNode, generation)
+    }
+
+    /// Generation `generation`'s idc = H(TAG_ID, id_secret_g).
+    public func idc(_ generation: Int) -> Fr {
+        idcLock.lock(); defer { idcLock.unlock() }
+        if let c = idcs[generation] { return c }
+        let c = PrivacyHash.idc(idSecret(generation))
+        idcs[generation] = c
+        return c
+    }
 
     /// The x25519 secret, for trial decryption only.
     func ek() throws -> Curve25519.KeyAgreement.PrivateKey {

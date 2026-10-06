@@ -49,10 +49,10 @@ final class ChainErrorsTests: XCTestCase {
         XCTAssertNil(ChainErrors.explain(code: 1103, codespace: "shieldedstaking", log: "amount converts to nothing"))
     }
 
-    /// 1130: an identity registers once; the wallet says to switch to a new one.
+    /// 1130: an identity registers once; the wallet moves on to its next identity and says to start again.
     func testUsedIdentityIsPlain() {
         let used = ChainErrors.explain(code: 1130, codespace: "personhood")!
-        XCTAssertTrue(used.contains("Switch to a new wallet"), used)
+        XCTAssertTrue(used.contains("next identity"), used)
         XCTAssertEqual(used, ChainErrors.explain(text: "rpc error: identity commitment has been registered before; register a fresh identity"))
         XCTAssertEqual(used, GasGrant.Refused(status: 400, message: "identity commitment has been registered before; register a fresh identity").message)
         XCTAssertNil(ChainErrors.explain(code: 1130, codespace: "dex"))

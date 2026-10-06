@@ -199,20 +199,24 @@ public final class WalletSync {
     /// Bytes of the record memo's tag.
     static let regTagBytes = 16
 
-    /// The record's tag: the first 16 bytes of H(TAG_RECTAG, nk, dsc_key, U64(built_at)). Only the owner (nk) can make one.
-    public static func regTag(nk: Fr, dscKey: Fr, builtAt: UInt64) -> Data {
-        PrivacyHash.h(PrivacyHash.tagRecTag, nk, dscKey, PrivacyHash.u64(builtAt)).bytes.prefix(regTagBytes)
+    /// The record's tag: the first 16 bytes of H(TAG_RECTAG, nk, dsc_key,
+    /// U64(built_at)), with U64(generation) appended for an identity
+    /// generation >= 1 (PrivacyKeys). Only the owner (nk) can make one; the
+    /// tag alone says which generation registered.
+    public static func regTag(nk: Fr, dscKey: Fr, builtAt: UInt64, generation: Int = 0) -> Data {
+        (generation == 0 ? PrivacyHash.h(PrivacyHash.tagRecTag, nk, dscKey, PrivacyHash.u64(builtAt))
+            : PrivacyHash.h(PrivacyHash.tagRecTag, nk, dscKey, PrivacyHash.u64(builtAt), PrivacyHash.u64(UInt64(generation)))).bytes.prefix(regTagBytes)
     }
 
-    /// The 64-byte memo of a registration record note.
-    public static func regMemo(nk: Fr, dscKey: Fr, country: String, builtAt: UInt64) -> Data {
+    /// The 64-byte memo of a registration record note for identity `generation`.
+    public static func regMemo(nk: Fr, dscKey: Fr, country: String, builtAt: UInt64, generation: Int = 0) -> Data {
         var b = regMagic
         let c = country.uppercased()
         let valid = c.utf8.count == 2 && c.utf8.allSatisfy { (0x41 ... 0x5a).contains($0) }
         b += valid ? Data(c.utf8) : Data(count: 2)
         b += PrivateMsgs.be64(builtAt)
         b += dscKey.bytes
-        b += regTag(nk: nk, dscKey: dscKey, builtAt: builtAt)
+        b += regTag(nk: nk, dscKey: dscKey, builtAt: builtAt, generation: generation)
         return b + Data(count: NoteCipher.memoBytes - b.count)
     }
 
@@ -221,7 +225,7 @@ public final class WalletSync {
     /// note with any memo, and an untagged record would cost a leaf search
     /// per leaf at its height. The tag is checked before anything else is
     /// done with it.
-    public static func parseRegMemo(nk: Fr, _ memo: Data) -> (dscKey: Fr, country: String, builtAt: UInt64)? {
+    public static func parseRegMemo(nk: Fr, _ memo: Data, maxGeneration: Int = 0) -> (dscKey: Fr, country: String, builtAt: UInt64, generation: Int)? {
         guard memo.count <= NoteCipher.memoBytes else { return nil }
         let m = [UInt8](memo) + [UInt8](repeating: 0, count: NoteCipher.memoBytes - memo.count)
         guard Data(m[0 ..< 3]) == regMagic else { return nil }
@@ -234,8 +238,10 @@ public final class WalletSync {
         guard let dsc = try? Fr(bytes: Data(m[13 ..< 45])) else { return nil }
         let tag = Data(m[45 ..< 45 + regTagBytes])
         guard m[(45 + regTagBytes)...].allSatisfy({ $0 == 0 }) else { return nil }
-        guard constantTimeEqual(tag, regTag(nk: nk, dscKey: dsc, builtAt: builtAt)) else { return nil }
-        return (dsc, country, builtAt)
+        // Generations 0...maxGeneration, each tag tried in turn.
+        guard let g = (0 ... max(0, maxGeneration)).first(where: { constantTimeEqual(tag, regTag(nk: nk, dscKey: dsc, builtAt: builtAt, generation: $0)) })
+        else { return nil }
+        return (dsc, country, builtAt, g)
     }
 
     static func constantTimeEqual(_ a: Data, _ b: Data) -> Bool {
@@ -302,18 +308,22 @@ public final class WalletSync {
         case caretaker(kind: UInt8, expiresAt: Int64, split: [UInt64: UInt64]?)
     }
 
-    static func stateTag(nk: Fr, _ body: [UInt8]) -> Data {
-        PrivacyHash.h(PrivacyHash.tagStateTag, nk, PrivacyHash.bytes(Data(body[0 ..< stateTagAt]))).bytes.prefix(regTagBytes)
+    /// H(TAG_STATETAG, nk, Bytes(memo[0..48))), with U64(generation) appended for a generation >= 1.
+    static func stateTag(nk: Fr, _ body: [UInt8], generation: Int = 0) -> Data {
+        let b = PrivacyHash.bytes(Data(body[0 ..< stateTagAt]))
+        return (generation == 0 ? PrivacyHash.h(PrivacyHash.tagStateTag, nk, b)
+            : PrivacyHash.h(PrivacyHash.tagStateTag, nk, b, PrivacyHash.u64(UInt64(generation)))).bytes.prefix(regTagBytes)
     }
 
-    private static func sealState(nk: Fr, _ body: [UInt8]) -> Data {
+    private static func sealState(nk: Fr, _ body: [UInt8], generation: Int) -> Data {
         var m = body + [UInt8](repeating: 0, count: NoteCipher.memoBytes - body.count)
-        m.replaceSubrange(stateTagAt ..< stateTagAt + regTagBytes, with: stateTag(nk: nk, m))
+        m.replaceSubrange(stateTagAt ..< stateTagAt + regTagBytes, with: stateTag(nk: nk, m, generation: generation))
         return Data(m)
     }
 
-    /// A handle record for the identity whose nk is `nk`: HOLDS `handle`, or RELEASED / MOVED_OUT (no handle).
-    public static func handleMemo(nk: Fr, kind: UInt8, handle: String = "") -> Data {
+    /// A handle record for identity `generation` of the wallet whose nk is
+    /// `nk`: HOLDS `handle`, or RELEASED / MOVED_OUT (no handle).
+    public static func handleMemo(nk: Fr, kind: UInt8, handle: String = "", generation: Int = 0) -> Data {
         precondition((recordHolds ... recordMovedOut).contains(kind))
         precondition(kind == recordHolds ? Handles.valid(handle) : handle.isEmpty)
         var b = [UInt8](repeating: 0, count: stateTagAt)
@@ -321,13 +331,13 @@ public final class WalletSync {
         b[3] = kind
         let h = Array(handle.utf8)
         b.replaceSubrange(4 ..< 4 + h.count, with: h)
-        return sealState(nk: nk, b)
+        return sealState(nk: nk, b, generation: generation)
     }
 
     /// A caretaker record: HOLDS with the split and its expiry (u32 unix
     /// seconds), or CLEARED / MOVED_OUT. A split whose entries do not fit 40
     /// bytes is marked unrecorded (its expiry still is).
-    public static func caretakerMemo(nk: Fr, kind: UInt8, expiresAt: Int64 = 0, split: [UInt64: UInt64] = [:]) -> Data {
+    public static func caretakerMemo(nk: Fr, kind: UInt8, expiresAt: Int64 = 0, split: [UInt64: UInt64] = [:], generation: Int = 0) -> Data {
         precondition((recordHolds ... recordMovedOut).contains(kind))
         var b = [UInt8](repeating: 0, count: stateTagAt)
         b.replaceSubrange(0 ..< 3, with: caretakerMagic)
@@ -348,19 +358,27 @@ public final class WalletSync {
             else { b.replaceSubrange(splitAt ..< splitAt + entries.count, with: entries) }
         }
         b[3] = k
-        return sealState(nk: nk, b)
+        return sealState(nk: nk, b, generation: generation)
     }
 
     /// The record in `memo` if it is a well-formed state record whose tag is
     /// `nk`'s (anyone can send this wallet a value-0 note with any memo;
     /// only the holder of nk can tag one). Checked before use.
-    public static func parseStateMemo(nk: Fr, _ memo: Data) -> StateRecord? {
+    public static func parseStateMemo(nk: Fr, _ memo: Data) -> StateRecord? { parseStateRecord(nk: nk, memo)?.record }
+
+    /// The record and the identity generation its tag names (0...`maxGeneration` tried).
+    public static func parseStateRecord(nk: Fr, _ memo: Data, maxGeneration: Int = 0) -> (record: StateRecord, generation: Int)? {
         guard memo.count <= NoteCipher.memoBytes else { return nil }
         let m = [UInt8](memo) + [UInt8](repeating: 0, count: NoteCipher.memoBytes - memo.count)
         let head = Data(m[0 ..< 3])
         let isHandle = head == handleMagic
         guard isHandle || head == caretakerMagic else { return nil }
-        guard constantTimeEqual(Data(m[stateTagAt ..< stateTagAt + regTagBytes]), stateTag(nk: nk, m)) else { return nil }
+        let tag = Data(m[stateTagAt ..< stateTagAt + regTagBytes])
+        guard let g = (0 ... max(0, maxGeneration)).first(where: { constantTimeEqual(tag, stateTag(nk: nk, m, generation: $0)) }) else { return nil }
+        return parseStateBody(m, isHandle: isHandle).map { ($0, g) }
+    }
+
+    private static func parseStateBody(_ m: [UInt8], isHandle: Bool) -> StateRecord? {
         guard m[(stateTagAt + regTagBytes)...].allSatisfy({ $0 == 0 }) else { return nil }
         let kind = m[3]
         if isHandle {
@@ -413,8 +431,15 @@ public final class WalletSync {
     /// already applied a newer one (or acted since: a reset keeps the
     /// cursor), or the record's tx failed in its block (`height` void). A
     /// held split's expiry is bounded like any other lease time.
-    public static func applyStateRecord(_ s: inout PrivacyState, position: UInt64, height: UInt64, _ rec: StateRecord, now: Int64) {
-        if s.voidRecordHeights.contains(height) { return }
+    public static func applyStateRecord(_ st: inout PrivacyState, position: UInt64, height: UInt64, _ rec: StateRecord, now: Int64, generation: Int = 0) {
+        if st.voidRecordHeights.contains(height) { return }
+        // What its generation holds; a later generation than the wallet acts
+        // as registered (only a registered identity writes one).
+        st.actAs(generation)
+        st.withSlot(generation) { applyStateRecord(&$0, position: position, rec, now: now) }
+    }
+
+    private static func applyStateRecord(_ s: inout IdentitySlot, position: UInt64, _ rec: StateRecord, now: Int64) {
         switch rec {
         case let .handle(kind, handle):
             if let p = s.handleRecordPos, position <= p { return }
@@ -449,7 +474,7 @@ public final class WalletSync {
 
     /// A HOLDS record settles an incoming move of `kind` (`matches` it), a
     /// MOVED_OUT one an outgoing move (kept, confirmed, until recorded in its target).
-    private static func settleMoves(_ s: inout PrivacyState, kind: String, recordKind: UInt8, _ matches: (PendingMove) -> Bool) {
+    private static func settleMoves(_ s: inout IdentitySlot, kind: String, recordKind: UInt8, _ matches: (PendingMove) -> Bool) {
         let incoming: Bool
         switch recordKind {
         case recordHolds: incoming = true
@@ -469,6 +494,14 @@ public final class WalletSync {
 
     /// Record notes kept (newest first); only this wallet's own registrations carry a valid tag.
     public static let maxRecords = 32
+    /// Generations past the highest the wallet knows whose record tags are
+    /// tried: a 1130 refusal skips one with no record of it.
+    public static let generationLookahead = 8
+
+    /// The highest generation whose record tags `s`'s sync tries.
+    public static func maxRecordGeneration(_ s: PrivacyState) -> Int {
+        min(PrivacyKeys.maxGeneration, max(s.generation, s.nextGeneration()) + generationLookahead)
+    }
     /// Identity leaves kept per record (registrations sharing its block).
     public static let maxRecordLeaves = 64
     /// Leaf hashes the fallback search may spend in one sync, across all
@@ -928,17 +961,19 @@ public final class WalletSync {
         // A value past 2^63-1 is not one the wallet holds (PRIVACY_FORMATS 4; as Android).
         if note.value > UInt64(Int64.max) { return nil }
         if note.value == 0 {
-            if let m = Self.parseRegMemo(nk: keys.nk, note.memo), !store.state.regRecords.contains(where: { $0.position == r.position }) {
+            let gens = Self.maxRecordGeneration(store.state)
+            if let m = Self.parseRegMemo(nk: keys.nk, note.memo, maxGeneration: gens), !store.state.regRecords.contains(where: { $0.position == r.position }) {
                 store.mutate { s in
-                    s.regRecords.append(RegRecord(height: r.height, position: r.position, dscKey: m.dscKey, country: m.country, builtAt: m.builtAt))
+                    s.regRecords.append(RegRecord(height: r.height, position: r.position, dscKey: m.dscKey, country: m.country, builtAt: m.builtAt,
+                                                  generation: m.generation))
                     if s.regRecords.count > Self.maxRecords, let i = s.regRecords.indices.min(by: { s.regRecords[$0].height < s.regRecords[$1].height }) {
                         s.regRecords.remove(at: i)
                     }
                 }
             }
-            if let rec = Self.parseStateMemo(nk: keys.nk, note.memo) {
+            if let rec = Self.parseStateRecord(nk: keys.nk, note.memo, maxGeneration: gens) {
                 let t = now()
-                store.mutate { Self.applyStateRecord(&$0, position: r.position, height: r.height, rec, now: t) }
+                store.mutate { Self.applyStateRecord(&$0, position: r.position, height: r.height, rec.record, now: t, generation: rec.generation) }
             }
             // An unlock's record: the owner-tag counter of the position it closed.
             if let c = Self.parseUnlockMemo(nk: keys.nk, note.memo), store.state.closedOtagMax.map({ c > $0 }) ?? true {
@@ -1323,17 +1358,22 @@ public final class WalletSync {
             let updated = rec
             store.mutate { $0.regRecords[k] = updated }
             if let (index, country, at, pred) = found {
-                let cur = store.state.identity
+                // The newest match is the identity: its generation's, which the wallet acts as from now on.
+                let g = rec.generation
+                let cur = store.state.slot(g).identity
                 // At an index at least the identity's: a match there replaces
                 // one made before (an identity from an unverified
                 // tree, or another time, is re-matched rather than kept).
                 if cur == nil || index >= cur!.leafIndex {
                     let nullifier = (cur?.leafIndex == index ? cur?.passportNullifier : nil) ?? ""
                     store.mutate {
-                        $0.identity = IdentityRecord(leafIndex: index, dscKey: rec.dscKey, country: country, activatedAt: at, passportNullifier: nullifier,
-                                                     verified: true, predecessorAt: pred)
+                        $0.withSlot(g) {
+                            $0.identity = IdentityRecord(leafIndex: index, dscKey: rec.dscKey, country: country, activatedAt: at, passportNullifier: nullifier,
+                                                         verified: true, predecessorAt: pred)
+                        }
                     }
                 }
+                store.mutate { $0.actAs(g) }
                 return
             }
             if budget <= 0 { return }
@@ -1344,17 +1384,18 @@ public final class WalletSync {
     /// activated_at `t`), or nil. The chain sets it to the registration's own
     /// block time for a switch or re-entry, 0 for a passport never seen
     /// before, so those are the only two values to try.
-    private func predecessorOf(_ leaf: Fr, dscKey: Fr, country: Fr, t: UInt64) -> UInt64? {
-        (t == 0 ? [0] : [0, t]).first { PrivacyHash.identityLeaf(idc: keys.idc, dscKey: dscKey, country: country, activatedAt: t, predecessorAt: $0) == leaf }
+    private func predecessorOf(_ idc: Fr, _ leaf: Fr, dscKey: Fr, country: Fr, t: UInt64) -> UInt64? {
+        (t == 0 ? [0] : [0, t]).first { PrivacyHash.identityLeaf(idc: idc, dscKey: dscKey, country: country, activatedAt: t, predecessorAt: $0) == leaf }
     }
 
-    /// (index, country, `t`, predecessor_at) if a leaf of `rec` is ours at activated_at = `t`.
+    /// (index, country, `t`, predecessor_at) if a leaf of `rec` is ours (its generation's idc) at activated_at = `t`.
     private func tryTime(_ rec: RegRecord, _ leaves: [RegRecord.Leaf], _ t: UInt64) -> (UInt64, Fr, UInt64, UInt64)? {
         var countries = [Self.countryOrZero(rec.country)]
         for c in Self.allCountries where c != countries[0] { countries.append(c) }
+        let idc = keys.idc(rec.generation)
         for l in leaves {
             for c in countries {
-                if let p = predecessorOf(l.leaf, dscKey: rec.dscKey, country: c, t: t) { return (l.index, c, t, p) }
+                if let p = predecessorOf(idc, l.leaf, dscKey: rec.dscKey, country: c, t: t) { return (l.index, c, t, p) }
             }
         }
         return nil
@@ -1408,6 +1449,7 @@ public final class WalletSync {
         let total = narrowSteps + Self.wideBefore + Self.wideAfter + 1
         var out = rec
         var spent: UInt64 = 0
+        let idc = keys.idc(rec.generation)
         while out.cursor < total {
             let narrow = out.cursor < narrowSteps
             let countries = narrow ? hinted : others
@@ -1424,7 +1466,7 @@ public final class WalletSync {
             if o || t < 0 || !timeOK(UInt64(t)) { continue }
             for l in leaves {
                 for c in countries {
-                    if let p = predecessorOf(l.leaf, dscKey: rec.dscKey, country: c, t: UInt64(t)) {
+                    if let p = predecessorOf(idc, l.leaf, dscKey: rec.dscKey, country: c, t: UInt64(t)) {
                         out.status = .matched
                         return ((l.index, c, UInt64(t), p), out)
                     }
@@ -1450,10 +1492,14 @@ public final class WalletSync {
             return
         }
         let leaf = store.identityTree.leaf(index)
-        if let (country, pred) = countryFor(leaf: leaf, dscKey: p.dscKey, activatedAt: activatedAt, hint: p.countryHint) {
+        if let (country, pred) = countryFor(leaf: leaf, dscKey: p.dscKey, activatedAt: activatedAt, hint: p.countryHint, generation: p.generation) {
+            // The registration's generation: the wallet acts as it from now on.
             store.mutate {
-                $0.identity = IdentityRecord(leafIndex: index, dscKey: p.dscKey, country: country, activatedAt: activatedAt,
-                                             passportNullifier: p.passportNullifier, verified: true, predecessorAt: pred)
+                $0.withSlot(p.generation) {
+                    $0.identity = IdentityRecord(leafIndex: index, dscKey: p.dscKey, country: country, activatedAt: activatedAt,
+                                                 passportNullifier: p.passportNullifier, verified: true, predecessorAt: pred)
+                }
+                $0.actAs(p.generation)
                 $0.pendingRegistration = nil
             }
         } else {
@@ -1463,10 +1509,11 @@ public final class WalletSync {
     }
 
     /// (country, predecessor_at) with which `leaf` is ours at `activatedAt`, or nil.
-    func countryFor(leaf: Fr, dscKey: Fr, activatedAt: UInt64, hint: String = "") -> (Fr, UInt64)? {
+    func countryFor(leaf: Fr, dscKey: Fr, activatedAt: UInt64, hint: String = "", generation: Int = 0) -> (Fr, UInt64)? {
         if leaf == .zero { return nil }
+        let idc = keys.idc(generation)
         for c in [Self.countryOrZero(hint)] + Self.allCountries {
-            if let p = predecessorOf(leaf, dscKey: dscKey, country: c, t: activatedAt) { return (c, p) }
+            if let p = predecessorOf(idc, leaf, dscKey: dscKey, country: c, t: activatedAt) { return (c, p) }
         }
         return nil
     }
@@ -1477,7 +1524,9 @@ public final class WalletSync {
 
     static func identityStatus(store: PrivacyStore, keys: PrivacyKeys) -> IdentityStatus {
         guard let id = store.state.identity, id.leafIndex < store.identityTree.size else { return .none }
-        let want = PrivacyHash.identityLeaf(idc: keys.idc, dscKey: id.dscKey, country: id.country, activatedAt: id.activatedAt, predecessorAt: id.predecessorAt)
+        // The identity the wallet acts as: its generation's idc.
+        let want = PrivacyHash.identityLeaf(idc: keys.idc(store.state.generation), dscKey: id.dscKey, country: id.country, activatedAt: id.activatedAt,
+                                            predecessorAt: id.predecessorAt)
         return store.identityTree.leaf(id.leafIndex) == want ? .live : .zeroed
     }
 }

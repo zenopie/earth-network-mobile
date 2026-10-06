@@ -231,6 +231,9 @@ public final class TxController {
         } catch {
             requestingGas = false
             gasError = Self.describeGasFailure(error)
+            // Its identity used before (1130, the chain's own set): the next
+            // registration proves with the next generation.
+            if gasError == PrivacyWallet.identityUsedMessage { await model.privacy?.identityRefused(idc: reg.msg.idc) }
             return
         }
         requestingGas = false

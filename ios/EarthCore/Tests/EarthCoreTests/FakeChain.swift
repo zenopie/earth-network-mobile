@@ -1209,6 +1209,11 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     /// (height, leaf index) of every zeroing.
     var zeroed: [(height: UInt64, index: UInt64)] = []
 
+    /// `idc`'s registration ends (its lease lapsed): the chain's sweep zeroes its leaf, in the next block.
+    func lapse(_ idc: Fr) {
+        for (k, v) in registeredIdc where v == idc { zeroLeaf(k) }
+    }
+
     private func zeroLeaf(_ index: UInt64) {
         if identityTree.leaf(index) == .zero { return }
         identityTree.update(index, .zero)

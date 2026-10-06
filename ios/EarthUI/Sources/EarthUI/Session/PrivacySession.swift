@@ -137,10 +137,10 @@ enum PrivacySession {
         let st = (try? PrivacyStore.shared(root: try dataRoot(), walletID: id, key: try dataKey()))?.state
         let t = Int64(Date().timeIntervalSince1970)
         // A registration it sent that can still land counts: one that failed may be replayed.
-        let registered = st.map { $0.identity != nil || $0.pendingRegistration != nil || $0.registrationKeepUntil > t } ?? false
-        // Its identity registered before: the chain refuses a switch to it (1130).
-        let used = st.map { $0.identity != nil || !$0.regRecords.isEmpty } ?? false
-        return TargetInfo(storeID: id, registered: registered, used: used, handle: st?.handle ?? "",
+        let registered = st.map { ($0.pendingRegistration.map { $0.leafIndex == nil && $0.failure == nil } ?? false) || $0.registrationKeepUntil > t } ?? false
+        // Any wallet is a target (it registers its next unused identity); one with a live registration is warned about.
+        let live = st?.identity != nil
+        return TargetInfo(storeID: id, registered: registered, live: live, handle: st?.handle ?? "",
                           handleRefusal: st.flatMap { PrivacyWallet.targetRefusal($0, kind: PendingMove.handleKind, now: t) },
                           voteRefusal: st.flatMap { PrivacyWallet.targetRefusal($0, kind: PendingMove.caretakerKind, now: t) })
     }
@@ -148,8 +148,8 @@ enum PrivacySession {
     struct TargetInfo {
         let storeID: String
         let registered: Bool
-        /// Its identity registered before: the chain refuses a switch to it (1130).
-        let used: Bool
+        /// It has a live registration of its own (a switch there replaces it with that wallet's next identity).
+        let live: Bool
         let handle: String
         let handleRefusal: String?
         let voteRefusal: String?

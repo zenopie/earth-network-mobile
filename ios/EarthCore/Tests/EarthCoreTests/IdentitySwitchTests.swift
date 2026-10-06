@@ -259,19 +259,27 @@ final class IdentitySwitchTests: PrivacyTestCase {
         XCTAssertEqual("", a2.snapshot.handle)
     }
 
-    /// An identity registers once (personhood 1130): the switched-away wallet cannot register again, restored or not.
-    func testASwitchBackToAnEarlierIdentityIsRefused() async throws {
+    /// An identity registers once (personhood 1130): the switched-away wallet
+    /// registers again only with its next generation, restored or not, and a
+    /// wallet that never registered starts at generation 0.
+    func testASwitchBackToAnEarlierWalletProvesWithItsNextIdentity() async throws {
         let chain = FakeChain()
         let (a, b, _) = try await switched(chain, "999")
-        XCTAssertTrue(a.identityUsed())
-        XCTAssertTrue(b.identityUsed())
-        await assertThrowsAsync({ try await a.prepareRegistration(referrer: nil) }) { $0 is PrivacyWallet.IdentityUsed }
-        // Restored from the phrase: its registration record says the identity is spent.
+        XCTAssertTrue(a.registeredBefore())
+        XCTAssertTrue(b.registeredBefore())
+        let prep = try await a.prepareRegistration(referrer: nil)
+        XCTAssertEqual(1, prep.generation)
+        // Restored from the phrase: its registration record says generation 0 is spent.
         let restored = try wallet(chain, alice)
         try await restored.sync()
-        XCTAssertTrue(restored.identityUsed())
-        // A wallet that never registered is a valid target.
-        XCTAssertFalse(try wallet(chain, carol).identityUsed())
+        XCTAssertTrue(restored.registeredBefore())
+        XCTAssertEqual(1, restored.nextGeneration())
+        let rprep = try await restored.prepareRegistration(referrer: nil)
+        XCTAssertEqual(a.keys.idc(1), rprep.idc)
+        // A wallet that never registered starts at its first identity.
+        let c = try wallet(chain, carol)
+        XCTAssertFalse(c.registeredBefore())
+        XCTAssertEqual(0, c.nextGeneration())
         XCTAssertTrue(chain.usedIdcs.contains(a.keys.idc) && chain.usedIdcs.contains(b.keys.idc))
     }
 

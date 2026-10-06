@@ -946,7 +946,7 @@ public final class AppModel {
     /// on this phone, same passport) holds that a move can bring here: shown
     /// after a switch lands. As PrivacySession.MoveOffer on Android.
     public struct MoveOffer: Sendable {
-        /// The predecessor's wallet index and name.
+        /// The predecessor's wallet index and name (`AppModel.selfIndex` and "" for an earlier identity of this wallet).
         public let fromIndex: Int
         public let fromName: String
         /// Its handle ("" none) and whether it is live (only a live one moves).
@@ -961,8 +961,16 @@ public final class AppModel {
         public let feeErth: UInt64
         /// When the wallet suggests moving (PrivacyWallet.suggestedMoveAt; 0 when there is nothing to move).
         public var suggestedAt: Int64 = 0
+        /// The predecessor is this wallet's own identity generation `fromGeneration` (re-entry or a fresh identity): one phrase, one fee payer.
+        public var fromGeneration: Int = -1
         public var anything: Bool { !handle.isEmpty || voteLive || !inFlight.isEmpty }
+        public var withinWallet: Bool { fromIndex == AppModel.selfIndex }
     }
+
+    /// `MoveOffer.fromIndex` of an earlier identity of the selected wallet.
+    public static let selfIndex = -1
+    /// How many of a wallet's own earlier generations Identity looks back over for its predecessor.
+    static let ownLookback = 8
 
     /// Finds the predecessor among this phone's wallets by the succession
     /// leaf the chain appended for this identity's registration (searched in
@@ -972,14 +980,30 @@ public final class AppModel {
     /// move, as the move proof needs both identity secrets).
     func moveOffer() async -> MoveOffer? {
         guard let w = privacy, let id = w.snapshot.identity, id.verified, w.snapshot.identityStatus == .live else { return nil }
+        let now = Int64(Date().timeIntervalSince1970)
+        // This wallet's own earlier identity first (a re-entry after a lapse, or
+        // a fresh identity): the chain appends the succession right after the
+        // new leaf, so only that leaf is looked at for each.
+        let g = w.generation
+        for k in stride(from: g - 1, through: max(0, g - Self.ownLookback), by: -1) {
+            guard await w.successionIndex(idcOld: w.keys.idc(k), idcNew: w.idc, near: id.leafIndex &+ 1, nearOnly: true) != nil else { continue }
+            let t = w.snapshot.identities[k] ?? IdentitySlot()
+            let handleExp = await w.handleExpiresAt(generation: k)
+            var offer = MoveOffer(fromIndex: Self.selfIndex, fromName: "", handle: t.handle,
+                                  handleLive: !t.handle.isEmpty && (handleExp == 0 || handleExp > now),
+                                  voteLive: await w.caretakerLive(generation: k), voteExpiresAt: await w.caretakerExpiresAt(generation: k),
+                                  inFlight: w.outgoingMoves(generation: k).filter { !$0.confirmed }, feeErth: w.poolBalances()[PrivacyWallet.fee] ?? 0)
+            offer.fromGeneration = k
+            if offer.anything { offer.suggestedAt = await w.suggestedMoveAt() } else { await w.clearMoveSuggestion() }
+            return offer
+        }
         for index in wallets.indices where index != selected {
-            guard let keys = try? privacyKeys(ofWallet: index), keys.idc != w.keys.idc else { continue }
-            guard await w.successionIndex(idcOld: keys.idc, idcNew: w.keys.idc, near: id.leafIndex &+ 1) != nil else { continue }
-            guard let p = try? predecessorWallet(index) else { return nil }
+            // The identity that wallet acts as: the one the passport registered before this.
+            guard let p = try? predecessorWallet(index), p.idc != w.idc else { continue }
+            guard await w.successionIndex(idcOld: p.idc, idcNew: w.idc, near: id.leafIndex &+ 1) != nil else { continue }
             try? await p.sync()
             await p.resolvePendingMoves()
             let snap = p.snapshot
-            let now = Int64(Date().timeIntervalSince1970)
             let handleExp = await p.handleExpiresAt()
             var offer = MoveOffer(fromIndex: index, fromName: wallets[index].name, handle: snap.handle,
                                   handleLive: !snap.handle.isEmpty && (handleExp == 0 || handleExp > now),
@@ -1005,12 +1029,12 @@ public final class AppModel {
         guard let w = privacy, let id = w.snapshot.identity, id.verified else {
             throw PrivacyError("this wallet's registration has not been verified yet; sync, then try again")
         }
-        return PrivacyWallet.Successor(keys: w.keys, identity: id)
+        return PrivacyWallet.Successor(keys: w.keys, identity: id, generation: w.generation)
     }
 
     /// Settles the predecessor's moves in flight by their tx, retries recording confirmed ones here, then this wallet's own.
     func checkMoves(from index: Int) async {
-        if let p = try? predecessorWallet(index) {
+        if index != Self.selfIndex, let p = try? predecessorWallet(index) {
             await p.resolvePendingMoves()
             for m in p.outgoingMoves() where !m.recorded && !m.target.isEmpty {
                 var inc = m

@@ -166,7 +166,7 @@ struct IdentityScreen: View {
                         if let moveOffer, moveOffer.anything {
                             MoveOfferCard(offer: moveOffer) { self.moveOffer = await model.moveOffer() }
                         }
-                        Text("Your registration stays with this wallet until it expires. To move it to another wallet, switch identity: register the same passport there, then bring your handle and caretaker vote over from the new wallet. Nothing is paid the second time. A passport can switch once per day (UTC).")
+                        Text("Your registration lasts a year; renewing then registers this wallet's next identity, from the same recovery phrase. To move it to another wallet, or to a fresh identity in this one, switch identity, then bring your handle and caretaker vote over from the Identity screen. Nothing is paid the second time. A passport can switch once per day (UTC).")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
                         EarthButton(title: "Switch identity", role: .secondary) { switching = true }
@@ -177,13 +177,15 @@ struct IdentityScreen: View {
                         Text("Need ERTH in your public account for fees? Unshield some from Portfolio.")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textSecondary)
-                    } else if model.privacy?.identityUsed() == true {
+                    } else if model.privacy?.registeredBefore() == true {
                         // The chain keeps every identity it ever registered (used_idcs) and
-                        // refuses it again (1130): a return after a switch or a lapse is a new wallet.
-                        Text("Each identity can register only once. To count as a person again, create a new wallet and register your passport there. If this passport's registration is still live in another wallet, registering in the new one switches it there.")
+                        // refuses it again (1130), so a renewal registers this wallet's next
+                        // identity (PrivacyKeys generations): one recovery phrase holds them
+                        // all, and the previous one's handle and vote move over.
+                        Text("Renew to count as a person again. The wallet registers your passport to its next identity, derived from the same recovery phrase: no new wallet or phrase is needed. A handle or caretaker vote your previous identity still holds can be brought over from this screen afterwards.")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textSecondary)
-                        EarthButton(title: "Create a new wallet") { adding = true }
+                        EarthButton(title: "Renew registration") { registering = true }
                     } else {
                         EarthButton(title: "Register with your passport") { registering = true }
                     }
@@ -209,8 +211,8 @@ struct IdentityScreen: View {
     private var subtitle: String {
         switch model.identityStatus {
         case .live: "Your registration is in the identity tree."
-        case .zeroed: "Your registration expired, or moved to another wallet. This wallet's identity cannot register again: register from a new wallet to take part."
-        case .none: "Prove you are a unique human to claim ANML and vote."
+        case .zeroed: "Your registration in this wallet has ended, or was switched to another wallet."
+        case .none: model.privacy?.registeredBefore() == true ? "Your registration in this wallet has ended, or was switched to another wallet." : "Prove you are a unique human to claim ANML and vote."
         }
     }
 }

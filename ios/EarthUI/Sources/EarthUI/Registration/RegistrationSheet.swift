@@ -124,9 +124,6 @@ struct RegistrationSheet: View {
                 unsupported("This build has no prover, so a chip read would have nothing to prove with.")
             } else if !PassportProving.canProveThisLaunch {
                 unsupported(PassportProving.relaunchToRegister)
-            } else if model.privacy?.identityUsed() == true {
-                // The chain registers an identity once (1130): said before the passport is read.
-                unsupported(PrivacyWallet.identityUsedMessage)
             } else {
                 EarthButton(title: "Start") { step = .scan }
             }
@@ -190,7 +187,8 @@ struct RegistrationSheet: View {
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textError)
                 }
-                Text("Already registered from another wallet? Registering here switches your identity to this wallet. Move your handle and caretaker vote first, from the old wallet's Identity screen (Switch identity), or the new identity waits up to a year before it can hold them. A passport can switch once per day (UTC).")
+                // Each registration proves with a fresh identity of this wallet (its next generation), so any wallet can register.
+                Text("Already registered from another wallet? Registering here switches your identity to this wallet. Once the switch lands, bring your handle and caretaker vote over from this wallet's Identity screen, before you switch again. Each registration uses a fresh identity of this wallet, derived from its recovery phrase. A passport can switch once per day (UTC).")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }

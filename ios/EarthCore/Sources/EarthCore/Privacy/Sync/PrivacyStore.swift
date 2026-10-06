@@ -56,11 +56,25 @@ public struct PendingRegistration: Codable, Equatable, Sendable {
     public let countryHint: String
     /// Why the last attempt to resolve it failed, for the UI (nil: waiting for the indexer).
     public var failure: String?
+    /// The identity generation it registers (PrivacyKeys): its leaf is matched with that generation's idc.
+    public var generation: Int = 0
 
     public init(txHash: String, leafIndex: UInt64?, dscKey: Fr, passportNullifier: String, publicSignals: [String], activatedAt: UInt64?,
-                countryHint: String, failure: String? = nil) {
+                countryHint: String, failure: String? = nil, generation: Int = 0) {
         self.txHash = txHash; self.leafIndex = leafIndex; self.dscKey = dscKey; self.passportNullifier = passportNullifier
         self.publicSignals = publicSignals; self.activatedAt = activatedAt; self.countryHint = countryHint; self.failure = failure
+        self.generation = generation
+    }
+
+    enum CodingKeys: String, CodingKey { case txHash, leafIndex, dscKey, passportNullifier, publicSignals, activatedAt, countryHint, failure, generation }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        txHash = try c.decode(String.self, forKey: .txHash); leafIndex = try c.decodeIfPresent(UInt64.self, forKey: .leafIndex)
+        dscKey = try c.decode(Fr.self, forKey: .dscKey); passportNullifier = try c.decode(String.self, forKey: .passportNullifier)
+        publicSignals = try c.decode([String].self, forKey: .publicSignals); activatedAt = try c.decodeIfPresent(UInt64.self, forKey: .activatedAt)
+        countryHint = try c.decode(String.self, forKey: .countryHint); failure = try c.decodeIfPresent(String.self, forKey: .failure)
+        generation = PrivacyState.clampGeneration(try c.decodeIfPresent(Int.self, forKey: .generation) ?? 0)
     }
 }
 
@@ -101,13 +115,16 @@ public struct RegRecord: Codable, Equatable, Sendable {
     public var chainTime: UInt64?
     /// How many leaves `tried` was tried against: more leaves later reopen the record.
     public var leavesTried: Int = 0
+    /// The identity generation the registration was for, from the record's tag (PRIVACY_FORMATS.md 6).
+    public var generation: Int = 0
 
-    public init(height: UInt64, position: UInt64, dscKey: Fr, country: String, builtAt: UInt64) {
+    public init(height: UInt64, position: UInt64, dscKey: Fr, country: String, builtAt: UInt64, generation: Int = 0) {
         self.height = height; self.position = position; self.dscKey = dscKey; self.country = country; self.builtAt = builtAt
+        self.generation = generation
     }
 
     enum CodingKeys: String, CodingKey {
-        case height, position, dscKey, country, builtAt, leaves, status, cursor, work, time, tried, cover, coverTries, chainTime, leavesTried
+        case height, position, dscKey, country, builtAt, leaves, status, cursor, work, time, tried, cover, coverTries, chainTime, leavesTried, generation
     }
 
     public init(from decoder: Decoder) throws {
@@ -125,6 +142,7 @@ public struct RegRecord: Codable, Equatable, Sendable {
         coverTries = try c.decodeIfPresent(Int.self, forKey: .coverTries) ?? 0
         chainTime = try c.decodeIfPresent(UInt64.self, forKey: .chainTime)
         leavesTried = try c.decodeIfPresent(Int.self, forKey: .leavesTried) ?? 0
+        generation = PrivacyState.clampGeneration(try c.decodeIfPresent(Int.self, forKey: .generation) ?? 0)
     }
 }
 
@@ -229,6 +247,77 @@ public struct PositionLease: Codable, Equatable, Sendable {
     public init(expiresAt: Int64, split: [UInt64: UInt64]) { self.expiresAt = expiresAt; self.split = split }
 }
 
+/// What one identity generation of the wallet holds (PrivacyKeys: one
+/// phrase, an identity secret per generation): its registration, handle,
+/// caretaker split and moves. The wallet acts as `PrivacyState.generation`;
+/// an earlier one keeps what it holds until moved on or lapsed. Ports
+/// IdentitySlot in `privacy/sync/PrivacyStore.kt`.
+public struct IdentitySlot: Codable, Equatable, Sendable {
+    public var identity: IdentityRecord?
+    /// When the caretaker split was last cast (unix seconds), and the split (option -> percent).
+    public var caretakerCastAt: Int64 = 0
+    public var caretakerSplit: [UInt64: UInt64] = [:]
+    /// When the split lapses (the chain's expires_at; 0: unknown, castAt + R).
+    public var caretakerExpiresAt: Int64 = 0
+    /// This identity moved its split away (MsgMoveCaretaker): it may never cast one again.
+    public var caretakerMovedOut: Bool = false
+    /// This identity's handle ("" for none), as last claimed, renewed or moved in.
+    public var handle: String = ""
+    /// This identity moved its handle away (MsgMoveHandle): it may never claim one again.
+    public var handleMovedOut: Bool = false
+    /// When `handle` last changed here (wallet clock): a directory read before it says nothing about it.
+    public var handleSetAt: Int64 = 0
+    /// When the handle `handleExpiresFor` stops being live (the chain's
+    /// expires_at, from its bind or the chain's directory). Counts only while
+    /// it is `handle`; otherwise unknown. Past it, a renewal or change is
+    /// bounded like a claim and a move is refused.
+    public var handleExpiresAt: Int64 = 0
+    public var handleExpiresFor: String = ""
+    /// The caretaker split is held but its record did not carry it (restored from a state record).
+    public var caretakerSplitUnknown: Bool = false
+    /// The newest handle / caretaker state record applied (note position; nil: none).
+    public var handleRecordPos: UInt64?
+    public var caretakerRecordPos: UInt64?
+    /// Moves in flight, either way.
+    public var pendingMoves: [PendingMove] = []
+    /// The store id of the wallet a switch moves to, fixed by its first move.
+    public var switchTarget: String = ""
+    /// After a switch to this identity: when the wallet suggests bringing the
+    /// predecessor's handle and split over (a random delay after the switch,
+    /// so a move does not link them by timing; 0: none drawn, -1: nothing
+    /// left to move), and the leaf of the registration it was drawn for. A
+    /// suggestion only: nothing moves unasked. Android's move_suggested_at.
+    public var moveSuggestedAt: Int64 = 0
+    public var moveSuggestedLeaf: Int64 = -1
+
+    public init() {}
+
+    /// Whether it holds or did nothing (such a slot is not written).
+    public var empty: Bool { self == IdentitySlot() }
+
+    enum CodingKeys: String, CodingKey {
+        case identity, caretakerCastAt, caretakerSplit, caretakerExpiresAt, caretakerMovedOut, handle, handleMovedOut, handleSetAt,
+             handleExpiresAt, handleExpiresFor, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, pendingMoves, switchTarget,
+             moveSuggestedAt, moveSuggestedLeaf
+    }
+
+    /// From a slot, or (a state file from before generations) the state's own top-level keys, which are the same.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func v<T: Decodable>(_ k: CodingKeys, _ d: T) throws -> T { try c.decodeIfPresent(T.self, forKey: k) ?? d }
+        identity = try c.decodeIfPresent(IdentityRecord.self, forKey: .identity)
+        caretakerCastAt = try v(.caretakerCastAt, 0); caretakerSplit = try v(.caretakerSplit, [:])
+        caretakerExpiresAt = try v(.caretakerExpiresAt, 0); caretakerMovedOut = try v(.caretakerMovedOut, false)
+        handle = try v(.handle, ""); handleMovedOut = try v(.handleMovedOut, false)
+        handleSetAt = try v(.handleSetAt, 0); caretakerSplitUnknown = try v(.caretakerSplitUnknown, false)
+        handleRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .handleRecordPos)
+        caretakerRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .caretakerRecordPos)
+        pendingMoves = try v(.pendingMoves, []); switchTarget = try v(.switchTarget, "")
+        moveSuggestedAt = try v(.moveSuggestedAt, 0); moveSuggestedLeaf = try v(.moveSuggestedLeaf, -1)
+        handleExpiresAt = try v(.handleExpiresAt, 0); handleExpiresFor = try v(.handleExpiresFor, "")
+    }
+}
+
 /// What the wallet keeps between syncs: cursors into each indexer stream, its
 /// own notes, its registration, and its own txs' bookkeeping. Small; the
 /// trees live beside it in per-level files. Ports PrivacyState in
@@ -243,7 +332,14 @@ public struct PrivacyState: Codable, Sendable {
     public var identityNext: UInt64 = 0
     public var zeroedNext: UInt64 = 0
     public var notes: [OwnedNote] = []
-    public var identity: IdentityRecord?
+    /// The identity generation the wallet acts as (PrivacyKeys): the one its
+    /// registration, handle and split below are. It moves up when a
+    /// registration of a later generation lands, or a restore finds one.
+    public var generation: Int = 0
+    /// The lowest generation a registration may use: raised past one the chain refused as used (1130).
+    public var generationFloor: Int = 0
+    /// Every generation's slot that holds anything (by generation).
+    public var identities: [Int: IdentitySlot] = [:]
     /// A committed registration not yet matched to its leaf.
     public var pendingRegistration: PendingRegistration?
     /// Until when (unix seconds) a registration this wallet broadcast can
@@ -270,43 +366,8 @@ public struct PrivacyState: Codable, Sendable {
     public var verifiedHeight: UInt64 = 0
     /// UTC days a claim was broadcast for (so a claim is not offered twice).
     public var claimedDays: Set<UInt64> = []
-    /// When the caretaker split was last cast (unix seconds), and the split (option -> percent).
-    public var caretakerCastAt: Int64 = 0
-    public var caretakerSplit: [UInt64: UInt64] = [:]
-    /// When the split lapses (the chain's expires_at; 0: unknown, castAt + R).
-    public var caretakerExpiresAt: Int64 = 0
-    /// This identity moved its split away (MsgMoveCaretaker): it may never cast one again.
-    public var caretakerMovedOut: Bool = false
-    /// This identity's handle ("" for none), as last claimed, renewed or moved in.
-    public var handle: String = ""
-    /// This identity moved its handle away (MsgMoveHandle): it may never claim one again.
-    public var handleMovedOut: Bool = false
-    /// When `handle` last changed here (wallet clock): a directory read before it says nothing about it.
-    public var handleSetAt: Int64 = 0
-    /// When the handle `handleExpiresFor` stops being live (the chain's
-    /// expires_at, from its bind or the chain's directory). Counts only while
-    /// it is `handle`; otherwise unknown. Past it, a renewal or change is
-    /// bounded like a claim and a move is refused.
-    public var handleExpiresAt: Int64 = 0
-    public var handleExpiresFor: String = ""
-    /// The caretaker split is held but its record did not carry it (restored from a state record).
-    public var caretakerSplitUnknown: Bool = false
-    /// The newest handle / caretaker state record applied (note position; nil: none).
-    public var handleRecordPos: UInt64?
-    public var caretakerRecordPos: UInt64?
     /// Heights of this wallet's txs that failed in their block: their state records are void.
     public var voidRecordHeights: Set<UInt64> = []
-    /// Moves in flight, either way.
-    public var pendingMoves: [PendingMove] = []
-    /// The store id of the wallet a switch moves to, fixed by its first move.
-    public var switchTarget: String = ""
-    /// After a switch to this identity: when the wallet suggests bringing the
-    /// predecessor's handle and split over (a random delay after the switch,
-    /// so a move does not link them by timing; 0: none drawn, -1: nothing
-    /// left to move), and the leaf of the registration it was drawn for. A
-    /// suggestion only: nothing moves unasked. Android's move_suggested_at.
-    public var moveSuggestedAt: Int64 = 0
-    public var moveSuggestedLeaf: Int64 = -1
     /// Undelegations whose payout has not arrived yet.
     public var pendingUnbonds: [PendingUnbond] = []
     /// Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt).
@@ -336,13 +397,99 @@ public struct PrivacyState: Codable, Sendable {
 
     public init() {}
 
+    static func clampGeneration(_ g: Int) -> Int { min(max(g, 0), PrivacyKeys.maxGeneration) }
+
+    /// The slot of `generation` (empty until it holds anything).
+    public func slot(_ generation: Int) -> IdentitySlot { identities[generation] ?? IdentitySlot() }
+    /// What the identity the wallet acts as holds.
+    public var current: IdentitySlot {
+        get { slot(generation) }
+        set { identities[generation] = newValue }
+    }
+    /// Changes `generation`'s slot in place.
+    public mutating func withSlot<T>(_ generation: Int, _ body: (inout IdentitySlot) throws -> T) rethrows -> T {
+        var t = slot(generation)
+        defer { identities[generation] = t }
+        return try body(&t)
+    }
+
+    // What the identity the wallet acts as holds: its slot's (IdentitySlot).
+    public var identity: IdentityRecord? { get { current.identity } set { current.identity = newValue } }
+    public var caretakerCastAt: Int64 { get { current.caretakerCastAt } set { current.caretakerCastAt = newValue } }
+    public var caretakerSplit: [UInt64: UInt64] { get { current.caretakerSplit } set { current.caretakerSplit = newValue } }
+    public var caretakerExpiresAt: Int64 { get { current.caretakerExpiresAt } set { current.caretakerExpiresAt = newValue } }
+    public var caretakerMovedOut: Bool { get { current.caretakerMovedOut } set { current.caretakerMovedOut = newValue } }
+    public var handle: String { get { current.handle } set { current.handle = newValue } }
+    public var handleMovedOut: Bool { get { current.handleMovedOut } set { current.handleMovedOut = newValue } }
+    public var handleSetAt: Int64 { get { current.handleSetAt } set { current.handleSetAt = newValue } }
+    public var handleExpiresAt: Int64 { get { current.handleExpiresAt } set { current.handleExpiresAt = newValue } }
+    public var handleExpiresFor: String { get { current.handleExpiresFor } set { current.handleExpiresFor = newValue } }
+    public var caretakerSplitUnknown: Bool { get { current.caretakerSplitUnknown } set { current.caretakerSplitUnknown = newValue } }
+    public var handleRecordPos: UInt64? { get { current.handleRecordPos } set { current.handleRecordPos = newValue } }
+    public var caretakerRecordPos: UInt64? { get { current.caretakerRecordPos } set { current.caretakerRecordPos = newValue } }
+    public var pendingMoves: [PendingMove] { get { current.pendingMoves } set { current.pendingMoves = newValue } }
+    public var switchTarget: String { get { current.switchTarget } set { current.switchTarget = newValue } }
+    public var moveSuggestedAt: Int64 { get { current.moveSuggestedAt } set { current.moveSuggestedAt = newValue } }
+    public var moveSuggestedLeaf: Int64 { get { current.moveSuggestedLeaf } set { current.moveSuggestedLeaf = newValue } }
+
+    /// The highest generation whose idc may have been registered, -1 for
+    /// none: one with a registration record (a registration of it reached a
+    /// block, whether or not it succeeded: the record lands with the fee),
+    /// a registration matched or committed, and every one below the floor.
+    /// Skipping a generation whose registration failed costs nothing. As Android.
+    public func usedThrough() -> Int {
+        var m = generationFloor - 1
+        for r in regRecords { m = max(m, r.generation) }
+        for (g, t) in identities where t.identity != nil { m = max(m, g) }
+        if let p = pendingRegistration, p.leafIndex != nil { m = max(m, p.generation) }
+        return m
+    }
+
+    /// The generation the next registration (a first one, a re-entry, a
+    /// fresh identity) uses: the lowest above every one that may have been
+    /// registered. A sent registration that has not landed keeps its own:
+    /// retrying it is the same identity.
+    public func nextGeneration() -> Int {
+        let pending = pendingRegistration.flatMap { $0.leafIndex == nil && $0.failure == nil ? $0.generation : nil } ?? -1
+        return max(usedThrough() + 1, generationFloor, pending, 0)
+    }
+
+    /// A registration of `g` landed or was found: the wallet acts as it from now on (never back to an earlier one).
+    public mutating func actAs(_ g: Int) {
+        if g > generation { generation = g }
+    }
+
     enum CodingKeys: String, CodingKey {
-        case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, identity, pendingRegistration,
-             regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, caretakerExpiresAt, caretakerMovedOut, handle, handleMovedOut,
+        case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, pendingRegistration,
+             regRecords, rootsVerified, rootsError, claimedDays,
              pendingUnbonds, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax,
              syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
-             handleSetAt, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, voidRecordHeights, pendingMoves, switchTarget,
-             moveSuggestedAt, moveSuggestedLeaf, handleExpiresAt, handleExpiresFor, labelWindowSeconds, carriedMarks, registrationKeepUntil, positionLeases
+             voidRecordHeights, labelWindowSeconds, carriedMarks, registrationKeepUntil, positionLeases,
+             generation, generationFloor, identities
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(chainID, forKey: .chainID); try c.encodeIfPresent(genesis, forKey: .genesis)
+        try c.encode(notesNext, forKey: .notesNext); try c.encode(notesHeight, forKey: .notesHeight)
+        try c.encode(nullifiersNext, forKey: .nullifiersNext); try c.encode(identityNext, forKey: .identityNext)
+        try c.encode(zeroedNext, forKey: .zeroedNext); try c.encode(notes, forKey: .notes)
+        try c.encodeIfPresent(pendingRegistration, forKey: .pendingRegistration); try c.encode(regRecords, forKey: .regRecords)
+        try c.encode(rootsVerified, forKey: .rootsVerified); try c.encodeIfPresent(rootsError, forKey: .rootsError)
+        try c.encode(claimedDays, forKey: .claimedDays); try c.encode(pendingUnbonds, forKey: .pendingUnbonds)
+        try c.encode(nextOtagCounter, forKey: .nextOtagCounter); try c.encode(stakeNext, forKey: .stakeNext)
+        try c.encode(stakeHeight, forKey: .stakeHeight); try c.encode(stakeNullifiersNext, forKey: .stakeNullifiersNext)
+        try c.encode(stakeNotes, forKey: .stakeNotes); try c.encode(denoms, forKey: .denoms)
+        try c.encodeIfPresent(closedOtagMax, forKey: .closedOtagMax); try c.encode(syncGeneration, forKey: .syncGeneration)
+        try c.encodeIfPresent(verifiedGeneration, forKey: .verifiedGeneration); try c.encode(verifiedHeight, forKey: .verifiedHeight)
+        try c.encode(stakeVotes, forKey: .stakeVotes); try c.encode(identityHeights, forKey: .identityHeights)
+        try c.encode(identityRowsSeen, forKey: .identityRowsSeen); try c.encode(voidRecordHeights, forKey: .voidRecordHeights)
+        try c.encode(labelWindowSeconds, forKey: .labelWindowSeconds); try c.encode(carriedMarks, forKey: .carriedMarks)
+        try c.encode(registrationKeepUntil, forKey: .registrationKeepUntil); try c.encode(positionLeases, forKey: .positionLeases)
+        try c.encode(generation, forKey: .generation); try c.encode(generationFloor, forKey: .generationFloor)
+        // String keys: a JSON object, not an alternating array.
+        try c.encode(Dictionary(uniqueKeysWithValues: identities.filter { $0.key == generation || !$0.value.empty }.map { (String($0.key), $0.value) }),
+                     forKey: .identities)
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -356,10 +503,14 @@ public struct PrivacyState: Codable, Sendable {
         rootsError = try c.decodeIfPresent(String.self, forKey: .rootsError)
         notesNext = try v(.notesNext, 0); notesHeight = try v(.notesHeight, 0); nullifiersNext = try v(.nullifiersNext, 0)
         identityNext = try v(.identityNext, 0); zeroedNext = try v(.zeroedNext, 0); notes = try v(.notes, [])
-        identity = try c.decodeIfPresent(IdentityRecord.self, forKey: .identity)
-        claimedDays = try v(.claimedDays, []); caretakerCastAt = try v(.caretakerCastAt, 0); caretakerSplit = try v(.caretakerSplit, [:])
-        caretakerExpiresAt = try v(.caretakerExpiresAt, 0); caretakerMovedOut = try v(.caretakerMovedOut, false)
-        handle = try v(.handle, ""); handleMovedOut = try v(.handleMovedOut, false); pendingUnbonds = try v(.pendingUnbonds, [])
+        generation = Self.clampGeneration(try v(.generation, 0)); generationFloor = Self.clampGeneration(try v(.generationFloor, 0))
+        if let ids = try c.decodeIfPresent([String: IdentitySlot].self, forKey: .identities) {
+            for (k, t) in ids { if let g = Int(k), g == Self.clampGeneration(g) { identities[g] = t } }
+        } else {
+            // A state file from before generations: its one identity is generation 0.
+            identities[0] = try IdentitySlot(from: decoder)
+        }
+        claimedDays = try v(.claimedDays, []); pendingUnbonds = try v(.pendingUnbonds, [])
         nextOtagCounter = try v(.nextOtagCounter, 0); stakeNext = try v(.stakeNext, 0); stakeHeight = try v(.stakeHeight, 0)
         stakeNullifiersNext = try v(.stakeNullifiersNext, 0); stakeNotes = try v(.stakeNotes, []); denoms = try v(.denoms, [])
         closedOtagMax = try c.decodeIfPresent(UInt32.self, forKey: .closedOtagMax)
@@ -368,12 +519,7 @@ public struct PrivacyState: Codable, Sendable {
         verifiedGeneration = try c.decodeIfPresent(UInt64.self, forKey: .verifiedGeneration)
         verifiedHeight = try v(.verifiedHeight, 0)
         identityHeights = try v(.identityHeights, []); identityRowsSeen = try v(.identityRowsSeen, 0)
-        handleSetAt = try v(.handleSetAt, 0); caretakerSplitUnknown = try v(.caretakerSplitUnknown, false)
-        handleRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .handleRecordPos)
-        caretakerRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .caretakerRecordPos)
-        voidRecordHeights = try v(.voidRecordHeights, []); pendingMoves = try v(.pendingMoves, []); switchTarget = try v(.switchTarget, "")
-        moveSuggestedAt = try v(.moveSuggestedAt, 0); moveSuggestedLeaf = try v(.moveSuggestedLeaf, -1)
-        handleExpiresAt = try v(.handleExpiresAt, 0); handleExpiresFor = try v(.handleExpiresFor, "")
+        voidRecordHeights = try v(.voidRecordHeights, [])
         labelWindowSeconds = try v(.labelWindowSeconds, 0)
         carriedMarks = try v(.carriedMarks, [:])
         registrationKeepUntil = try v(.registrationKeepUntil, 0)
@@ -614,16 +760,14 @@ public final class PrivacyStore {
         s.closedOtagMax = old.closedOtagMax
         if old.chainID == chainID && old.genesis == genesis {
             s.pendingUnbonds = old.pendingUnbonds
-            s.identity = old.identity?.verified == true ? old.identity : nil
+            // Every generation's slot: registrations (verified ones), handles, splits, moves.
+            Self.keepSlots(old, &s) { $0.verified }
             s.pendingRegistration = old.pendingRegistration
             s.registrationKeepUntil = old.registrationKeepUntil
             s.stakeVotes = old.stakeVotes
             s.positionLeases = old.positionLeases
             s.labelWindowSeconds = old.labelWindowSeconds
             s.claimedDays = old.claimedDays
-            s.caretakerCastAt = old.caretakerCastAt; s.caretakerSplit = old.caretakerSplit
-            s.caretakerExpiresAt = old.caretakerExpiresAt; s.caretakerMovedOut = old.caretakerMovedOut
-            s.handle = old.handle; s.handleMovedOut = old.handleMovedOut
             Self.keepHandleState(old, &s)
             // Notes a tx in flight spends stay unspendable through the resync.
             s.carriedMarks = old.carriedMarks
@@ -632,9 +776,7 @@ public final class PrivacyStore {
         } else if old.chainID == nil {
             // Never synced: what a switch moved to this identity was
             // recorded for the chain the app follows (PrivacyWallet.recordIncoming).
-            s.caretakerCastAt = old.caretakerCastAt; s.caretakerSplit = old.caretakerSplit
-            s.caretakerExpiresAt = old.caretakerExpiresAt
-            s.handle = old.handle
+            Self.keepSlots(old, &s) { _ in false }
             Self.keepHandleState(old, &s)
         }
         state = s
@@ -645,15 +787,21 @@ public final class PrivacyStore {
     /// applied are not applied again over what the wallet did since (a resync
     /// reads them from the start), and moves in flight stay in flight.
     private static func keepHandleState(_ old: PrivacyState, _ s: inout PrivacyState) {
-        s.handleSetAt = old.handleSetAt
-        s.handleExpiresAt = old.handleExpiresAt; s.handleExpiresFor = old.handleExpiresFor
-        s.caretakerSplitUnknown = old.caretakerSplitUnknown
-        s.handleRecordPos = old.handleRecordPos; s.caretakerRecordPos = old.caretakerRecordPos
         s.voidRecordHeights = old.voidRecordHeights
-        s.pendingMoves = old.pendingMoves
-        s.switchTarget = old.switchTarget
-        s.moveSuggestedAt = old.moveSuggestedAt; s.moveSuggestedLeaf = old.moveSuggestedLeaf
         s.verifiedHeight = old.verifiedHeight
+    }
+
+    /// Every generation's slot (what each identity holds and its moves, the
+    /// records applied), the generation the wallet acts as and its floor; a
+    /// registration only where `keepIdentity`.
+    private static func keepSlots(_ old: PrivacyState, _ s: inout PrivacyState, _ keepIdentity: (IdentityRecord) -> Bool) {
+        s.generation = old.generation
+        s.generationFloor = old.generationFloor
+        for (g, t0) in old.identities {
+            var t = t0
+            if let id = t.identity, !keepIdentity(id) { t.identity = nil }
+            s.identities[g] = t
+        }
     }
 
     /// A relaunch of the same chain id under a new genesis, confirmed by the
@@ -670,7 +818,10 @@ public final class PrivacyStore {
         s.genesis = genesis
         s.nextOtagCounter = old.nextOtagCounter
         s.closedOtagMax = old.closedOtagMax
-        s.identity = old.identity
+        // The registration stays: every generation's, and which the wallet acts as.
+        s.generation = old.generation
+        s.generationFloor = old.generationFloor
+        for (g, t) in old.identities { if let id = t.identity { s.withSlot(g) { $0.identity = id } } }
         s.pendingRegistration = old.pendingRegistration
         s.pendingRegistration?.failure = nil
         s.registrationKeepUntil = old.registrationKeepUntil
