@@ -20,49 +20,38 @@ struct MoveStakeSheet: View {
     @State private var destination: String?
     @State private var amount = ""
 
+    init(source: String? = nil) {
+        _source = State(initialValue: source)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: theme.space.x16) {
                     EarthLabel("From")
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.x8) {
                         if sources.isEmpty {
                             Text("No private stake that can move now.")
                                 .font(EarthType.bodySmall)
                                 .foregroundStyle(theme.colors.textTertiary)
                         }
                         ForEach(sources, id: \.validator) { h in
-                            EarthListRow(
-                                initial: String(moniker(h.validator).prefix(1)).uppercased(),
-                                name: moniker(h.validator),
-                                subtitle: "\(Figures.balance(BigInt(h.free))) derth can move now",
-                                value: source == h.validator ? "✓" : nil,
-                                badgeBackground: theme.colors.accentTint,
-                                badgeForeground: theme.colors.accentInk,
-                                action: {
-                                    source = h.validator
-                                    if destination == h.validator { destination = nil }
-                                    amount = ""
-                                }
-                            )
-                            EarthDivider()
+                            ValidatorPickRow(validator: h.validator,
+                                             detail: "\(Figures.balance(BigInt(model.derthValue(h.free, validator: h.validator)))) ERTH can move now",
+                                             standing: nil, selected: source == h.validator, enabled: true) {
+                                if source != h.validator { amount = "" }
+                                source = h.validator
+                                if destination == h.validator { destination = nil }
+                            }
                         }
                     }
 
                     if source != nil {
                         EarthLabel("To")
-                        VStack(spacing: 0) {
+                        VStack(spacing: theme.space.x8) {
                             ForEach(destinations, id: \.self) { op in
-                                EarthListRow(
-                                    initial: String(moniker(op).prefix(1)).uppercased(),
-                                    name: moniker(op),
-                                    subtitle: commission(op),
-                                    value: destination == op ? "✓" : nil,
-                                    badgeBackground: theme.colors.accentTint,
-                                    badgeForeground: theme.colors.accentInk,
-                                    action: { destination = op }
-                                )
-                                EarthDivider()
+                                ValidatorPickRow(validator: op, detail: commission(op), standing: .active,
+                                                 selected: destination == op, enabled: true) { destination = op }
                             }
                         }
 
@@ -127,7 +116,10 @@ struct MoveStakeSheet: View {
     }
 
     private func commission(_ op: String) -> String {
-        String(format: "%.0f%% commission", (model.commission(of: op) ?? 0) * 100)
+        let c = model.commission(of: op) ?? 0
+        let commission = String(format: "%.0f%% commission", c * 100)
+        guard let rate = StakingApr.forValidator(bondedUerth: Int64(model.totalBonded.description) ?? 0, commission: c) else { return commission }
+        return commission + " · " + Figures.rate(rate) + " APR"
     }
 
     private func review() {
