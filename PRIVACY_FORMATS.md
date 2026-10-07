@@ -384,8 +384,8 @@ MsgMoveHandle and MsgMoveCaretaker carries state records:
                first 16 bytes of BE32( H(Tag("earth.statetag"), nk, Bytes(memo[0..48)), U64(g)) )  (generation g >= 1)
 
 As with the registration record, the tag names the generation the record is
-about (tried 0 to the highest known plus 8): each generation holds its own
-handle and split.
+about (tried 0 to the highest known plus 8, the lookahead N of §19): each
+generation holds its own handle and split.
 
 The tag sits at memo[48..64) and covers every byte before it. A record is
 accepted only if the magic, version and kind are known, the tag recomputes
@@ -1131,10 +1131,18 @@ witness `id_secret` (§9), so the wallet proves with that generation's secret.
   identity. Skipping a generation whose registration failed costs nothing.
   Nothing here asks the chain about an idc: it is all the wallet's own
   records and its local identity tree.
-- **Floor.** A registration the chain refuses with 1130 (the wallet's records
-  missed a used generation), or a /gas/register refusal with the same text,
-  raises the floor past its generation; the user starts the registration
-  again (a new proof, bound to the next idc).
+- **Floor.** Only a structured refusal raises the floor past the refused
+  generation: CheckTx's code 1130 with codespace `personhood`, from a node
+  reached over https, or a /gas/register 403 whose `kind` is `idc used`.
+  Text never does (a simulate's message, an http own node's answer, a gas
+  refusal without its kind: anyone on that path can write it); it only
+  prompts a sync, which moves the wallet on if one of its records names the
+  generation, and otherwise the wallet keeps it and says the refusal could
+  not be confirmed. The floor never goes past the highest generation with a
+  record or a matched leaf plus N (8, §19), so every registration is within
+  N of the one before it and a restore reaches it; a structured refusal at
+  that cap asks for a new wallet. The user starts the registration again
+  (a new proof, bound to the next idc).
 - **Re-entry** (the registration lapsed) and a **switch** (another wallet's
   next generation, or this wallet's own: "a fresh identity in this wallet")
   are both just a registration of the next generation; the chain appends the
@@ -1320,14 +1328,26 @@ switch).
   shown against that wallet's ERTH. A switch from a wallet whose phrase is
   lost finds nothing to offer: the move proof needs its secret. The switch
   screen itself moves nothing and says so.
-- **When to move.** Nothing hurries a move while the new identity stays
-  live (until the passport's next switch), and a move landing right after
-  the switch links the handle, its owner_pk and the split to the passport's
-  public registration record by timing (ORCHARD_DESIGN 6.6). The offer
-  suggests waiting a random delay (hours to days; the wallet draws one and
-  shows it) and lets the user choose: move now, or be reminded at the
-  suggested time. The wallet never sends a move on its own; a move spends a
-  fee and only the user starts it.
+- **When to move.** A move must land while the new identity stays live
+  (until the passport's next switch) and before the lease end of what it
+  moves: only a live handle or split moves, and the old identity can no
+  longer renew either. That lease end is the deadline. A move landing right
+  after the switch links the handle, its owner_pk and the split to the
+  passport's public registration record by timing (ORCHARD_DESIGN 6.6), so
+  the offer suggests waiting a random delay (6 h to 3 d after the
+  registration's block; the wallet draws it once), but never later than 3
+  days before the earliest lease end of what is still to move; with less
+  room than that it says to move now and why. The user chooses: move now,
+  or be reminded at the suggested time; the reminder names the time left
+  and grows urgent within the last 3 days, and stops at the deadline. The
+  wallet never sends a move on its own; a move spends a fee and only the
+  user starts it.
+- **Renew first.** The live identity can renew its handle and refresh its
+  split; after a switch or a lapse it cannot. So the switch screen asks to
+  renew first a handle or split whose lease ends within 30 days, and from 30
+  days before the registration's year ends the wallet reminds the user to
+  renew one whose lease ends within 30 days after it: a move after the
+  switch or renewal then has a full lease to land in.
 - **One step only.** A move goes from an identity to its immediate
   successor while that successor is live. After a further switch whatever
   is still on the older identity can never move. The switch screen warns,
@@ -1875,7 +1895,17 @@ incoming move, a MOVED_OUT one an outgoing move.
 
 **Restore of the registration.** No query names it. Each record's tag names
 its identity generation (§6), and its leaves are matched with that
-generation's idc, so a restore scans generations at no extra hashing cost:
+generation's idc, so a restore scans generations at little hashing cost
+(each value-0 record note's tag is tried for generations 0 to the highest
+known plus N = 8; N consecutive generations with no record end the scan,
+and §13's floor never leaves a gap that long). A note of ours with a
+record's magic whose tag matched none of the generations tried is
+remembered (its position and the window it was tried with); once a later
+record widens the window, the notes from the earliest such one up to the
+cursor are fetched again, checked against the local tree, and their records
+tried with the wider window (positions already applied change nothing), at
+most 4 rounds a sync, so a record of a later generation seen before the
+window reached it is not lost:
 the newest matched record is the live identity (the wallet acts as its
 generation), records whose leaves were zeroed (lapsed, switched away) still
 mark their generation used, and the next registration is the lowest
@@ -1920,10 +1950,13 @@ leaf_index, dsc_key, country, activated_at and predecessor_at: the identity
 record (passport nullifier left empty; nothing needs it), marked
 `verified`. A same-chain reset keeps only a verified identity record; a
 match at the identity's own index replaces it. A registration whose record
-note is missing (an older app) cannot be restored and must register again:
-with no record of its earlier generation the wallet first proves with
-generation 0, the chain refuses it as used (1130, before the proof, at no
-cost), and the floor moves the next attempt to generation 1 (§13).
+note is missing cannot be restored and must register again. Every
+registration on this genesis carries its record in its own tx, so that
+needs an app that never wrote one: the wallet then first proves with
+generation 0 and the chain refuses it as used (1130, before the proof, at
+no cost). Only a structured refusal moves the floor (§13): the gas service's
+kind on a first registration, or CheckTx's code over https; a simulate's
+text alone does not.
 
 ## 20. Wallet behaviour
 
