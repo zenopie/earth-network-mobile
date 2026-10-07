@@ -31,9 +31,9 @@ public enum Constants {
     /// app_name and app_version dropped), so the bytes differ from the file's.
     /// Compute it from the ceremony's genesis.json with tools/genesishash, or
     /// from any node started on it. The value below is for the chain repo's
-    /// genesis at fb8312c (file sha256 bae959be...); the ceremony replaces it.
+    /// genesis at 678c1f9 (file sha256 455d5aae...); the ceremony replaces it.
     /// Must equal Android's EARTH_GENESIS_SHA256.
-    public static let genesisSHA256 = "41feba567cd09cb807525e670096dff55f82c4b808939e8cbb2e5155286d438a"
+    public static let genesisSHA256 = "f0ad9f8d26409b22c1bdc87bb12c825edbf90c01ad88d78ef8d59de6265960b4"
     // =============================================================================
     public static let bech32Prefix = "earth"
     /// Cosmos default. Not a custom coin type — do not "fix" this to 529.
