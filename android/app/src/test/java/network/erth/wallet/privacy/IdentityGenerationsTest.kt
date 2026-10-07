@@ -264,6 +264,28 @@ class IdentityGenerationsTest : WalletTest() {
     }
 
     /**
+     * A registration a node only said committed (its leaf never matched:
+     * a forged answer from an http own node, retried) is not a record: it
+     * keeps its own idc from reuse, but cannot advance the next generation
+     * past a restore's reach.
+     */
+    @Test
+    fun anUnmatchedRegistrationDoesNotOutrunARestore() {
+        val s = PrivacyState()
+        repeat(3 * WalletSync.GENERATION_LOOKAHEAD) {
+            s.pendingRegistration = network.erth.wallet.privacy.sync.PendingRegistration(
+                txHash = "h$it", leafIndex = 5L, dscKey = Fr.of(1), passportNullifier = "n", publicSignals = emptyList(),
+                activatedAt = 1L, countryHint = "", failure = "leaf 5 does not match this registration", generation = s.nextGeneration(),
+            )
+        }
+        assertEquals(-1, s.usedThroughRecorded())
+        assertEquals(WalletSync.GENERATION_LOOKAHEAD - 1, s.nextGeneration())
+        // One retry's idc is still not reused while it is below the bound.
+        s.pendingRegistration = s.pendingRegistration!!.copy(generation = 2)
+        assertEquals(3, s.nextGeneration())
+    }
+
+    /**
      * A record past the window when its note was passed is tried again
      * once a later record widens the window: the restore rescans the notes
      * it passed from the earliest unmatched one.

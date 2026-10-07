@@ -348,6 +348,23 @@ final class IdentityGenerationsTests: PrivacyTestCase {
         XCTAssertEqual("alice", a.snapshot.handle)
     }
 
+    /// A registration a node only said committed (its leaf never matched: a
+    /// forged answer from an http own node, retried) is not a record: it keeps
+    /// its own idc from reuse, but cannot advance the next generation past a
+    /// restore's reach. As Android.
+    func testAnUnmatchedRegistrationDoesNotOutrunARestore() {
+        var s = PrivacyState()
+        for i in 0 ..< 3 * WalletSync.generationLookahead {
+            s.pendingRegistration = PendingRegistration(txHash: "h\(i)", leafIndex: 5, dscKey: Fr(UInt64(1)), passportNullifier: "n", publicSignals: [],
+                                                        activatedAt: 1, countryHint: "", failure: "leaf 5 does not match this registration",
+                                                        generation: s.nextGeneration())
+        }
+        XCTAssertEqual(-1, s.usedThroughRecorded())
+        XCTAssertEqual(WalletSync.generationLookahead - 1, s.nextGeneration())
+        s.pendingRegistration?.generation = 2
+        XCTAssertEqual(3, s.nextGeneration())
+    }
+
     /// Slots round-trip; a state file from before generations reads as generation 0.
     func testStoreKeepsEveryGenerationsSlot() throws {
         var s = PrivacyState()

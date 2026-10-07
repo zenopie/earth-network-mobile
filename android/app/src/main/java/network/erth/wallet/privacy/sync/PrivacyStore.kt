@@ -340,22 +340,39 @@ class PrivacyState {
      * The highest generation whose idc may have been registered, -1 for
      * none: one with a registration record (a registration of it reached a
      * block, whether or not it succeeded: the record lands with the fee),
-     * a registration matched or committed, and every one below the floor.
-     * Skipping a generation whose registration failed costs nothing.
+     * a registration matched, one a node said committed (its leaf not yet
+     * matched), and every one below the floor. Skipping a generation whose
+     * registration failed costs nothing.
      */
-    fun usedThrough(): Int = maxOf(generationFloor - 1, usedThroughRecorded())
+    fun usedThrough(): Int = maxOf(generationFloor - 1, usedThroughRecorded(), unmatchedThrough())
 
     /**
      * The highest generation with a registration on chain to show for it (a
-     * record, a matched leaf, a committed tx), -1 for none: what a restore
-     * can find again. The floor is not counted.
+     * record, a matched leaf), -1 for none: what a restore can find again.
+     * The floor is not counted, nor a pending registration whose leaf has
+     * not matched: a committed tx is only the node's word, and from an http
+     * own node anyone's on its network.
      */
     fun usedThroughRecorded(): Int {
         var m = -1
         regRecords.forEach { m = maxOf(m, it.generation) }
         slots.forEach { (g, slot) -> if (slot.identity != null) m = maxOf(m, g) }
-        pendingRegistration?.let { if (it.leafIndex != null) m = maxOf(m, it.generation) }
         return m
+    }
+
+    /**
+     * The generation of a pending registration a node said committed whose
+     * leaf has not matched (a matched one is cleared into its slot), -1 for
+     * none. Its idc is not reused, but it advances the next generation no
+     * further than GENERATION_LOOKAHEAD past the highest recorded one: a
+     * forged "committed" repeated across retries cannot push the live
+     * identity past a restore's reach. At that bound the generation is
+     * tried again; if it is used after all, CheckTx refuses it (1130) at no
+     * cost.
+     */
+    fun unmatchedThrough(): Int {
+        val p = pendingRegistration?.takeIf { it.leafIndex != null } ?: return -1
+        return minOf(p.generation, usedThroughRecorded() + WalletSync.GENERATION_LOOKAHEAD - 1)
     }
 
     /**
