@@ -19,6 +19,10 @@ struct WalletScreen: View {
     @State private var registering = false
     @State private var moving = false
     @State private var moveDirection = MoveSheet.Direction.shield
+    /// The coin whose sheet is open, and the move it asked for: opened once
+    /// its sheet is gone, as one sheet cannot present over another closing.
+    @State private var coin: CoinPick?
+    @State private var pendingMove: MoveSheet.Direction?
     /// Which list is under the cards. The third action toggles it.
     @State private var panel = Panel.activity
     @State private var handleOpen = false
@@ -26,6 +30,11 @@ struct WalletScreen: View {
     @State private var networkOpen = false
 
     enum Panel { case activity, portfolio }
+
+    struct CoinPick: Identifiable {
+        let denom: String
+        var id: String { denom }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,16 +63,21 @@ struct WalletScreen: View {
             .offset(y: 8)
             .zIndex(1)
             Spacer().frame(height: 2)
-            HomePanel(panel: panel) { direction in
-                moveDirection = direction
-                moving = true
-            }
+            HomePanel(panel: panel) { coin = CoinPick(denom: $0) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(theme.colors.bgPrimary)
         .sheet(isPresented: $sending) { SendSheet().earthThemed() }
         .sheet(isPresented: $receiving) { ReceiveSheet().earthThemed() }
         .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
+        .sheet(item: $coin, onDismiss: {
+            guard let d = pendingMove else { return }
+            pendingMove = nil
+            moveDirection = d
+            moving = true
+        }) { pick in
+            CoinSheet(denom: pick.denom) { pendingMove = $0 }.earthThemed()
+        }
         .sheet(isPresented: $moving) { MoveSheet(direction: moveDirection).earthThemed() }
         .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
         .sheet(isPresented: $identityOpen) { IdentityScreen().earthThemed() }
@@ -142,75 +156,6 @@ struct BalanceWidget: View {
                     .padding(.horizontal, 24)
             }
         }
-    }
-}
-
-/// Where the ERTH is, and the way across: private (shielded notes,
-/// invisible on chain, what private fees come from) and public (the account,
-/// what Keplr, exchanges and validator actions see).
-///
-/// In Portfolio rather than under the balance: the headline stays the one
-/// total, and the split is here with the rest of what is held. Shield and
-/// Unshield sit directly under the two lines they move between. ANML is
-/// always private; private stake is held, not spendable, and is valued at its
-/// validator's live rate.
-struct BalanceSplit: View {
-    @Environment(\.earth) private var theme
-    @Environment(AppModel.self) private var model
-
-    let onMove: (MoveSheet.Direction) -> Void
-
-    var body: some View {
-        VStack(spacing: 6) {
-            line("Private", locked: true, Figures.balance(BigInt(model.shieldedErth)) + " ERTH")
-            line("Public", locked: false, Figures.balance(model.balance(.erth)) + " ERTH")
-            if model.privateStakeValue > 0 {
-                line("Staked (private)", locked: true, Figures.balance(BigInt(model.privateStakeValue)) + " ERTH")
-            }
-            // ANML exists only shielded.
-            line("ANML", locked: true, Figures.balance(model.balance(.anml) + BigInt(model.shielded["uanml"] ?? 0)) + " ANML")
-
-            HStack(spacing: 8) {
-                moveButton("Shield", "lock.fill", .shield)
-                moveButton("Unshield", "lock.open.fill", .unshield)
-            }
-            .padding(.top, 4)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(theme.colors.bgSecondary, in: .rect(cornerRadius: theme.space.radiusLg))
-        .padding(.horizontal, 24)
-        .padding(.bottom, 8)
-    }
-
-    private func line(_ label: String, locked: Bool, _ value: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: locked ? "lock.fill" : "globe")
-                .font(.system(size: 11))
-                .foregroundStyle(locked ? theme.colors.accentInk : theme.colors.textTertiary)
-                .frame(width: 14)
-                .accessibilityLabel(locked ? "private" : "public")
-            Text(label)
-                .font(EarthType.bodySmall)
-                .foregroundStyle(theme.colors.textSecondary)
-            Spacer(minLength: 8)
-            Text(model.balancesVisible ? value : "••••")
-                .font(EarthType.bodySmall).monospacedDigit()
-                .foregroundStyle(theme.colors.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-    }
-
-    private func moveButton(_ title: String, _ symbol: String, _ direction: MoveSheet.Direction) -> some View {
-        Button { onMove(direction) } label: {
-            Label(title, systemImage: symbol)
-                .font(EarthType.bodySmall).fontWeight(.semibold)
-                .foregroundStyle(theme.colors.secondaryButtonFg)
-                .frame(maxWidth: .infinity, minHeight: 36)
-                .background(theme.colors.secondaryButtonBg, in: .rect(cornerRadius: theme.space.radiusMd))
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -394,7 +339,8 @@ struct HomePanel: View {
     @Environment(AppModel.self) private var model
 
     let panel: WalletScreen.Panel
-    let onMove: (MoveSheet.Direction) -> Void
+    /// A coin row was tapped: its denom.
+    let onCoin: (String) -> Void
 
     var body: some View {
         ScrollView {
@@ -409,7 +355,6 @@ struct HomePanel: View {
                 .padding(.vertical, 8)
 
                 if panel == .portfolio {
-                    BalanceSplit(onMove: onMove)
                     portfolio
                 } else if let activity = model.activity {
                     if activity.isEmpty {
@@ -437,27 +382,29 @@ struct HomePanel: View {
         .scrollContentBackground(.hidden)
     }
 
-    /// What is held beyond the spendable balance.
-    ///
-    /// ERTH and ANML are the widget directly above, and their private/public
-    /// split is BalanceSplit just over this, so neither is repeated as a row —
-    /// but *staked* ERTH is not that balance. It is held and not spendable, which is exactly the distinction
-    /// the balance above cannot make, and a wallet that shows only the
-    /// spendable figure looks to its owner like it lost the rest.
+    /// Every coin, each with its private and public amount (a tap opens its
+    /// Shield / Unshield), then what is held but not spendable: stake,
+    /// positions, rewards, unbonding. Those are named apart because a wallet
+    /// that shows only the spendable figure looks to its owner like it lost
+    /// the rest.
     @ViewBuilder
     private var portfolio: some View {
-        let others = model.holdings.filter { $0.token != .erth && $0.token != .anml && $0.amount > 0 }
+        ForEach(ShieldMove.coins(public: model.balances, shielded: model.shielded), id: \.denom) { coin in
+            CoinRow(coin: coin) { onCoin(coin.denom) }
+        }
         let hasPosition = model.totalStaked > 0 || model.rewards > 0 || model.unbondingTotal > 0 ||
             model.privateStakeTotal > 0 || !model.pendingUnbonds.isEmpty
 
-        if others.isEmpty, !hasPosition {
-            Text("Nothing else yet. Staked ERTH, rewards, and any token other than ERTH and ANML appear here — including your share of a pool you provide liquidity to.")
-                .font(EarthType.bodySmall)
-                .foregroundStyle(theme.colors.textTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 16)
-        } else {
+        if hasPosition {
+            HStack {
+                Text("Positions")
+                    .font(EarthType.bodySmall).fontWeight(.semibold)
+                    .foregroundStyle(theme.colors.textSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 16)
+            .padding(.bottom, 4)
             if model.totalStaked > 0 {
                 positionRow("Staked", "Delegated · earning", "shield.fill",
                             Figures.whole(model.totalStaked) + " ERTH")
@@ -493,10 +440,6 @@ struct HomePanel: View {
                 // it would look like it was still working.
                 positionRow("Unbonding", "Returns when the period ends", "clock.arrow.circlepath",
                             Figures.balance(model.unbondingTotal) + " ERTH")
-            }
-            ForEach(others, id: \.token.denom) { row in
-                positionRow(row.token.symbol, row.token.denom, "circle.hexagongrid.fill",
-                            Figures.balance(row.amount, decimals: row.token.decimals))
             }
         }
     }
