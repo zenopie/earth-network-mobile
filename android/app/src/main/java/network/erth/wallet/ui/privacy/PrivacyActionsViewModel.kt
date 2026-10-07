@@ -137,6 +137,8 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
             val caretakerExp = runCatching { w.caretakerExpiresAt() }.getOrDefault(0L)
             val positions = mine ?: runCatching { w.positions().map { it.first } }.getOrNull()
             val groundworks = positions?.let { runCatching { w.groundworksLeases(it) }.getOrNull() }.orEmpty()
+            // The move reminder's deadline, read here too, not only when Identity opens.
+            runCatching { PrivacySession.refreshMoveDeadline(ctx) }
             val reminders = Reminders.due(
                 Reminders.Inputs(
                     now = now,

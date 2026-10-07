@@ -170,6 +170,13 @@ object PrivacySession {
         val handleExpiresAt: Long = 0,
     ) {
         val anything: Boolean get() = handle.isNotEmpty() || voteLive || inFlight.isNotEmpty()
+
+        /**
+         * Something the old identity can still move now: a live handle or
+         * vote not already being moved. What has lapsed or is on its way
+         * needs no reminder.
+         */
+        val movable: Boolean get() = handleToMove || voteToMove
         val withinWallet: Boolean get() = fromIndex == SELF
 
         private val handleToMove: Boolean get() = handleLive && inFlight.none { it.kind == network.erth.wallet.privacy.sync.PendingMove.HANDLE && !it.confirmed }
@@ -209,7 +216,7 @@ object PrivacySession {
      * wallet's own tree: nothing asked names it), syncs that wallet, and says
      * what it holds. Blocking (a sync).
      */
-    fun moveOffer(context: Context): MoveOffer? {
+    fun moveOffer(context: Context, clearIfNone: Boolean = true): MoveOffer? {
         val app = context.applicationContext
         val w = wallet(app)
         val id = w.store.state.identity?.takeIf { it.verified } ?: return null
@@ -233,7 +240,7 @@ object PrivacySession {
                 handleExpiresAt = handleExp,
             )
             // Capped before what it holds stops being movable.
-            return if (offer.anything) offer.copy(suggestedAt = w.suggestedMoveAt(offer.deadline)) else offer.also { w.clearMoveSuggestion() }
+            return suggest(w, offer)
         }
         val selected = SecureWalletManager.getSelectedWalletIndex()
         for (info in SecureWalletManager.listWallets()) {
@@ -258,11 +265,47 @@ object PrivacySession {
             )
             // Something to bring: the suggested time (drawn once, capped before
             // what it holds stops being movable). Nothing: its reminder ends.
-            return if (offer.anything) offer.copy(suggestedAt = w.suggestedMoveAt(offer.deadline)) else offer.also { w.clearMoveSuggestion() }
+            return suggest(w, offer)
         }
-        // No predecessor on this phone (a switch from a lost phrase): nothing can move here.
-        w.clearMoveSuggestion()
+        // No predecessor on this phone (a switch from a lost phrase): nothing
+        // can move here. Only Identity decides that: the reminder's refresh
+        // may have failed to open another wallet for a passing reason.
+        if (clearIfNone) w.clearMoveSuggestion()
         return null
+    }
+
+    /**
+     * [offer] with the suggested move time, which also keeps its deadline for
+     * the reminder. Nothing left to move (all of it moved, on its way, or
+     * lapsed): the suggestion and its reminder end.
+     */
+    private fun suggest(w: PrivacyWallet, offer: MoveOffer): MoveOffer =
+        if (offer.movable) offer.copy(suggestedAt = w.suggestedMoveAt(offer.deadline)) else offer.also { w.clearMoveSuggestion() }
+
+    /** When [refreshMoveDeadline] last read each drawn suggestion's offer (in memory: once per launch at least). */
+    private val deadlineReadAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** How often the reminder pipeline re-reads the move offer while a suggestion stands. */
+    private const val DEADLINE_REFRESH_SECONDS = 10 * 60L
+
+    /**
+     * Keeps the move deadline current for the Home reminder, which reads it
+     * from the store: without this it is learned only when Identity or the
+     * switch screen opens, so the reminder could come at the uncapped time,
+     * without naming the deadline, and after the lease ended. Runs
+     * [moveOffer] while a drawn suggestion stands, at most every
+     * [DEADLINE_REFRESH_SECONDS]. Blocking (it may sync the predecessor's wallet).
+     */
+    fun refreshMoveDeadline(context: Context) {
+        val w = wallet(context.applicationContext)
+        val st = w.store.state
+        if (st.moveSuggestedAt <= 0) return
+        val key = storeId(w.keys) + "/" + st.moveSuggestedLeaf
+        val now = System.currentTimeMillis() / 1000
+        val last = deadlineReadAt[key]
+        if (last != null && now - last in 0 until DEADLINE_REFRESH_SECONDS) return
+        deadlineReadAt[key] = now
+        moveOffer(context, clearIfNone = false)
     }
 
     /** This (selected) wallet's identity as the successor a move from another wallet names. */

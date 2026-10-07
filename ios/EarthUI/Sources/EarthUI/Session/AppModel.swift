@@ -189,6 +189,9 @@ public final class AppModel {
     /// the second on screen.
     private var unlocking = false
 
+    /// When `refreshMoveDeadline` last read each drawn suggestion's offer (in memory: once per launch at least).
+    @ObservationIgnored private var deadlineReadAt: [String: Int64] = [:]
+
     /// When the scene last went to the background, if it is there now.
     ///
     /// A continuous clock rather than `Date`: wall time can be wound back in
@@ -967,6 +970,8 @@ public final class AppModel {
         let registrationEndsAt = live ? snap.identity.map { Handles.satAdd(Int64(clamping: $0.activatedAt), registrationValiditySeconds) } ?? 0 : 0
         var handleExp = handleEntry?.expiresAt ?? 0
         if handleEntry == nil { handleExp = await w.handleExpiresAt() }
+        // The move reminder's deadline, read here too, not only when Identity opens.
+        await refreshMoveDeadline(w)
         reminders = Reminders.due(Reminders.Inputs(
             now: Int64(Date().timeIntervalSince1970), identityLive: live, claimOpensAt: w.claimOpensAt(),
             claimedToday: w.claimedToday(), caretakerExpiresAt: caretakerExpiresAt, handle: snap.handle, handleEntry: handleEntry,
@@ -1000,6 +1005,10 @@ public final class AppModel {
         /// Its handle's lease end (0: unknown or none).
         public var handleExpiresAt: Int64 = 0
         public var anything: Bool { !handle.isEmpty || voteLive || !inFlight.isEmpty }
+        /// Something the old identity can still move now: a live handle or
+        /// vote not already being moved. What has lapsed or is on its way
+        /// needs no reminder. As Android.
+        public var movable: Bool { handleToMove || voteToMove }
         public var withinWallet: Bool { fromIndex == AppModel.selfIndex }
 
         private var handleToMove: Bool { handleLive && !inFlight.contains { $0.kind == PendingMove.handleKind && !$0.confirmed } }
@@ -1033,7 +1042,7 @@ public final class AppModel {
     /// says what it holds. Nil when this identity is not live or no wallet on
     /// the phone is its predecessor (a switch from a lost phrase: nothing can
     /// move, as the move proof needs both identity secrets).
-    func moveOffer() async -> MoveOffer? {
+    func moveOffer(clearIfNone: Bool = true) async -> MoveOffer? {
         guard let w = privacy, let id = w.snapshot.identity, id.verified, w.snapshot.identityStatus == .live else { return nil }
         let now = Int64(Date().timeIntervalSince1970)
         // This wallet's own earlier identity first (a re-entry after a lapse, or
@@ -1051,8 +1060,7 @@ public final class AppModel {
             offer.fromGeneration = k
             offer.handleExpiresAt = handleExp
             // Capped before what it holds stops being movable.
-            if offer.anything { offer.suggestedAt = await w.suggestedMoveAt(deadline: offer.deadline) } else { await w.clearMoveSuggestion() }
-            return offer
+            return await suggest(w, offer)
         }
         for index in wallets.indices where index != selected {
             // The identity that wallet acts as: the one the passport registered before this.
@@ -1069,12 +1077,41 @@ public final class AppModel {
             offer.handleExpiresAt = handleExp
             // Something to bring: the suggested time (drawn once, capped before
             // what it holds stops being movable). Nothing: its reminder ends.
-            if offer.anything { offer.suggestedAt = await w.suggestedMoveAt(deadline: offer.deadline) } else { await w.clearMoveSuggestion() }
-            return offer
+            return await suggest(w, offer)
         }
-        // No predecessor on this phone (a switch from a lost phrase): nothing can move here.
-        await w.clearMoveSuggestion()
+        // No predecessor on this phone (a switch from a lost phrase): nothing
+        // can move here. Only Identity decides that: the reminder's refresh
+        // may have failed to open another wallet for a passing reason.
+        if clearIfNone { await w.clearMoveSuggestion() }
         return nil
+    }
+
+    /// `offer` with the suggested move time, which also keeps its deadline
+    /// for the reminder. Nothing left to move (all of it moved, on its way,
+    /// or lapsed): the suggestion and its reminder end. As Android.
+    private func suggest(_ w: PrivacyWallet, _ offer: MoveOffer) async -> MoveOffer {
+        var offer = offer
+        if offer.movable { offer.suggestedAt = await w.suggestedMoveAt(deadline: offer.deadline) } else { await w.clearMoveSuggestion() }
+        return offer
+    }
+
+    /// How often the reminder pipeline re-reads the move offer while a suggestion stands.
+    static let deadlineRefreshSeconds: Int64 = 10 * 60
+
+    /// Keeps the move deadline current for the Home reminder, which reads it
+    /// from the store: without this it is learned only when Identity or the
+    /// switch screen opens, so the reminder could come at the uncapped time,
+    /// without naming the deadline, and after the lease ended. Runs
+    /// `moveOffer` while a drawn suggestion stands, at most every
+    /// `deadlineRefreshSeconds` (it may sync the predecessor's wallet). As Android.
+    private func refreshMoveDeadline(_ w: PrivacyWallet) async {
+        let drawn = w.snapshot.moveSuggestedAt
+        guard drawn > 0 else { return }
+        let key = w.address.encode() + "/" + String(drawn)
+        let now = Int64(Date().timeIntervalSince1970)
+        if let last = deadlineReadAt[key], (0 ..< Self.deadlineRefreshSeconds).contains(now - last) { return }
+        deadlineReadAt[key] = now
+        _ = await moveOffer(clearIfNone: false)
     }
 
     /// The private side of the wallet at `index` (the identity this one replaced): it builds and pays for the moves.

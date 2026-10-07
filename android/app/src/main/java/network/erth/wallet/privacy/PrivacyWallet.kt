@@ -1353,7 +1353,7 @@ class PrivacyWallet(
         return cappedMoveAt(at, s.moveDeadline).coerceAtLeast(1).takeIf { it <= now() } ?: 0
     }
 
-    /** The move's deadline as Identity last read it (0: none known). */
+    /** The move's deadline as last read (Identity, the switch screen, or the reminder's refresh; 0: none known). */
     fun moveDeadline(): Long = store.state.moveDeadline
 
     /** Marks a confirmed move recorded in its target (a retried [MoveRecorder.record] succeeded). */

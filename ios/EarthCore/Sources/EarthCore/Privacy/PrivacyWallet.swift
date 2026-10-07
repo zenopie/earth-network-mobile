@@ -1520,7 +1520,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return at <= now() ? at : 0
     }
 
-    /// The move's deadline as Identity last read it (0: none known).
+    /// The move's deadline as last read (Identity, the switch screen, or the reminder's refresh; 0: none known).
     public func moveDeadline() -> Int64 { snapshot.moveDeadline }
 
     /// Marks a confirmed move recorded in its target (a retried `MoveRecorder.record` succeeded).
