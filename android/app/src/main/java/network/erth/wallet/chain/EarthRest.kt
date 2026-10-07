@@ -28,7 +28,10 @@ object EarthRest {
     fun getAtEcho(path: String, height: Long): Triple<Int, String, Long?> {
         var echo: Long? = null
         val (code, body) = getFrom(NodeConfig.current.lcd, path, height) { conn ->
-            echo = conn.getHeaderField("x-cosmos-block-height")?.trim()?.toLongOrNull()
+            // The SDK's gateway sends gRPC response metadata with the
+            // grpc-gateway prefix; accept the bare name too.
+            echo = (conn.getHeaderField("grpc-metadata-x-cosmos-block-height")
+                ?: conn.getHeaderField("x-cosmos-block-height"))?.trim()?.toLongOrNull()
         }
         return Triple(code, body, echo)
     }

@@ -857,7 +857,9 @@ class WalletSync(
             val t = read(height)
             val localRoot = if (local.size == 0L) null else local.root()
             when {
-                t.size == local.size && (t.root == localRoot || (local.size == 0L && t.root == null)) -> {}
+                // Two empty trees agree whatever root the chain names for
+                // its empty tree: an empty tree has exactly one root.
+                t.size == local.size && (t.root == localRoot || local.size == 0L) -> {}
                 t.pinned -> mismatch = "the chain's $name tree (${t.size}) at height $height differs from the indexer's (${local.size})"
                 else -> problems.add("unverified: the $name tree could not be read at the indexer's height $height")
             }

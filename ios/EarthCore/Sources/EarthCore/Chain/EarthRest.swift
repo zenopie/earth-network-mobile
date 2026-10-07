@@ -146,7 +146,10 @@ public struct EarthRest: Sendable {
         let (data, status, resp) = try await Self.boundedResponse(session, r)
         guard (200 ... 299).contains(status) else { throw Error.http(status: status, body: String(decoding: data, as: UTF8.self)) }
         let object = try Self.parseJSON(data)
-        let echo = (resp?.value(forHTTPHeaderField: "x-cosmos-block-height")).flatMap { UInt64($0.trimmingCharacters(in: .whitespaces)) }
+        // The SDK's gateway sends gRPC response metadata with the
+        // grpc-gateway prefix; accept the bare name too.
+        let echo = (resp?.value(forHTTPHeaderField: "grpc-metadata-x-cosmos-block-height")
+            ?? resp?.value(forHTTPHeaderField: "x-cosmos-block-height")).flatMap { UInt64($0.trimmingCharacters(in: .whitespaces)) }
         return (JSON(object), echo)
     }
 

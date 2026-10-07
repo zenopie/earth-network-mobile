@@ -829,7 +829,9 @@ public final class WalletSync {
             let height: UInt64? = (r?.height).flatMap { $0 > 0 ? $0 : nil } ?? (roots.syncedHeight > 0 ? roots.syncedHeight : nil)
             let t = try await read(height)
             let localRoot: Fr? = local.size == 0 ? nil : local.root()
-            if t.size == local.size && (t.root == localRoot || (local.size == 0 && t.root == nil)) {
+            // Two empty trees agree whatever root the chain names for its
+            // empty tree: an empty tree has exactly one root.
+            if t.size == local.size && (t.root == localRoot || local.size == 0) {
                 return
             } else if t.pinned {
                 mismatch = "the chain's \(name) tree (\(t.size)) at height \(height.map(String.init) ?? "latest") differs from the indexer's (\(local.size))"
