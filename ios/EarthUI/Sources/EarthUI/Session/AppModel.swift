@@ -553,6 +553,7 @@ public final class AppModel {
         // And the activity list's record of what each wallet sent.
         for w in wallets { SentTxLog.standard.clear(w.address) }
         if !address.isEmpty { SentTxLog.standard.clear(address) }
+        Explorer.forgetLookups()
         store.delete()
         sessionPin = nil
         PrivacySession.setDataKey(nil)

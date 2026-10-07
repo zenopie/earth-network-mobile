@@ -121,17 +121,127 @@ public extension EarthClient {
     /// These transactions, newest first: each looked up by hash (a point
     /// read in the node's index). A hash the node does not know (not yet
     /// indexed, or dropped from the mempool) is left out.
+    ///
+    /// Gentle on the node (round-6 R6-E-7): a tx found in a block never
+    /// changes, so it is kept in memory and not asked for again; at most
+    /// ``Explorer/lookupConcurrency`` lookups are in flight; and a lookup the
+    /// node could not answer (busy, rate-limited, unreachable) is retried
+    /// with a backoff rather than taken for "no such tx".
     func transactions(hashes: [String]) async -> [Explorer.Tx] {
-        await withTaskGroup(of: Explorer.Tx?.self) { group in
-            for hash in hashes where SentTxLog.isHash(hash) {
-                group.addTask {
-                    guard let json = try? await rest.get("/cosmos/tx/v1beta1/txs/\(hash)") else { return nil }
-                    return Explorer.tx(lookup: json)
+        let rest = self.rest
+        return await Explorer.lookupAll(hashes, fetch: { hash in
+            do {
+                return Explorer.lookup(answer: try await rest.get("/cosmos/tx/v1beta1/txs/\(hash)"))
+            } catch {
+                return Explorer.lookup(error: error)
+            }
+        }, sleep: { seconds in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        })
+    }
+}
+
+public extension Explorer {
+    /// What one by-hash lookup said.
+    enum Lookup: Sendable {
+        case found(Tx)
+        /// The node answered: it has no such tx (yet).
+        case notFound
+        /// The node could not be asked, or did not answer: ask again.
+        case unavailable
+    }
+
+    static let lookupConcurrency = 4
+    static let lookupAttempts = 3
+    static let lookupBackoff: Double = 1
+
+    /// Drops the remembered lookups (the wallets were forgotten).
+    static func forgetLookups() { found.removeAll() }
+
+    /// A 2xx answer as a lookup result.
+    static func lookup(answer json: JSON) -> Lookup {
+        tx(lookup: json).map(Lookup.found) ?? .notFound
+    }
+
+    /// A failed request as a lookup result. 404 is the node's "no such tx"
+    /// (the gateway's NotFound); 400 a hash it will never know. Anything
+    /// else (a busy edge's 503, Cloudflare's 429, a 5xx, a timeout, no
+    /// connection, a body that is not JSON) says nothing about the tx.
+    static func lookup(error: Swift.Error) -> Lookup {
+        if case let EarthRest.Error.http(status, _) = error, status == 404 || status == 400 {
+            return .notFound
+        }
+        return .unavailable
+    }
+
+    /// The lookups behind ``EarthClient/transactions(hashes:)``, with the
+    /// request and the wait passed in (tests).
+    static func lookupAll(
+        _ hashes: [String],
+        fetch: @escaping @Sendable (String) async -> Lookup,
+        sleep: @escaping @Sendable (Double) async -> Void
+    ) async -> [Tx] {
+        var seen = Set<String>()
+        let wanted = hashes.filter(SentTxLog.isHash).map { $0.uppercased() }.filter { seen.insert($0).inserted }
+        var out: [Tx] = []
+        var ask: [String] = []
+        for hash in wanted {
+            if let tx = found.get(hash) { out.append(tx) } else { ask.append(hash) }
+        }
+        let one: @Sendable (String) async -> Tx? = { hash in
+            for attempt in 1 ... lookupAttempts {
+                switch await fetch(hash) {
+                case let .found(tx):
+                    if tx.height > 0 { found.set(hash, tx) }
+                    return tx
+                case .notFound:
+                    return nil
+                case .unavailable:
+                    if attempt < lookupAttempts { await sleep(lookupBackoff * Double(1 << (attempt - 1))) }
                 }
             }
-            var out: [Explorer.Tx] = []
-            for await tx in group { if let tx { out.append(tx) } }
-            return out.sorted { $0.height > $1.height }
+            return nil
+        }
+        await withTaskGroup(of: Tx?.self) { group in
+            var next = ask.makeIterator()
+            for _ in 0 ..< lookupConcurrency {
+                guard let hash = next.next() else { break }
+                group.addTask { await one(hash) }
+            }
+            while let result = await group.next() {
+                if let result { out.append(result) }
+                if let hash = next.next() { group.addTask { await one(hash) } }
+            }
+        }
+        return out.sorted { $0.height > $1.height }
+    }
+
+    /// Txs found in a block, by upper-case hash: they never change.
+    internal static let found = FoundTxs(limit: 512)
+
+    internal final class FoundTxs: @unchecked Sendable {
+        private var byHash: [String: Tx] = [:]
+        private var order: [String] = []
+        private let limit: Int
+        private let lock = NSLock()
+
+        init(limit: Int) { self.limit = limit }
+
+        func get(_ hash: String) -> Tx? {
+            lock.lock(); defer { lock.unlock() }
+            return byHash[hash]
+        }
+
+        func set(_ hash: String, _ tx: Tx) {
+            lock.lock(); defer { lock.unlock() }
+            if byHash.updateValue(tx, forKey: hash) == nil { order.append(hash) }
+            while order.count > limit { byHash.removeValue(forKey: order.removeFirst()) }
+        }
+
+        func removeAll() {
+            lock.lock(); defer { lock.unlock() }
+            byHash = [:]
+            order = []
         }
     }
 }
