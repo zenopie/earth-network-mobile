@@ -2,6 +2,8 @@ package network.erth.wallet.privacy
 
 import android.content.Context
 import network.erth.wallet.Constants
+import network.erth.wallet.chain.Explorer
+import network.erth.wallet.chain.SentTxLog
 import network.erth.wallet.privacy.chain.PrivacyQueries
 import network.erth.wallet.privacy.chain.RestPrivateChain
 import network.erth.wallet.privacy.keys.PrivacyKeys
@@ -85,19 +87,23 @@ object PrivacySession {
 
     /**
      * Deletes the selected wallet's private data from the phone
-     * (PrivacyStore.delete, zeroed then unlinked). The session lets go of the
+     * (PrivacyStore.delete, zeroed then unlinked), and the activity list's
+     * record of what it sent (SentTxLog, R6-E-8). The session lets go of the
      * wallet first; nothing on chain
      * changes, and the next sync rebuilds everything from the mnemonic.
      */
     fun forgetPrivateData(context: Context) {
         val app = context.applicationContext
         val keys = SecureWalletManager.executeWithMnemonic(app) { PrivacyKeys.fromMnemonic(it) }
+        val address = SecureWalletManager.getWalletAddress(app).orEmpty()
         synchronized(this) {
             clear()
             wallets.remove(storeId(keys))
             live.remove(storeId(keys))
             PrivacyStore.delete(app.filesDir, storeId(keys))
         }
+        SentTxLog.clear(app, address)
+        Explorer.forgetLookups()
     }
 
     /**

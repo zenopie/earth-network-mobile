@@ -52,4 +52,16 @@ object SentTxLog {
     @Synchronized
     fun hashes(context: Context, address: String): List<String> =
         decode(prefs(context).getString(address, null))
+
+    /**
+     * Forgets an address's log, with the wallet's other per-address data
+     * ("forget private data"): the hashes are public, but a phone that keeps
+     * them still says which address was used on it and what it sent. iOS
+     * does the same on forget.
+     */
+    @Synchronized
+    fun clear(context: Context, address: String) {
+        if (address.isEmpty()) return
+        prefs(context).edit().remove(address).commit()
+    }
 }
