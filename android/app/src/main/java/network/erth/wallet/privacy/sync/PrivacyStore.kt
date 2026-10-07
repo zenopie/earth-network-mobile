@@ -480,6 +480,8 @@ class PrivacyState {
     val carriedMarks: MutableMap<String, CarriedMark> = HashMap()
     /** Every denom seen in a public amount: resolves the asset ids ciphertexts carry. */
     val denoms: MutableSet<String> = sortedSetOf()
+    /** The private activity list's own data (PrivateActivity): what this wallet sent, and what it expects minted to it. */
+    var activity: network.erth.wallet.privacy.ActivityLog = network.erth.wallet.privacy.ActivityLog()
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("chain_id", chainId)
@@ -534,6 +536,7 @@ class PrivacyState {
         put("label_window_seconds", labelWindowSeconds)
         put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
         put("denoms", JSONArray(denoms.toList()))
+        put("activity", activity.toJson())
         put("carried_marks", JSONArray().apply {
             carriedMarks.forEach { (nf, m) ->
                 put(JSONObject().put("nf", nf).put("at", m.at).put("until", m.until ?: JSONObject.NULL).put("tx", m.tx ?: JSONObject.NULL))
@@ -609,6 +612,7 @@ class PrivacyState {
             labelWindowSeconds = j.optLong("label_window_seconds")
             j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
             j.optJSONArray("denoms")?.let { a -> for (i in 0 until a.length()) denoms.add(a.getString(i)) }
+            activity = network.erth.wallet.privacy.ActivityLog.fromJson(j.optJSONObject("activity"))
             j.optJSONArray("carried_marks")?.let { a ->
                 for (i in 0 until a.length()) a.getJSONObject(i).let {
                     carriedMarks[it.getString("nf")] = CarriedMark(it.getLong("at"), opt(it, "until"), optString(it, "tx"))
@@ -670,6 +674,7 @@ class PrivacyState {
             .put("pending_at", n.pendingAt ?: JSONObject.NULL)
             .put("pending_until", n.pendingUntil ?: JSONObject.NULL)
             .put("pending_tx", n.pendingTx ?: JSONObject.NULL)
+            .put("origin", n.origin?.tag ?: JSONObject.NULL)
 
         private fun noteFromJson(o: JSONObject): OwnedNote {
             val memo = o.optString("memo")
@@ -682,6 +687,7 @@ class PrivacyState {
                 pendingAt = if (o.isNull("pending_at")) null else o.getLong("pending_at"),
                 pendingUntil = opt(o, "pending_until"),
                 pendingTx = optString(o, "pending_tx"),
+                origin = network.erth.wallet.privacy.note.NoteOrigin.of(optString(o, "origin")),
             )
         }
     }
@@ -793,6 +799,8 @@ class PrivacyStore private constructor(
                 keepHandleState(old, this)
                 pendingUnbonds.addAll(old.pendingUnbonds)
                 stakeVotes.addAll(old.stakeVotes)
+                // What it sent and expects: the resync finds the notes again and folds them in.
+                activity = old.activity.copy()
                 positionLeases.putAll(old.positionLeases)
                 labelWindowSeconds = old.labelWindowSeconds
                 // Notes a tx in flight spends stay unspendable through the resync.

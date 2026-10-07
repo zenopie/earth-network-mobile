@@ -1,10 +1,12 @@
 package network.erth.wallet.privacy.sync
 
 import java.io.IOException
+import network.erth.wallet.privacy.PrivateActivity
 import network.erth.wallet.privacy.keys.PrivacyKeys
 import network.erth.wallet.privacy.note.AssetDenoms
 import network.erth.wallet.privacy.note.Denoms
 import network.erth.wallet.privacy.note.NoteCipher
+import network.erth.wallet.privacy.note.NoteOrigin
 import network.erth.wallet.privacy.note.NotePlaintext
 import network.erth.wallet.privacy.note.OwnedNote
 import network.erth.wallet.privacy.note.OwnedStakeNote
@@ -733,6 +735,9 @@ class WalletSync(
         }
         rescanRecords(s, pageLimit)
         releaseStalePending(s)
+        // The activity list's clock (the tip this sync read anyway) and its sent txs in a block.
+        tip?.let { s.activity.tick(it.height, it.time) }
+        PrivateActivity.settle(s)
         val verified = verifyRoots(s, roots)
         // A registration is matched only against an identity
         // tree this same sync verified against the chain's; an unverified one
@@ -1024,6 +1029,11 @@ class WalletSync(
         // learned from: a denom is learned once a note of ours reproduces
         // its cm with it.
         val amount = publicAmount(r.amount)
+        val origin = when (r.ciphertext.size) {
+            0 -> NoteOrigin.OPEN
+            NoteCipher.BLIND_CIPHERTEXT_BYTES -> NoteOrigin.BLIND
+            else -> NoteOrigin.OUTPUT
+        }
         val opened: NotePlaintext = when (r.ciphertext.size) {
             // An open mint (the referral note to a handle we
             // hold): no ciphertext, the opening on the row. Ours if its
@@ -1068,7 +1078,7 @@ class WalletSync(
             parseUnlockMemo(keys.nk, note.memo)?.let { c -> if (c > s.closedOtagMax) s.closedOtagMax = c }
             return null
         }
-        return OwnedNote(r.position, r.height, note, r.cm, Privacy.nf(keys.nk, note.rho, r.position))
+        return OwnedNote(r.position, r.height, note, r.cm, Privacy.nf(keys.nk, note.rho, r.position), origin = origin)
     }
 
     private fun publicAmount(amount: String?): Pair<Long, String>? {
@@ -1183,13 +1193,24 @@ class WalletSync(
                 null -> false
             }
         }
+        // A tx whose marks go is one the chain says did not land, or failed: its activity row says so.
+        fun failed(hash: String?) {
+            if (hash == null) return
+            s.activity.fail(hash, if (status[hash] == TxStatus.FAILED) PrivateActivity.FAILED_IN_BLOCK else PrivateActivity.NEVER_LANDED)
+        }
         for (i in s.notes.indices) {
             val n = s.notes[i]
-            if (n.unspent && release(n.pendingAt, n.pendingUntil, n.pendingTx, s.nullifiersNext - 1)) s.notes[i] = n.copy(pendingAt = null, pendingUntil = null, pendingTx = null)
+            if (n.unspent && release(n.pendingAt, n.pendingUntil, n.pendingTx, s.nullifiersNext - 1)) {
+                failed(n.pendingTx)
+                s.notes[i] = n.copy(pendingAt = null, pendingUntil = null, pendingTx = null)
+            }
         }
         for (i in s.stakeNotes.indices) {
             val n = s.stakeNotes[i]
-            if (n.unspent && release(n.pendingAt, n.pendingUntil, n.pendingTx, s.stakeNullifiersNext - 1)) s.stakeNotes[i] = n.copy(pendingAt = null, pendingUntil = null, pendingTx = null)
+            if (n.unspent && release(n.pendingAt, n.pendingUntil, n.pendingTx, s.stakeNullifiersNext - 1)) {
+                failed(n.pendingTx)
+                s.stakeNotes[i] = n.copy(pendingAt = null, pendingUntil = null, pendingTx = null)
+            }
         }
     }
 

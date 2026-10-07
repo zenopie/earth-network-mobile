@@ -96,6 +96,10 @@ class Assembled(
 
     /** The stake notes the msg spends: lane A's and the credit lane's (a move's destination note). */
     val stakeSpends: List<OwnedStakeNote> get() = stake?.let { it.spends + listOfNotNull(it.credit?.spend) }.orEmpty()
+
+    /** The fee the msg pays, set by the engine once priced (0 before). */
+    var fee: Long = 0L
+        internal set
 }
 
 /** A membership proof's statement, waiting for the sighash (its signal). */
@@ -255,6 +259,7 @@ class PrivateTxEngine(
         // timeout_height. Only a refusal that proves the tx never entered a
         // mempool (CheckTx's code, no connection at all) undoes the mark.
         val hash = UnsignedTx.hash(raw)
+        a.fee = q.fee
         accepted(hash, a, timeout)
         // Whether the node took it: decided by the submit alone. Once it has,
         // a failure while waiting for the block (a dropped connection

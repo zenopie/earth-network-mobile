@@ -307,6 +307,7 @@ class PrivacyWallet(
         if (p.leafIndex != null || p.failure?.startsWith(TX_FAILED) == true) return
         val r = runCatching { chain.tx(p.txHash) }.getOrNull() ?: return
         store.state.pendingRegistration = if (r.code != 0) {
+            store.state.activity.fail(p.txHash, "failed in its block (code ${r.code})", r.height.takeIf { it > 0 })
             p.copy(failure = "$TX_FAILED (code ${r.code}): ${r.log.take(200)}")
         } else {
             val index = r.attr("register", "leaf_index")?.toLongOrNull() ?: return
@@ -360,6 +361,7 @@ class PrivacyWallet(
      */
     @Synchronized
     private fun run(
+        act: Act,
         memo: String = "",
         accepted: (hash: String, timeoutHeight: Long) -> Unit = { _, _ -> },
         rejected: (hash: String) -> Unit = {},
@@ -372,17 +374,83 @@ class PrivacyWallet(
         // lost answer or a killed app never leaves them spendable. They stay
         // pending until the chain is past the tx's timeout_height and says the
         // tx is not in a block (WalletSync.releaseStalePending).
-        val (result, _) = tipChecked {
-            engine.run(assemble, memo, shownFee.get(), accepted = { hash, a, timeout ->
-                markPending(a.spends, a.stakeSpends, timeout, hash)
-                accepted(hash, timeout)
-            }, rejected = { hash, a ->
-                unmarkPending(a.spends, a.stakeSpends, hash)
-                rejected(hash)
-            })
+        var sent: String? = null
+        val (result, _) = try {
+            tipChecked {
+                engine.run(assemble, memo, shownFee.get(), accepted = { hash, a, timeout ->
+                    markPending(a.spends, a.stakeSpends, timeout, hash)
+                    recordSent(act, hash, a)
+                    sent = hash
+                    accepted(hash, timeout)
+                }, rejected = { hash, a ->
+                    unmarkPending(a.spends, a.stakeSpends, hash)
+                    synchronized(store) { store.state.activity.drop(hash); store.save() }
+                    sent = null
+                    rejected(hash)
+                })
+            }
+        } catch (e: Exception) {
+            // The broadcast's own wait saw it fail in its block: the activity row says why.
+            sent?.let { h -> if (e is java.io.IOException && e.message?.startsWith(TX_FAILED_PREFIX) == true) noteOutcome(h) { it.fail(h, e.message!!.take(200)) } }
+            throw e
         }
+        noteOutcome(result.hash) { it.confirm(result.hash, result.height, result.time.takeIf { t -> t > 0 }) }
         return result
     }
+
+    /**
+     * What a private tx is, for the activity list ([PrivateActivity]):
+     * its kind, who it is with where the wallet knows (a handle, its own new
+     * identity), and the notes the chain mints to this wallet in the same tx
+     * (shown as what came in). Its coins and fee are read from the tx itself.
+     */
+    class Act(val kind: PrivateActivityKind, val counterparty: String = "", val receives: List<NoteOut> = emptyList())
+
+    /** Records a tx the node took in the sealed store's activity: never looked up by hash for it. */
+    private fun recordSent(act: Act, hash: String, a: Assembled) {
+        val own = keys.ownerPk
+        val outs = a.bundles.flatMap { b -> b.actions.map { it.out } }
+        val back = outs.filter { o -> o.note != null && o.note.pc(own) == o.pc }
+        val stakeBack = listOfNotNull(
+            a.stake?.let { p -> p.out?.let { o -> p.denom?.let { ActivityCoin(it, o.amount) } } },
+            a.stake?.credit?.let { c -> ActivityCoin(c.denom, c.out.amount) },
+        )
+        val (o, i) = PrivateActivity.coins(
+            PrivateActivity.ofNotes(a.spends), back.map { ActivityCoin(it.denom, it.value) },
+            PrivateActivity.ofStake(a.stakeSpends), stakeBack, a.fee,
+        )
+        val change = back.map { it.note!!.rho.toHex() } +
+            listOfNotNull(a.stake?.out?.rho?.toHex(), a.stake?.credit?.out?.rho?.toHex())
+        val tx = SentPrivateTx(
+            hash = hash, kind = act.kind, generation = generation, counterparty = act.counterparty, fee = a.fee, submittedAt = now(),
+            outs = o, ins = i, change = change, receives = act.receives.mapNotNull { it.note?.rho?.toHex() },
+            spent = (a.spends.map { it.nf } + a.stakeSpends.map { it.nf }).map { it.toHex() },
+        )
+        synchronized(store) { store.state.activity.record(tx); store.save() }
+    }
+
+    /** A tx an existing check already looked up (a move, an undelegation, a vote): its activity row takes the outcome. */
+    private fun outcome(r: TxResult) = noteOutcome(r.hash) {
+        if (r.code == 0) it.confirm(r.hash, r.height, r.time.takeIf { t -> t > 0 })
+        else it.fail(r.hash, "${PrivateActivity.FAILED_IN_BLOCK} (code ${r.code})", r.height.takeIf { h -> h > 0 })
+    }
+
+    private fun noteOutcome(hash: String, f: (ActivityLog) -> Unit) = runCatching {
+        synchronized(store) { f(store.state.activity); store.save() }
+    }
+
+    /**
+     * Notes the chain will mint to this wallet later, by what they are
+     * (a gas grant, an unbonding payout, a withdrawal's legs, a shield's
+     * note): their received row says so. Local, like the rest of the activity.
+     */
+    fun expect(kind: PrivateActivityKind, vararg notes: NoteOut) {
+        if (notes.isEmpty()) return
+        runCatching { synchronized(store) { notes.forEach { n -> n.note?.let { store.state.activity.expect(it.rho, kind) } }; store.save() } }
+    }
+
+    /** Private activity rows, newest first (local: [PrivateActivity.rows]). */
+    fun activity(): List<PrivateActivityRow> = synchronized(store) { PrivateActivity.rows(store.state) }
 
     /**
      * A tip far past the last verified sync height is either a
@@ -562,9 +630,9 @@ class PrivacyWallet(
     // ---- pool ---------------------------------------------------------------
 
     /** A private send of [amount] [denom] to [to]; the fee comes out of ERTH notes. */
-    fun send(to: ShieldedAddress, denom: String, amount: Long, memo: ByteArray = ByteArray(0)): TxResult {
+    fun send(to: ShieldedAddress, denom: String, amount: Long, memo: ByteArray = ByteArray(0), counterparty: String = ""): TxResult {
         requireTransferable(denom)
-        return run(assemble = sendAssembly(to, denom, amount, memo))
+        return run(Act(PrivateActivityKind.SEND, counterparty), assemble = sendAssembly(to, denom, amount, memo))
     }
 
     /** What [send] would charge (simulated with placeholder nullifiers, nothing proven): for a confirm sheet. */
@@ -593,7 +661,7 @@ class PrivacyWallet(
         require(!denom.startsWith(LP_PREFIX)) { "LP shares leave the pool only by a withdrawal" }
         require(!feeFromAmount || denom == FEE) { "only an ERTH unshield pays its fee from the amount" }
         // The memo (an exchange's deposit tag) is bound by the sighash.
-        return run(memo) { fee ->
+        return run(Act(PrivateActivityKind.UNSHIELD, receiver), memo) { fee ->
             val release = if (feeFromAmount) {
                 require(amount > fee) { "the amount must exceed the ${fee}uerth fee" }
                 mapOf(FEE to amount)
@@ -611,7 +679,7 @@ class PrivacyWallet(
      * from the merged notes themselves). Only needed when a balance is spread
      * over more notes than max_actions_per_bundle.
      */
-    fun merge(denom: String): TxResult = run { fee ->
+    fun merge(denom: String): TxResult = run(Act(PrivateActivityKind.MERGE)) { fee ->
         val budget = if (denom == FEE) maxActions() else maxActions() - 1
         val ns = NoteSelection.spendable(store.state.notes, denom).sortedBy { it.note.value }.take(budget)
         require(ns.size >= 2) { "nothing to merge" }
@@ -633,7 +701,7 @@ class PrivacyWallet(
      * public amount.
      */
     @Suppress("UNUSED_PARAMETER")
-    fun shieldOutput(denom: String, amount: Long): NoteOut = mint(denom)
+    fun shieldOutput(denom: String, amount: Long): NoteOut = mint(denom).also { expect(PrivateActivityKind.SHIELD, it) }
 
     private fun requireTransferable(denom: String) {
         require(!denom.startsWith(DERTH_PREFIX)) { "stake is owner-locked: it cannot be sent or unshielded" }
@@ -725,7 +793,7 @@ class PrivacyWallet(
         val gen = nextGeneration()
         val anml = mint("uanml")
         val erth = mint(FEE)
-        val gas = mint(FEE)
+        val gas = mint(FEE).also { expect(PrivateActivityKind.GAS_GRANT, it) }
         referrer?.let {
             require(network.erth.wallet.privacy.handles.Handles.valid(it.handle)) { "${it.handle} is not a handle" }
             require(it.address.ownerPk != keys.ownerPk) { "a registration cannot name its own wallet as its referrer" }
@@ -796,7 +864,7 @@ class PrivacyWallet(
             if (store.state.pendingRegistration?.txHash == hash) { store.state.pendingRegistration = null; store.save() }
         }
         val result = try {
-            run(accepted = pending, rejected = refused) { fee ->
+            run(Act(PrivateActivityKind.REGISTER, receives = listOf(prep.anml, prep.erth)), accepted = pending, rejected = refused) { fee ->
                 Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee)))) { bs, _, _ -> base.toBuilder().setFee(bs[0]).build() }
             }
         } catch (e: Exception) {
@@ -817,6 +885,7 @@ class PrivacyWallet(
         // A switch: the move suggestion is drawn now, so its reminder comes
         // even if Identity is never opened.
         if (result.attr("register", "switched") == "true") {
+            noteOutcome(result.hash) { it.update(result.hash) { t -> t.copy(kind = PrivateActivityKind.SWITCH) } }
             result.attr("register", "leaf_index")?.toLongOrNull()?.let { leaf -> synchronized(this) { drawMoveSuggestion(leaf, result.time, prep.generation) } }
         }
         return result
@@ -848,7 +917,7 @@ class PrivacyWallet(
         val anml = mint("uanml")
         // Claims bound the activation only (start of yesterday); the predecessor is no bound.
         val m = membership(Privacy.claimScope(day), Fr.ZERO, Fr.ZERO, (day - 1) * SECONDS_PER_DAY, Privacy.NO_BOUND)
-        val r = run { fee ->
+        val r = run(Act(PrivateActivityKind.CLAIM_ANML, receives = listOf(anml))) { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
                 MsgClaimAnml.newBuilder().setFee(bs[0]).setMembership(mem).setDay(day)
                     .setPc(ByteString.copyFrom(anml.pc.toBytes())).setCiphertext(ByteString.copyFrom(anml.ciphertext)).build()
@@ -1017,7 +1086,7 @@ class PrivacyWallet(
             else WalletSync.caretakerMemo(nk, WalletSync.RECORD_HOLDS, Handles.satAdd(now(), r0), split, g)
         }
         val r = boundAttempt(wait) {
-            run { fee ->
+            run(Act(PrivateActivityKind.CARETAKER)) { fee ->
                 Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee))), membership = m) { bs, _, mem ->
                     MsgSetCaretaker.newBuilder().setFee(bs[0]).setMembership(mem).addAllPercentages(weights).setMaxPredecessor(maxPred).build()
                 }
@@ -1193,6 +1262,7 @@ class PrivacyWallet(
             rc.refusal(move)?.let { throw IllegalStateException(it) }
         }
         return run(
+            Act(PrivateActivityKind.MOVE, if (move.kind == PendingMove.HANDLE) "@${move.handle}" else "caretaker vote"),
             accepted = { hash, timeout ->
                 val p = move.copy(txHash = hash, timeoutHeight = timeout)
                 val ok = recorder?.let { rc -> runCatching { rc.record(p.copy(incoming = true, target = "", recorded = true)) }.isSuccess } ?: true
@@ -1272,6 +1342,7 @@ class PrivacyWallet(
             for (p in s.pendingMoves.toList()) {
                 if (p.confirmed || s.pendingMoves.none { it == p }) continue
                 val r = runCatching { chain.tx(p.txHash) }.getOrNull()
+                r?.let { outcome(it) }
                 when {
                     r != null && r.code == 0 -> confirmMove(p.txHash)
                     r != null -> { st.voidRecordHeights.add(r.height); dropMove(p, s) }
@@ -1397,7 +1468,7 @@ class PrivacyWallet(
         val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, maxPred)
         val record = stateRecord(keys, generation) { nk, g -> WalletSync.handleMemo(nk, WalletSync.RECORD_HOLDS, handle, g) }
         val r = boundAttempt(wait) {
-            run { fee ->
+            run(Act(PrivateActivityKind.HANDLE, "@$handle")) { fee ->
                 Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee))), membership = m) { bs, _, mem ->
                     MsgBindHandle.newBuilder().setFee(bs[0]).setMembership(mem).setHandle(handle).setAddress(addr).setMaxPredecessor(maxPred).build()
                 }
@@ -1430,7 +1501,7 @@ class PrivacyWallet(
         checkNoMove(PendingMove.HANDLE)
         val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, Privacy.NO_BOUND)
         val record = stateRecord(keys, generation) { nk, g -> WalletSync.handleMemo(nk, WalletSync.RECORD_NONE, generation = g) }
-        val r = run { fee ->
+        val r = run(Act(PrivateActivityKind.HANDLE, "released @${store.state.handle}")) { fee ->
             Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee))), membership = m) { bs, _, mem ->
                 MsgBindHandle.newBuilder().setFee(bs[0]).setMembership(mem).setMaxPredecessor(Privacy.NO_BOUND).build()
             }
@@ -1542,7 +1613,7 @@ class PrivacyWallet(
         // The chain's statement: max_activation no bound, max_predecessor the ballot's (opened - 86400).
         val m = membership(b.scope, b.excludedDsc, b.excludedCountry, b.maxActivation, b.maxPredecessor)
         val option = if (yes) VoteOption.VOTE_OPTION_YES else VoteOption.VOTE_OPTION_NO
-        return run { fee ->
+        return run(Act(PrivateActivityKind.VOTE, "proposal $proposalId")) { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
                 MsgVoteProposal.newBuilder().setFee(bs[0]).setMembership(mem).setProposalId(proposalId).setOption(option).build()
             }
@@ -1554,7 +1625,7 @@ class PrivacyWallet(
         val day = chainNow() / SECONDS_PER_DAY
         // The predecessor bound: the start of today (UTC) less a day, whatever the root window; no activation bound.
         val m = membership(Privacy.proposeRemovalScope(optionId, day), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, day * SECONDS_PER_DAY - ACTIVATION_MARGIN)
-        return run { fee ->
+        return run(Act(PrivateActivityKind.VOTE, "removal of option $optionId")) { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
                 MsgProposeRemoval.newBuilder().setFee(bs[0]).setMembership(mem).setOptionId(optionId).build()
             }
@@ -1567,7 +1638,7 @@ class PrivacyWallet(
         // The chain's statement: max_activation no bound, max_predecessor the ballot's (opened - 86400).
         val m = membership(b.scope, b.excludedDsc, b.excludedCountry, b.maxActivation, b.maxPredecessor)
         val option = if (yes) VoteOption.VOTE_OPTION_YES else VoteOption.VOTE_OPTION_NO
-        return run { fee ->
+        return run(Act(PrivateActivityKind.VOTE, "removal of option $optionId")) { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
                 MsgVoteRemoval.newBuilder().setFee(bs[0]).setMembership(mem).setOptionId(optionId).setOption(option).build()
             }
@@ -1835,7 +1906,7 @@ class PrivacyWallet(
         val d = debtView()
         val stake = laneA(denom, StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }, q.derth, 0, d)
         if (haircutOf(stake) > q.haircut) throw QuoteChanged("a slash reached stake you moved to this validator since the quote; review it again")
-        return run { fee ->
+        return run(Act(PrivateActivityKind.STAKE, q.validator)) { fee ->
             // The fee is the bundle's uerth balance less amount.
             val b = bundle(release = mapOf(FEE to Math.addExact(q.amount, fee)))
             Assembled(listOf(b), stake) { bs, sp, _ ->
@@ -1862,7 +1933,7 @@ class PrivacyWallet(
             else "nothing to merge"
         }
         val stake = laneA(denom, two, 0, 0, d)
-        return run { fee ->
+        return run(Act(PrivateActivityKind.RESTAKE, validator)) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setStake(sp!!).build()
             }
@@ -1938,7 +2009,9 @@ class PrivacyWallet(
         if (haircutOf(stake) > maxHaircut) throw QuoteChanged("a slash reached stake you moved to this validator since the sheet was shown; review it again")
         val payout = mint(FEE)
         val pc = payout.pc
+        expect(PrivateActivityKind.UNBONDING_PAYOUT, payout)
         val r = run(
+            Act(PrivateActivityKind.UNSTAKE, validator),
             accepted = { hash, timeout -> recordUnbond(PendingUnbond(hash, validator, amount, pc, now(), timeout)) },
             rejected = { hash -> dropUnbond(hash) },
         ) { fee ->
@@ -2019,7 +2092,7 @@ class PrivacyWallet(
         val credit = StakePlan.credit(keys, derthDenom(q.dst), target, target?.let { store.stakeTree.path(it.position) }, q.dstDerth, moveTime)
         val stake = leave(q.src, q.amount, d, credit = credit)
         if (haircutOf(stake) > q.haircut) throw QuoteChanged("a slash reached stake you moved to this validator since the quote; review it again")
-        return run { fee ->
+        return run(Act(PrivateActivityKind.REDELEGATE, "${q.src} → ${q.dst}")) { fee ->
             Assembled(listOf(feeBundle(fee)), stake, extraGas = redelegateHeadroom(q.pairEntries, q.pairCounted)) { bs, sp, _ ->
                 MsgRedelegate.newBuilder().setBundle(bs[0]).setSrcValidator(q.src).setDstValidator(q.dst).setAmount(q.amount)
                     .setStake(sp!!).setDstDerth(q.dstDerth).setMoveTime(moveTime).build()
@@ -2070,6 +2143,7 @@ class PrivacyWallet(
             if (u.pc in paid) { dropUnbond(u.txHash); continue }
             if (u.confirmed) continue
             val r = runCatching { chain.tx(u.txHash) }.getOrNull()
+            r?.let { outcome(it) }
             when {
                 r != null -> confirmUnbond(r)
                 u.until != null && tip != null && tip!! > u.until -> dropUnbond(u.txHash)
@@ -2172,6 +2246,7 @@ class PrivacyWallet(
         var sent = false
         try {
             val r = run(
+                Act(PrivateActivityKind.VOTE, "proposal $proposalId"),
                 accepted = { hash, timeout -> sent = true; used.forEach { recordVote(StakeVoteRecord(proposalId, it, hash, timeout, confirmed = false)) } },
                 rejected = { hash -> sent = false; used.forEach { forgetVote(proposalId, it, hash) } },
             ) { fee ->
@@ -2268,6 +2343,7 @@ class PrivacyWallet(
         val tip by lazy { runCatching { chain.tipHeight() }.getOrNull() }
         for (v in pending) {
             val r = v.txHash?.let { h -> runCatching { chain.tx(h) }.getOrNull() }
+            r?.let { outcome(it) }
             val next = when {
                 r != null && r.code == 0 -> v.copy(confirmed = true)
                 // The whole msg was refused for the one note the chain names: only that one is final.
@@ -2518,7 +2594,7 @@ class PrivacyWallet(
         val counter = synchronized(this) { store.state.nextOtagCounter.also { store.state.nextOtagCounter = it + 1; store.save() } }
         val stake = leave(validator, amount, d, salt = keys.otagSalt(counter))
         val w = weights(splits)
-        return run { fee ->
+        return run(Act(PrivateActivityKind.POSITION, "locked with $validator")) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgLockPosition.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount)
                     .addAllSplits(w).setStake(sp!!).build()
@@ -2535,7 +2611,7 @@ class PrivacyWallet(
     fun updatePosition(position: PrivacyChainReads.Position, counter: Int, splits: Map<Long, Long>): TxResult {
         val stake = ownerPlan(position, counter)
         val w = weights(splits)
-        return run { fee ->
+        return run(Act(PrivateActivityKind.POSITION, "updated position ${position.id}")) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgUpdatePosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).addAllSplits(w).setStake(sp!!).build()
             }
@@ -2555,7 +2631,7 @@ class PrivacyWallet(
         val d = debtView()
         val stake = laneA(denom, StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }, position.derth, 0, d, salt = keys.otagSalt(counter))
         val record = NoteOut.to(keys.address, FEE, 0, WalletSync.unlockMemo(keys.nk, counter))
-        return run { fee ->
+        return run(Act(PrivateActivityKind.POSITION, "unlocked position ${position.id}")) { fee ->
             Assembled(listOf(bundle(outputs = listOf(record), release = mapOf(FEE to fee))), stake) { bs, sp, _ ->
                 MsgUnlockPosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).setStake(sp!!).build()
             }
@@ -2564,7 +2640,7 @@ class PrivacyWallet(
 
     fun positionVote(position: PrivacyChainReads.Position, counter: Int, proposalId: Long, options: List<WeightedVoteOption>, accepted: (hash: String) -> Unit = {}): TxResult {
         val stake = ownerPlan(position, counter)
-        return run(accepted = { hash, _ -> accepted(hash) }) { fee ->
+        return run(Act(PrivateActivityKind.VOTE, "proposal $proposalId, position ${position.id}"), accepted = { hash, _ -> accepted(hash) }) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgPositionVote.newBuilder().setBundle(bs[0]).setPositionId(position.id).setProposalId(proposalId)
                     .addAllOptions(PrivateMsgs.canonicalOptions(options)).setStake(sp!!).build()
@@ -2584,11 +2660,12 @@ class PrivacyWallet(
      * publishes. The fee comes from the bundle's ERTH balance (the one fee
      * rule: a swap of ANML into ERTH needs an ERTH note for it too).
      */
-    fun noteSwap(denomIn: String, amountIn: Long, denomOut: String, minOut: Long, to: ShieldedAddress? = null): TxResult {
+    fun noteSwap(denomIn: String, amountIn: Long, denomOut: String, minOut: Long, to: ShieldedAddress? = null, counterparty: String = ""): TxResult {
         require(denomIn != denomOut && amountIn > 0 && minOut > 0)
         requireTransferable(denomIn)
         val out = payout(denomOut, to)
-        return run { fee ->
+        val mine = to == null || to.ownerPk == keys.ownerPk
+        return run(Act(if (mine) PrivateActivityKind.SWAP else PrivateActivityKind.SEND, counterparty, if (mine) listOf(out) else emptyList())) { fee ->
             val b = bundle(release = plus(mapOf(denomIn to amountIn), FEE, fee))
             Assembled(listOf(b)) { bs, _, _ ->
                 MsgNoteSwap.newBuilder().setBundle(bs[0]).setDenomIn(denomIn).setAmountIn(amountIn)
@@ -2610,7 +2687,7 @@ class PrivacyWallet(
         require(tokenAmount > 0 && erthAmount > 0 && token != FEE)
         val refund = mint(token)
         val shares = mint(lpDenom(poolId))
-        return run { fee ->
+        return run(Act(PrivateActivityKind.ADD_LIQUIDITY, "pool $poolId", listOf(refund, shares))) { fee ->
             val b = bundle(release = mapOf(token to tokenAmount, FEE to Math.addExact(erthAmount, fee)))
             Assembled(listOf(b)) { bs, _, _ ->
                 MsgAddLiquidityShielded.newBuilder().setBundle(bs[0]).setPoolId(poolId).setMinShares(minShares)
@@ -2630,7 +2707,9 @@ class PrivacyWallet(
         require(shares > 0)
         val erth = mint(FEE)
         val tok = mint(token)
-        return run { fee ->
+        // Both legs are minted once the LP unbonding ends: received rows of their own.
+        expect(PrivateActivityKind.LP_PAYOUT, erth, tok)
+        return run(Act(PrivateActivityKind.REMOVE_LIQUIDITY, "pool $poolId")) { fee ->
             val b = bundle(release = mapOf(lpDenom(poolId) to shares, FEE to fee))
             Assembled(listOf(b)) { bs, _, _ ->
                 MsgRemoveLiquidityShielded.newBuilder().setBundle(bs[0]).setPoolId(poolId)
@@ -2650,7 +2729,7 @@ class PrivacyWallet(
      * the provider's transparent key): pc and v2 ciphertext to us, since the
      * payout is priced when the withdrawal matures.
      */
-    fun withdrawalNote(): NoteOut = payout("uanml", null)
+    fun withdrawalNote(): NoteOut = payout("uanml", null).also { expect(PrivateActivityKind.LP_PAYOUT, it) }
 
     /**
      * Where a chain-priced payment goes (a swap's or a MsgBuyAnml's output,
@@ -3034,6 +3113,8 @@ class PrivacyWallet(
         const val REGISTER_GAS_ESTIMATE = 13_000_000L
         /** A pending registration whose tx failed in its block. */
         const val TX_FAILED = "the registration tx failed"
+        /** How the broadcast's wait words a tx that failed in its block (RestPrivateChain, FakeChain). */
+        const val TX_FAILED_PREFIX = "tx failed"
 
         /** Slack against the chain's clock for bounds the wallet must stay under. */
         const val CLOCK_MARGIN = 600L

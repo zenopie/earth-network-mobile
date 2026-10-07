@@ -60,8 +60,23 @@ data class OwnedNote(
     val pendingUntil: Long? = null,
     /** That tx's hash: released only once the chain says it is missing or failed (null: a mark from an older version). */
     val pendingTx: String? = null,
+    /** How sync found it (null: synced before the wallet kept it): what a received row calls it. */
+    val origin: NoteOrigin? = null,
 ) {
     val unspent: Boolean get() = spentHeight == null
+}
+
+/**
+ * A pool note's format as found (PRIVACY_FORMATS §5): a bundle output (v1,
+ * [OUTPUT]), a note the chain minted to a hidden owner (v2, [BLIND]), or an
+ * open mint, the referral note ([OPEN]).
+ */
+enum class NoteOrigin(val tag: String) {
+    OUTPUT("v1"), BLIND("v2"), OPEN("open");
+
+    companion object {
+        fun of(tag: String?): NoteOrigin? = entries.firstOrNull { it.tag == tag }
+    }
 }
 
 /**
