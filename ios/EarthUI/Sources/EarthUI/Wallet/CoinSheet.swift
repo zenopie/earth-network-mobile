@@ -211,9 +211,10 @@ struct CoinSheet: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
                         .font(EarthType.body).fontWeight(.semibold)
+                    // A reason must stay readable: the disabled ink is too faint for a sentence.
                     Text(blocked ?? way)
                         .font(EarthType.caption)
-                        .opacity(blocked == nil ? 0.8 : 1)
+                        .foregroundStyle(blocked == nil ? theme.colors.secondaryButtonFg.opacity(0.8) : theme.colors.textSecondary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                 }

@@ -263,7 +263,8 @@ private fun MoveTile(title: String, way: String, icon: Int, blocked: String?, on
         )
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Text(text = title, style = EarthTypography.textMd.copy(fontWeight = FontWeight.SemiBold), color = ink)
-            Text(text = blocked ?: way, style = EarthTypography.textXs, color = ink)
+            // A reason must stay readable: the disabled ink is too faint for a sentence.
+            Text(text = blocked ?: way, style = EarthTypography.textXs, color = if (enabled) ink else EarthColors.Text.textSecondary)
         }
         if (enabled) {
             Image(
