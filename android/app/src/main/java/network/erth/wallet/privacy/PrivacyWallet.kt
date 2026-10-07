@@ -3021,11 +3021,17 @@ class PrivacyWallet(
             if (waitSeconds > 2 * SECONDS_PER_DAY) "this identity replaced another too recently for this action; it opens in ${waitSeconds / SECONDS_PER_DAY + 1} days"
             else "this registration is too recent for this action; try again in ${waitSeconds / 3600 + 1}h"
         /**
-         * MsgRegister's gas, for the fee estimate before simulating: the
-         * passport proof (3M) and DSC chain (300k), the fee bundle's two
-         * action proofs and note writes, and the tx's bytes.
+         * MsgRegister's gas for the confirm sheet, and so the most it may pay
+         * without asking again: the passport proof (3M), the DSC chain (300k)
+         * and six note writes (PrivateTxEngine's register gas, 4.2M), the fee
+         * bundle (100k) and its two actions (4.6M), the base (100k), ~50 KB
+         * of tx bytes (500k), and the 10% headroom the quote adds: ~10.5M.
+         * It was 7M, under the proofs alone, so every registration's quote
+         * came in above the sheet and the sheet came back over "Sending"
+         * (iOS build 21). At 0.005 uerth/gas the fee (65,000) stays inside
+         * the 100,000 gas grant. As iOS.
          */
-        const val REGISTER_GAS_ESTIMATE = 7_000_000L
+        const val REGISTER_GAS_ESTIMATE = 13_000_000L
         /** A pending registration whose tx failed in its block. */
         const val TX_FAILED = "the registration tx failed"
 

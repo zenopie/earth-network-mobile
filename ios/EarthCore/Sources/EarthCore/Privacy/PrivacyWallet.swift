@@ -30,10 +30,16 @@ public final class PrivacyWallet: @unchecked Sendable {
     public static func keepSkew(_ param: Int64?) -> Int64 {
         min(max(param ?? 0, registrationSkewSeconds), maxRegistrationSkewSeconds)
     }
-    /// MsgRegister's gas, for the fee estimate before simulating: the
-    /// passport proof (3M) and DSC chain (300k), the fee bundle's two action
-    /// proofs and note writes, and the tx's bytes.
-    public static let registerGasEstimate: UInt64 = 7_000_000
+    /// MsgRegister's gas for the confirm sheet, and so the most it may pay
+    /// without asking again: the passport proof (3M), the DSC chain (300k)
+    /// and six note writes (`PrivateTxEngine.registerGas`, 4.2M), the fee
+    /// bundle (100k) and its two actions (4.6M), the base (100k), ~50 KB of
+    /// tx bytes (500k), and the 10% headroom the quote adds: ~10.5M. It was
+    /// 7M, under the proofs alone, so every registration's quote came in
+    /// above the sheet and the sheet came back over "Sending" (build 21).
+    /// At 0.005 uerth/gas the fee (65,000) stays inside the 100,000 gas
+    /// grant. As Android.
+    public static let registerGasEstimate: UInt64 = 13_000_000
     /// A private tx's gas for the confirm sheet: what the sheet shows is the
     /// most the tx may then pay without asking again (a higher
     /// simulated fee shows the sheet again at it). Two actions, a stake or
