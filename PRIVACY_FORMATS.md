@@ -1125,7 +1125,11 @@ witness `id_secret` (§9), so the wallet proves with that generation's secret.
   Membership proofs, binds, casts and the handle owner use that generation's
   secret. A generation is used when a registration record of it exists (it
   reached a block, failed or not: the record lands with the fee), a
-  registration of it matched, or it is below the floor. The next
+  registration of it matched, or it is below the floor. A registration a
+  node said committed whose leaf has not matched is not reused either, but
+  it is not a record: it moves the next generation no further than N (8,
+  §19) past the highest recorded one, since a committed result from an http
+  own node is anyone's on its network. The next
   registration uses the lowest generation above every used one; a sent
   registration that has not landed keeps its own, so a retry is the same
   identity. Skipping a generation whose registration failed costs nothing.
@@ -1133,7 +1137,8 @@ witness `id_secret` (§9), so the wallet proves with that generation's secret.
   records and its local identity tree.
 - **Floor.** Only a structured refusal raises the floor past the refused
   generation: CheckTx's code 1130 with codespace `personhood`, from a node
-  reached over https, or a /gas/register 403 whose `kind` is `idc used`.
+  reached over https (the node that answered, not the one in use when the
+  answer is handled), or a /gas/register 403 whose `kind` is `idc used`.
   Text never does (a simulate's message, an http own node's answer, a gas
   refusal without its kind: anyone on that path can write it); it only
   prompts a sync, which moves the wallet on if one of its records names the
@@ -1340,6 +1345,9 @@ switch).
   room than that it says to move now and why. The user chooses: move now,
   or be reminded at the suggested time; the reminder names the time left
   and grows urgent within the last 3 days, and stops at the deadline. The
+  deadline is read again whenever the wallet refreshes its reminders (at most
+  every 10 minutes), not only when Identity opens; once nothing is left to
+  move (moved, on its way, or lapsed) the suggestion ends. The
   wallet never sends a move on its own; a move spends a fee and only the
   user starts it.
 - **Renew first.** The live identity can renew its handle and refresh its
