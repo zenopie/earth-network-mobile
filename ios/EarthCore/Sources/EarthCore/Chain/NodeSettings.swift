@@ -90,13 +90,15 @@ public enum NodeSettings {
     /// check before (against the genesis pinned now); one saved by an earlier
     /// build, or that failed a recheck, is not: Earth's node answers until
     /// `recheck` passes it (a failed one waits for the person to check it
-    /// again). Under `lock`.
+    /// again). A pass older than `recheckSeconds` waits too, for the forced
+    /// launch recheck: the node may have been re-initialised on another
+    /// genesis since. Under `lock`.
     private static func load(_ s: Store) -> Node {
         noticeValue = nil
         guard let saved = saved(s) else { return defaultNode }
         if let why = s.get(suspendedKey) { noticeValue = suspendedText(why); return defaultNode }
-        if verifiedAt(s, saved) != nil { return saved }
-        noticeValue = unchecked
+        if fresh(s, saved) { return saved }
+        noticeValue = verifiedAt(s, saved) != nil ? rechecking : unchecked
         return defaultNode
     }
 
@@ -218,6 +220,8 @@ public enum NodeSettings {
     }
 
     private static let unchecked = "Your node has not passed this version's check yet. Until it does, the wallet uses Earth's node. Settings → Network shows the result."
+
+    private static let rechecking = "The wallet is checking your node again, as it does when the last check is a few hours old. Until it passes, the wallet uses Earth's node."
 
     /// A base URL as typed, trimmed of whitespace and trailing slashes; nil
     /// when it is not an http(s) URL with a host and nothing past its path.
@@ -376,9 +380,8 @@ public enum NodeSettings {
     /// The LCD's latest block: chain id earth-1, its height, at most `maxLagSeconds` old.
     private static func lcdLatest(_ rest: EarthRest) async throws -> (String, UInt64) {
         let j: JSON
-        do { j = try await rest.get("/cosmos/base/tendermint/v1beta1/blocks/latest") } catch {
-            throw LCDUnreachable(message: "Could not reach the LCD: \(error.localizedDescription)")
-        }
+        let path = "/cosmos/base/tendermint/v1beta1/blocks/latest"
+        do { j = try await rest.get(path) } catch { throw latestFailure(error, path) }
         let header = j.sdk_block.header.exists ? j.sdk_block.header : j.block.header
         guard header.exists else { throw ProbeError(message: "That does not look like a Cosmos LCD.") }
         let chainID = header.chain_id.string(default: "")
@@ -386,6 +389,17 @@ public enum NodeSettings {
         guard let height = header.height.uint64 else { throw ProbeError(message: "The LCD did not say its latest height.") }
         try checkLag("The LCD", RESTPrivateChain.parseTime(header.time.string(default: "")))
         return (chainID, height)
+    }
+
+    /// What a failed latest-block request means. Only a request that got no
+    /// answer is `LCDUnreachable`; an HTTP error or a body that is not JSON is
+    /// an answer, and fails the check (as Android's lcdGet).
+    static func latestFailure(_ error: Swift.Error, _ path: String) -> Swift.Error {
+        switch error {
+        case EarthRest.Error.http(let status, _): ProbeError(message: "The LCD answered \(status) for \(path).")
+        case EarthRest.Error.notJSON: ProbeError(message: "That does not look like a Cosmos LCD.")
+        default: LCDUnreachable(message: "Could not reach the LCD: \(error.localizedDescription)")
+        }
     }
 
     /// The node's LCD did not answer at all: nothing was read from it, so nothing wrong was.

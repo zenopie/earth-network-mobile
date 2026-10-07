@@ -101,7 +101,9 @@ object NodeConfig {
      * is used at once only if it passed this build's full check before
      * (against the genesis pinned now); one saved by an earlier build, or
      * that failed a recheck, is not: Earth's node answers until [recheck]
-     * passes it (a failed one waits for the person to check it again).
+     * passes it (a failed one waits for the person to check it again). A
+     * pass older than [RECHECK_SECONDS] waits too, for the forced launch
+     * recheck: the node may have been re-initialised on another genesis since.
      */
     fun load(context: Context) = load(store(context))
 
@@ -111,8 +113,11 @@ object NodeConfig {
         _notice.value = null
         val saved = saved(s) ?: return
         s.get(KEY_SUSPENDED)?.let { _notice.value = suspendedText(it); return }
-        if (verifiedAt(s, saved) != null) _node.value = saved
-        else _notice.value = UNCHECKED
+        when {
+            fresh(s, saved) -> _node.value = saved
+            verifiedAt(s, saved) != null -> _notice.value = RECHECKING
+            else -> _notice.value = UNCHECKED
+        }
     }
 
     /**
@@ -241,6 +246,9 @@ object NodeConfig {
 
     private const val UNCHECKED = "Your node has not passed this version's check yet. Until it does, the wallet " +
         "uses Earth's node. Settings → Network shows the result."
+
+    private const val RECHECKING = "The wallet is checking your node again, as it does when the last check is " +
+        "a few hours old. Until it passes, the wallet uses Earth's node."
 
     /**
      * A base URL as typed, trimmed of whitespace and trailing slashes; null

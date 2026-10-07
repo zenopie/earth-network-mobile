@@ -108,4 +108,22 @@ class NodeRecheckTest {
         NodeConfig.load(s)
         assertTrue(NodeConfig.current.isDefault)
     }
+
+    /** At launch, a pass older than RECHECK_SECONDS waits on Earth's node until the forced recheck passes it again. */
+    @Test
+    fun aStalePassWaitsForTheLaunchRecheck() {
+        val s = saved()
+        NodeConfig.load(s)
+        NodeConfig.recheck(s, force = true)
+        now += NodeConfig.RECHECK_SECONDS - 1
+        NodeConfig.load(s)
+        assertEquals(own, NodeConfig.current)
+        now += 1
+        NodeConfig.load(s)
+        assertTrue(NodeConfig.current.isDefault)
+        assertNotNull(NodeConfig.notice.value)
+        NodeConfig.recheck(s, force = true)
+        assertEquals(own, NodeConfig.current)
+        assertNull(NodeConfig.notice.value)
+    }
 }

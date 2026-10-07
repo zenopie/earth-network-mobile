@@ -97,4 +97,30 @@ final class NodeRecheckTests: XCTestCase {
         await NodeSettings.recheck(force: false)
         XCTAssertEqual(2, box.checks)
     }
+
+    /// At launch, a pass older than recheckSeconds waits on Earth's node until the forced recheck passes it again.
+    func testAStalePassWaitsForTheLaunchRecheck() async {
+        let s = saved()
+        await NodeSettings.recheck(force: true)
+        box.now += NodeSettings.recheckSeconds - 1
+        NodeSettings.reload(s)
+        XCTAssertEqual(own, NodeSettings.current)
+        box.now += 1
+        NodeSettings.reload(s)
+        XCTAssertTrue(NodeSettings.current.isDefault)
+        XCTAssertNotNil(NodeSettings.notice)
+        await NodeSettings.recheck(force: true)
+        XCTAssertEqual(own, NodeSettings.current)
+        XCTAssertNil(NodeSettings.notice)
+    }
+
+    /// The latest-block probe: an HTTP error or non-JSON is an answer (the node is set aside); only no answer is unreachable.
+    func testOnlyNoAnswerIsUnreachable() {
+        let p = "/cosmos/base/tendermint/v1beta1/blocks/latest"
+        XCTAssertTrue(NodeSettings.latestFailure(EarthRest.Error.http(status: 404, body: ""), p) is NodeSettings.ProbeError)
+        XCTAssertTrue(NodeSettings.latestFailure(EarthRest.Error.http(status: 500, body: ""), p) is NodeSettings.ProbeError)
+        XCTAssertTrue(NodeSettings.latestFailure(EarthRest.Error.notJSON("<html>"), p) is NodeSettings.ProbeError)
+        XCTAssertTrue(NodeSettings.latestFailure(URLError(.cannotConnectToHost), p) is NodeSettings.LCDUnreachable)
+        XCTAssertTrue(NodeSettings.latestFailure(URLError(.timedOut), p) is NodeSettings.LCDUnreachable)
+    }
 }
