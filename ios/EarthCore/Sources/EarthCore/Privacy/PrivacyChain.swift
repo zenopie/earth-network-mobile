@@ -532,15 +532,16 @@ public struct RESTPrivateChain: PrivateChain {
     /// non-zero code. `accepted` runs at CheckTx code 0, before the wait.
     public func broadcast(_ tx: Data, accepted: @Sendable (String) -> Void) async throws -> TxResult {
         let j: JSON
+        let lcd = rest.lcd
         do {
-            j = try await rest.postJSON("/cosmos/tx/v1beta1/txs", body: ["tx_bytes": tx.base64EncodedString(), "mode": "BROADCAST_MODE_SYNC"])
+            j = try await rest.postJSON("/cosmos/tx/v1beta1/txs", body: ["tx_bytes": tx.base64EncodedString(), "mode": "BROADCAST_MODE_SYNC"], base: lcd)
         } catch let e as EarthRest.Error {
             throw PrivacyError("broadcast failed \(Self.message(e))")
         }
         let code = j.tx_response.code.int64(default: 0)
         guard code == 0 else {
             throw UnsignedTx.TxRejected(code: Int(clamping: code), log: j.tx_response.raw_log.string(default: ""),
-                                        codespace: j.tx_response.codespace.string(default: ""))
+                                        codespace: j.tx_response.codespace.string(default: ""), lcd: lcd.absoluteString)
         }
         guard let hash = j.tx_response.txhash.string else { throw EarthClient.Error.notCommitted(hash: "") }
         accepted(hash)

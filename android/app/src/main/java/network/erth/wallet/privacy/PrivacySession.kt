@@ -65,8 +65,8 @@ object PrivacySession {
             prover = AndroidProver(app),
             chainId = Constants.EARTH_CHAIN_ID,
             roots = network.erth.wallet.privacy.chain.LcdChainRoots,
-            // An http own node's codes could be anyone's on its network.
-            chainCodesTrusted = { !network.erth.wallet.chain.NodeConfig.isCleartext(network.erth.wallet.chain.NodeConfig.current.lcd) },
+            // An http own node's codes could be anyone's on its network; judged by the node that answered.
+            chainCodesTrusted = { lcd -> lcd.isNotEmpty() && !network.erth.wallet.chain.NodeConfig.isCleartext(lcd) },
         )
         wallets[id] = w
         live[id] = java.lang.ref.WeakReference(w)

@@ -206,20 +206,32 @@ class IdentityGenerationsTest : WalletTest() {
         assertEquals(1, a.nextGeneration())
     }
 
-    /** The chain's code from an http own node is anyone's on its network: treated as text. */
+    /**
+     * The chain's code from an http own node is anyone's on its network:
+     * treated as text. Trust is judged by the node that answered, whatever
+     * node is in use by the time the refusal is handled.
+     */
     @Test
     fun aCodeFromAnHttpNodeDoesNotMoveTheFloor() {
-        val chain = FakeChain()
-        val a = PrivacyWallet(PrivacyKeys.fromMnemonic(alice), PrivacyStore.memory(), chain, chain, reads(chain), chain.prover, chain.chainId, chain,
-            now = { chain.now }, chainCodesTrusted = { false })
-        register(chain, a, "555")
-        lapse(chain, a, 0)
-        val prep = a.prepareRegistration(null)
-        funded(chain, a, prep)
-        chain.usedOnBroadcast = a.keys.idc(1)
-        val e = runCatching { a.register(prep, ByteArray(14_656), signals(prep), "lean_poa", ByteArray(10)) }.exceptionOrNull()
-        assertTrue("$e", e is PrivacyWallet.IdentityRefusalUnconfirmed)
-        assertEquals(1, a.nextGeneration())
+        for ((answered, moves) in listOf("http://192.168.1.2:1317" to false, "https://node.example.com" to true)) {
+            val chain = FakeChain()
+            val a = PrivacyWallet(PrivacyKeys.fromMnemonic(alice), PrivacyStore.memory(), chain, chain, reads(chain), chain.prover, chain.chainId, chain,
+                now = { chain.now }, chainCodesTrusted = { lcd -> lcd.startsWith("https://") })
+            register(chain, a, "555")
+            lapse(chain, a, 0)
+            val prep = a.prepareRegistration(null)
+            funded(chain, a, prep)
+            chain.usedOnBroadcast = a.keys.idc(1)
+            chain.answeringLcd = answered
+            val e = runCatching { a.register(prep, ByteArray(14_656), signals(prep), "lean_poa", ByteArray(10)) }.exceptionOrNull()
+            if (moves) {
+                assertTrue("$e", e is PrivacyWallet.IdentityUsed)
+                assertEquals(2, a.nextGeneration())
+            } else {
+                assertTrue("$e", e is PrivacyWallet.IdentityRefusalUnconfirmed)
+                assertEquals(1, a.nextGeneration())
+            }
+        }
     }
 
     /**

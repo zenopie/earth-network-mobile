@@ -6,6 +6,7 @@ import cosmos.base.v1beta1.CoinOuterClass
 import cosmos.tx.v1beta1.Tx
 import network.erth.wallet.Constants
 import network.erth.wallet.chain.EarthRest
+import network.erth.wallet.chain.NodeConfig
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import java.io.IOException
@@ -46,8 +47,12 @@ object UnsignedTx {
     fun hash(txBytes: ByteArray): String =
         java.security.MessageDigest.getInstance("SHA-256").digest(txBytes).joinToString("") { "%02X".format(it.toInt() and 0xff) }
 
-    /** CheckTx refused the tx (a non-zero code): it never entered the mempool and never lands. */
-    class TxRejected(val code: Int, log: String, val codespace: String = "") : IOException("tx rejected (code $code${if (codespace.isEmpty()) "" else ", $codespace"}): $log")
+    /**
+     * CheckTx refused the tx (a non-zero code): it never entered the mempool
+     * and never lands. [lcd] is the node that answered, which a caller judges
+     * the code's trust by (the node in use may have changed since).
+     */
+    class TxRejected(val code: Int, log: String, val codespace: String = "", val lcd: String = "") : IOException("tx rejected (code $code${if (codespace.isEmpty()) "" else ", $codespace"}): $log")
 
     /**
      * Gas the chain charges this tx. In simulate mode the private ante charges
@@ -69,11 +74,12 @@ object UnsignedTx {
             .put("tx_bytes", txBytes.toByteString().base64())
             .put("mode", "BROADCAST_MODE_SYNC")
             .toString()
-        val (code, resp) = EarthRest.postJson("/cosmos/tx/v1beta1/txs", payload)
+        val lcd = NodeConfig.current.lcd
+        val (code, resp) = EarthRest.postJson("/cosmos/tx/v1beta1/txs", payload, base = lcd)
         if (code !in 200..299) throw IOException("broadcast failed ($code): ${message(resp)}")
         val txResp = JSONObject(resp).getJSONObject("tx_response")
         val checkCode = txResp.optInt("code", 0)
-        if (checkCode != 0) throw TxRejected(checkCode, txResp.optString("raw_log"), txResp.optString("codespace"))
+        if (checkCode != 0) throw TxRejected(checkCode, txResp.optString("raw_log"), txResp.optString("codespace"), lcd)
         return txResp.getString("txhash")
     }
 

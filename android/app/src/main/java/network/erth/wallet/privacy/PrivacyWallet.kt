@@ -263,11 +263,12 @@ class PrivacyWallet(
     private val roots: ChainRoots,
     private val now: () -> Long = { System.currentTimeMillis() / 1000 },
     /**
-     * Whether a tx result's code and codespace can be taken as the chain's:
-     * the node is reached over https. An own node over plain http answers
-     * for anyone on its network, so its codes move nothing persistent.
+     * Whether a tx result's code and codespace can be taken as the chain's,
+     * given the LCD that answered it: the node is reached over https. An own
+     * node over plain http answers for anyone on its network, so its codes
+     * move nothing persistent.
      */
-    private val chainCodesTrusted: () -> Boolean = { true },
+    private val chainCodesTrusted: (lcd: String) -> Boolean = { true },
 ) {
     private val engine = PrivateTxEngine(chainId, chain, prover, verifiedHeight = { store.state.verifiedHeight })
 
@@ -803,7 +804,9 @@ class PrivacyWallet(
             // no cost): the next attempt proves with the next generation. The
             // chain's code, from an https node, moves the floor; text (a
             // simulate's message) only prompts a sync for the record.
-            if (identityRefusal(e) && chainCodesTrusted()) {
+            // Judged by the node that answered, not the one in use now.
+            val refusal = identityRejection(e)
+            if (refusal != null && chainCodesTrusted(refusal.lcd)) {
                 throw if (identityRefused(prep)) IdentityUsed() else IllegalStateException(IDENTITY_SKIPS_EXHAUSTED, e)
             } else if (identityRefusalText(e)) {
                 throw if (identityRefusedUnconfirmed(prep)) IdentityUsed() else IdentityRefusalUnconfirmed()
@@ -2979,10 +2982,12 @@ class PrivacyWallet(
         const val IDENTITY_USED_CODESPACE = "personhood"
 
         /** Whether [e] (or a cause) is CheckTx refusing an identity as used: the chain's code and codespace (1130, personhood). */
-        fun identityRefusal(e: Throwable): Boolean =
-            generateSequence(e) { it.cause }.take(8).any {
-                it is network.erth.wallet.privacy.tx.UnsignedTx.TxRejected && it.code == IDENTITY_USED_CODE && it.codespace == IDENTITY_USED_CODESPACE
-            }
+        fun identityRefusal(e: Throwable): Boolean = identityRejection(e) != null
+
+        /** The CheckTx refusal in [e] (or a cause) that names an identity as used, or null. */
+        fun identityRejection(e: Throwable): network.erth.wallet.privacy.tx.UnsignedTx.TxRejected? =
+            generateSequence(e) { it.cause }.take(8).filterIsInstance<network.erth.wallet.privacy.tx.UnsignedTx.TxRejected>()
+                .firstOrNull { it.code == IDENTITY_USED_CODE && it.codespace == IDENTITY_USED_CODESPACE }
 
         /** Whether [e] (or a cause) says in its text alone that an identity is used: a hint for a sync, never a floor. */
         fun identityRefusalText(e: Throwable): Boolean =

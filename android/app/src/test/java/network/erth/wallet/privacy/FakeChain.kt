@@ -498,13 +498,16 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** An idc that registers elsewhere between the simulate and the broadcast (CheckTx then refuses it: 1130). */
     var usedOnBroadcast: Fr? = null
 
+    /** The LCD a CheckTx refusal names as having answered it. */
+    var answeringLcd = ""
+
     override fun broadcast(tx: ByteArray, accepted: (hash: String) -> Unit): TxResult {
         usedOnBroadcast?.let { usedIdcs.add(it); usedOnBroadcast = null }
         // CheckTx answers with the code and codespace (a simulate with the text alone).
         try { check(tx, simulate = true) } catch (e: IllegalArgumentException) {
             if (e.message?.endsWith("(code 1130)") == true) {
                 prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear()
-                throw network.erth.wallet.privacy.tx.UnsignedTx.TxRejected(1130, e.message!!, "personhood")
+                throw network.erth.wallet.privacy.tx.UnsignedTx.TxRejected(1130, e.message!!, "personhood", answeringLcd)
             }
         }
         if (rejectNext > 0) {

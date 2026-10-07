@@ -481,13 +481,15 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     /// An idc that registers elsewhere between the simulate and the broadcast (CheckTx then refuses it: 1130).
     var usedOnBroadcast: Fr?
+    /// The LCD a CheckTx refusal names as having answered it.
+    var answeringLcd = ""
 
     func broadcast(_ tx: Data, accepted: @Sendable (String) -> Void) async throws -> TxResult {
         if let u = usedOnBroadcast { usedIdcs.insert(u); usedOnBroadcast = nil }
         // CheckTx answers with the code and codespace (a simulate with the text alone).
         do { _ = try check(tx, simulate: true) } catch let e as Refused where e.why.hasSuffix("(code 1130)") {
             prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll()
-            throw UnsignedTx.TxRejected(code: 1130, log: e.why, codespace: "personhood")
+            throw UnsignedTx.TxRejected(code: 1130, log: e.why, codespace: "personhood", lcd: answeringLcd)
         } catch {}
         if rejectNext > 0 {
             // The proofs made for it never reach the chain.

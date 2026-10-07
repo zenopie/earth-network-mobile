@@ -207,19 +207,29 @@ final class IdentityGenerationsTests: PrivacyTestCase {
         XCTAssertEqual(1, a.nextGeneration())
     }
 
-    /// The chain's code from an http own node is anyone's on its network: treated as text.
+    /// The chain's code from an http own node is anyone's on its network:
+    /// treated as text. Trust is judged by the node that answered, whatever
+    /// node is in use by the time the refusal is handled.
     func testACodeFromAnHttpNodeDoesNotMoveTheFloor() async throws {
-        let chain = FakeChain()
-        let a = PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(alice), store: .memory(), indexer: chain, chain: chain, reads: FakeReads(chain: chain),
-                              prover: chain.prover, chainID: chain.chainID, roots: chain, now: { [unowned chain] in chain.now },
-                              chainCodesTrusted: { false })
-        try await register(chain, a, passport: "555")
-        try await lapse(chain, a, 0)
-        let prep = try await fundedPrep(chain, a)
-        chain.usedOnBroadcast = a.keys.idc(1)
-        let e = await send(a, prep)
-        XCTAssertTrue(e is PrivacyWallet.IdentityRefusalUnconfirmed, "\(String(describing: e))")
-        XCTAssertEqual(1, a.nextGeneration())
+        for (answered, moves) in [("http://192.168.1.2:1317", false), ("https://node.example.com", true)] {
+            let chain = FakeChain()
+            let a = PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(alice), store: .memory(), indexer: chain, chain: chain, reads: FakeReads(chain: chain),
+                                  prover: chain.prover, chainID: chain.chainID, roots: chain, now: { [unowned chain] in chain.now },
+                                  chainCodesTrusted: { $0.hasPrefix("https://") })
+            try await register(chain, a, passport: "555")
+            try await lapse(chain, a, 0)
+            let prep = try await fundedPrep(chain, a)
+            chain.usedOnBroadcast = a.keys.idc(1)
+            chain.answeringLcd = answered
+            let e = await send(a, prep)
+            if moves {
+                XCTAssertTrue(e is PrivacyWallet.IdentityUsed, "\(String(describing: e))")
+                XCTAssertEqual(2, a.nextGeneration())
+            } else {
+                XCTAssertTrue(e is PrivacyWallet.IdentityRefusalUnconfirmed, "\(String(describing: e))")
+                XCTAssertEqual(1, a.nextGeneration())
+            }
+        }
     }
 
     /// Structured refusals move the floor at most generationLookahead past the

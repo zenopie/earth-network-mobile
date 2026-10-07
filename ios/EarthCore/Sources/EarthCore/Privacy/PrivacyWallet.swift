@@ -115,17 +115,18 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// The chain's own trees, every synced root is checked against.
     private let roots: ChainRoots
     private let now: @Sendable () -> Int64
-    /// Whether a tx result's code and codespace can be taken as the chain's:
-    /// the node is reached over https. An own node over plain http answers
-    /// for anyone on its network, so its codes move nothing persistent.
-    private let chainCodesTrusted: @Sendable () -> Bool
+    /// Whether a tx result's code and codespace can be taken as the chain's,
+    /// given the LCD that answered it: the node is reached over https. An own
+    /// node over plain http answers for anyone on its network, so its codes
+    /// move nothing persistent.
+    private let chainCodesTrusted: @Sendable (_ lcd: String) -> Bool
     private let engine: PrivateTxEngine
     private let mutex = AsyncMutex()
 
     public init(keys: PrivacyKeys, store: PrivacyStore, indexer: PrivacyIndexer, chain: PrivateChain, reads: PrivacyChainReads,
                 prover: PrivacyProver, chainID: String, roots: ChainRoots,
                 now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) },
-                chainCodesTrusted: @escaping @Sendable () -> Bool = { true }) {
+                chainCodesTrusted: @escaping @Sendable (_ lcd: String) -> Bool = { _ in true }) {
         self.keys = keys; self.store = store; self.indexer = indexer; self.chain = chain; self.reads = reads
         self.chainID = chainID; self.roots = roots; self.now = now; self.chainCodesTrusted = chainCodesTrusted
         engine = PrivateTxEngine(chainID: chainID, chain: chain, prover: prover)
@@ -837,7 +838,6 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func register(_ prep: RegistrationPrep, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data) async throws -> TxResult {
         let mx = await maxActions()
         let skewParam = try? await reads.personhoodParams().currentDateMaxSkewSeconds
-        let trusted = chainCodesTrusted()
         let result: TxResult
         do { result = try await locked {
             try require(publicSignals.count == Self.registerSignals, "a passport proof has \(Self.registerSignals) public signals, not \(publicSignals.count)")
@@ -890,7 +890,8 @@ public final class PrivacyWallet: @unchecked Sendable {
                 // no cost): the next attempt proves with the next generation. The
                 // chain's code, from an https node, moves the floor; text (a
                 // simulate's message) only prompts a sync for the record.
-                if Self.identityRefusal(error) && trusted {
+                // Judged by the node that answered, not the one in use now.
+                if Self.identityRefusal(error), let r = error as? UnsignedTx.TxRejected, chainCodesTrusted(r.lcd) {
                     if identityRefusedLocked(generation: prep.generation) { throw IdentityUsed() }
                     throw IdentitySkipsExhausted()
                 }

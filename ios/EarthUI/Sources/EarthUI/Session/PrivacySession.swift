@@ -174,7 +174,7 @@ enum PrivacySession {
             // Every root the indexer serves is checked against the chain's own.
             roots: LCDChainRoots(rest: client.rest),
             // An http own node's codes could be anyone's on its network.
-            chainCodesTrusted: { !NodeSettings.isCleartext(NodeSettings.current.lcd) }
+            chainCodesTrusted: { lcd in URL(string: lcd).map { !NodeSettings.isCleartext($0) } ?? false }
         )
         wallets[id] = w
         live[id] = WeakWallet(w)

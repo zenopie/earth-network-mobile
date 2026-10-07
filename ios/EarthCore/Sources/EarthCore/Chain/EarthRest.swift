@@ -157,8 +157,9 @@ public struct EarthRest: Sendable {
         return try await request(URLRequest(url: try checked(rpc).appendingPath(path)), maxBytes: maxBytes)
     }
 
-    public func postJSON(_ path: String, body: [String: Any]) async throws -> JSON {
-        var request = URLRequest(url: try checked(lcd).appendingPath(path))
+    /// POSTs to `base` (the LCD in use when nil).
+    public func postJSON(_ path: String, body: [String: Any], base: URL? = nil) async throws -> JSON {
+        var request = URLRequest(url: try checked(base ?? lcd).appendingPath(path))
         request.httpMethod = "POST"
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

@@ -28,12 +28,17 @@ public enum UnsignedTx {
         SHA256.hash(data: txBytes).map { String(format: "%02X", $0) }.joined()
     }
 
-    /// CheckTx refused the tx (a non-zero code): it never entered the mempool and never lands.
+    /// CheckTx refused the tx (a non-zero code): it never entered the mempool
+    /// and never lands. `lcd` is the node that answered, which a caller judges
+    /// the code's trust by (the node in use may have changed since).
     public struct TxRejected: Swift.Error, LocalizedError, Sendable {
         public let code: Int
         public let log: String
         public let codespace: String
-        public init(code: Int, log: String, codespace: String = "") { self.code = code; self.log = log; self.codespace = codespace }
+        public let lcd: String
+        public init(code: Int, log: String, codespace: String = "", lcd: String = "") {
+            self.code = code; self.log = log; self.codespace = codespace; self.lcd = lcd
+        }
         public var errorDescription: String? { "tx rejected (code \(code)\(codespace.isEmpty ? "" : ", \(codespace)")): \(log)" }
     }
 
