@@ -119,6 +119,8 @@ public struct Assembled {
     /// pair reaching its entry cap: PrivacyWallet.redelegateHeadroom).
     public let extraGas: UInt64
     public let build: ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg
+    /// The fee the msg pays, set by the engine once priced (0 before).
+    public internal(set) var fee: UInt64 = 0
 
     public init(bundles: [BundlePlan], stake: StakePlan? = nil, membership: MembershipWitnessSpec? = nil, vote: VoteWitnessSpec? = nil,
                 move: MoveWitnessSpec? = nil, extraGas: UInt64 = 0, build: @escaping ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg) {
@@ -325,8 +327,10 @@ public struct PrivateTxEngine: Sendable {
                     accepted: (String, Assembled, UInt64) -> Void = { _, _, _ in },
                     rejected: (String, Assembled) -> Void = { _, _ in }) async throws -> (TxResult, Assembled) {
         let timeout = try await timeoutHeight(verifiedHeight)
-        let (q, a) = try await price(assemble, memo: memo, timeout: timeout, placeholders: false)
+        let (q, priced) = try await price(assemble, memo: memo, timeout: timeout, placeholders: false)
         if let shownFee, q.fee > shownFee { throw FeeAboveQuote(fee: q.fee, shown: shownFee) }
+        var a = priced
+        a.fee = q.fee
         let tx = PrivateMsgs.TxFields(memo: memo, timeoutHeight: timeout, gasLimit: q.gasLimit)
         let sighash = try draft(a).sighash(chainID: chainID, tx: tx)
         var bundles: [ShieldedBundle] = []

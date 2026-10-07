@@ -712,6 +712,12 @@ public final class WalletSync {
         try await rescanRecords(limit)
         await resolveUnresolved()
         await releaseStalePending()
+        // The activity list's clock (the tip this sync read anyway) and its sent txs in a block.
+        let clockTip = tip
+        store.mutate { s in
+            if let clockTip { s.activity.tick(height: clockTip.height, time: clockTip.time.flatMap { $0 <= UInt64(Int64.max) ? Int64($0) : nil }) }
+            PrivateActivity.settle(&s)
+        }
         let verified = try await verifyRoots(roots)
         // A registration is matched only against an identity
         // tree this same sync verified against the chain's; an unverified one
@@ -994,6 +1000,7 @@ public final class WalletSync {
         // its cm with it.
         let amount = Self.publicAmount(r.amount)
         let note: NotePlaintext
+        let origin: NoteOrigin = r.ciphertext.isEmpty ? .open : (r.ciphertext.count == NoteCipher.blindCiphertextBytes ? .blind : .output)
         switch r.ciphertext.count {
         // An open mint (the referral note to a handle we hold):
         // no ciphertext, the opening on the row. Ours if its owner_pk is ours
@@ -1049,7 +1056,7 @@ public final class WalletSync {
         }
         learnOwn(note.denom)
         return OwnedNote(position: r.position, height: r.height, note: note, cm: r.cm,
-                         nf: PrivacyHash.nf(nk: keys.nk, rho: note.rho, position: r.position))
+                         nf: PrivacyHash.nf(nk: keys.nk, rho: note.rho, position: r.position), origin: origin)
     }
 
     static func publicAmount(_ amount: String?) -> (value: UInt64, denom: String)? {
@@ -1191,12 +1198,20 @@ public final class WalletSync {
             case nil: return false
             }
         }
+        // A tx whose marks go is one the chain says did not land, or failed: its activity row says so.
+        func failed(_ s: inout PrivacyState, _ hash: String?) {
+            guard let hash else { return }
+            let failedInBlock: Bool = { if case .some(.some(.failed)) = status[hash] { return true }; return false }()
+            s.activity.fail(hash, reason: failedInBlock ? PrivateActivity.failedInBlock : PrivateActivity.neverLanded)
+        }
         store.mutate { s in
             for i in s.notes.indices where s.notes[i].unspent && release(s.notes[i].pendingAt, s.notes[i].pendingUntil, s.notes[i].pendingTx, poolRead) {
+                failed(&s, s.notes[i].pendingTx)
                 s.notes[i].pendingAt = nil; s.notes[i].pendingUntil = nil; s.notes[i].pendingTx = nil
             }
             for i in s.stakeNotes.indices where s.stakeNotes[i].unspent &&
                 release(s.stakeNotes[i].pendingAt, s.stakeNotes[i].pendingUntil, s.stakeNotes[i].pendingTx, stakeRead) {
+                failed(&s, s.stakeNotes[i].pendingTx)
                 s.stakeNotes[i].pendingAt = nil; s.stakeNotes[i].pendingUntil = nil; s.stakeNotes[i].pendingTx = nil
             }
         }

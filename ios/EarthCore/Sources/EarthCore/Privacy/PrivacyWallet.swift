@@ -198,6 +198,8 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let moveSuggestedAt: Int64
         /// The move's deadline (`moveDeadline` in the state; 0 none known).
         public let moveDeadline: Int64
+        /// The private activity list, built from the store alone (`PrivateActivity.rows`).
+        public let activity: [PrivateActivityRow]
 
         init(store: PrivacyStore, keys: PrivacyKeys, maxActions: Int, saveError: String? = nil) {
             let s = store.state
@@ -218,6 +220,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             identities = s.identities
             moveSuggestedAt = s.moveSuggestedAt
             moveDeadline = s.moveDeadline
+            activity = PrivateActivity.rows(s)
         }
 
         /// Spendable pool balance per denom (pending spends excluded),
@@ -296,9 +299,33 @@ public final class PrivacyWallet: @unchecked Sendable {
     private func locked<T>(_ body: () async throws -> T) async rethrows -> T {
         try await mutex.withLock {
             defer { publish() }
+            drainExpected()
             return try await body()
         }
     }
+
+    /// Notes the chain will mint to this wallet later, by what they are,
+    /// queued by callers outside the lock (a shield's note is made by a
+    /// confirm sheet's builder) and written to the store under it.
+    private var expectQueue: [(Fr, PrivateActivityKind)] = []
+
+    /// Queues `notes` as expected (`ActivityLog.expect`): written at the
+    /// wallet's next locked operation, before any sync can find them.
+    public func expect(_ kind: PrivateActivityKind, _ notes: NoteOut...) {
+        let rhos = notes.compactMap { $0.note?.rho }
+        guard !rhos.isEmpty else { return }
+        snapLock.lock(); expectQueue += rhos.map { ($0, kind) }; snapLock.unlock()
+    }
+
+    private func drainExpected() {
+        snapLock.lock(); let q = expectQueue; expectQueue = []; snapLock.unlock()
+        guard !q.isEmpty else { return }
+        store.mutate { s in for (rho, k) in q { s.activity.expect(rho, k) } }
+        persistNoThrow()
+    }
+
+    /// Private activity rows, newest first (local: `PrivateActivity.rows`).
+    public func activity() -> [PrivateActivityRow] { snapshot.activity }
 
     /// `locked` for a body that cannot fail.
     func lockedNoThrow(_ body: () -> Void) async { await locked { body() } }
@@ -358,6 +385,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         guard var p = store.state.pendingRegistration, p.leafIndex == nil, p.failure?.hasPrefix(Self.txFailed) != true,
               let r = try? await chain.tx(p.txHash) else { return }
         if r.code != 0 {
+            store.mutate { $0.activity.fail(r.hash, reason: "\(PrivateActivity.failedInBlock) (code \(r.code))", height: r.height > 0 ? r.height : nil) }
             p.failure = "\(Self.txFailed) (code \(r.code)): \(r.log.prefix(200))"
         } else {
             guard let index = r.attr("register", "leaf_index").flatMap(UInt64.init) else { return }
@@ -386,7 +414,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Proves and broadcasts. Only on trees the chain itself vouched for at
     /// the last sync: a proof over an indexer's forged tree is refused by
     /// the chain anyway, and its notes may not exist.
-    private func run(memo: String = "", accepted: (String, UInt64) -> Void = { _, _ in }, rejected: (String) -> Void = { _ in },
+    private func run(_ act: Act, memo: String = "", accepted: (String, UInt64) -> Void = { _, _ in }, rejected: (String) -> Void = { _ in },
                      _ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
         try requireVerified()
         try await requireFreshAnchor()
@@ -395,16 +423,79 @@ public final class PrivacyWallet: @unchecked Sendable {
         // lost answer or a killed app never leaves them spendable. They stay
         // pending until the chain is past the tx's timeout_height and says the
         // tx is not in a block (WalletSync.releaseStalePending).
-        let (result, _) = try await tipChecked { [self] in
-            try await engine.run(assemble, memo: memo, shownFee: Self.shownFee, verifiedHeight: store.state.verifiedHeight, accepted: { [self] hash, a, timeout in
-                markPending(a.spends, a.stakeSpends, timeoutHeight: timeout, hash: hash)
-                accepted(hash, timeout)
-            }, rejected: { [self] hash, a in
-                unmarkPending(a.spends, a.stakeSpends, hash: hash)
-                rejected(hash)
-            })
+        var sent: String?
+        let result: TxResult
+        do {
+            (result, _) = try await tipChecked { [self] in
+                try await engine.run(assemble, memo: memo, shownFee: Self.shownFee, verifiedHeight: store.state.verifiedHeight, accepted: { [self] hash, a, timeout in
+                    markPending(a.spends, a.stakeSpends, timeoutHeight: timeout, hash: hash)
+                    recordSent(act, hash: hash, a)
+                    sent = hash
+                    accepted(hash, timeout)
+                }, rejected: { [self] hash, a in
+                    unmarkPending(a.spends, a.stakeSpends, hash: hash)
+                    store.mutate { $0.activity.drop(hash) }
+                    persistNoThrow()
+                    sent = nil
+                    rejected(hash)
+                })
+            }
+        } catch {
+            // The broadcast's own wait saw it fail in its block: the activity row says why.
+            if let h = sent, let why = Self.failedInBlock(error) {
+                store.mutate { $0.activity.fail(h, reason: why) }
+                persistNoThrow()
+            }
+            throw error
         }
+        store.mutate { $0.activity.confirm(result.hash, height: result.height, time: result.time > 0 ? result.time : nil) }
+        persistNoThrow()
         return result
+    }
+
+    /// What a private tx is, for the activity list (`PrivateActivity`): its
+    /// kind, who it is with where the wallet knows (a handle, its own new
+    /// identity), and the notes the chain mints to this wallet in the same tx
+    /// (shown as what came in). Its coins and fee are read from the tx
+    /// itself. As Android's Act.
+    struct Act {
+        let kind: PrivateActivityKind
+        var counterparty = ""
+        var receives: [NoteOut] = []
+    }
+
+    /// The broadcast's wait saw the tx fail in its block (the node's
+    /// executionFailed; FakeChain's "tx failed"): the reason, else nil.
+    static func failedInBlock(_ e: Swift.Error) -> String? {
+        if case let EarthClient.Error.executionFailed(code, log) = e { return "tx failed (code \(code)): \(log.prefix(160))" }
+        let text = String(describing: e)
+        return text.hasPrefix("tx failed") ? String(text.prefix(200)) : nil
+    }
+
+    /// Records a tx the node took in the sealed store's activity: never looked up by hash for it.
+    private func recordSent(_ act: Act, hash: String, _ a: Assembled) {
+        let own = keys.ownerPK
+        let outs = a.bundles.flatMap { $0.actions.map(\.out) }
+        let back = outs.filter { o in o.note.map { $0.pc(ownerPK: own) == o.pc } ?? false }
+        var stakeBack: [ActivityCoin] = []
+        if let p = a.stake, let o = p.out, let d = p.denom { stakeBack.append(PrivateActivity.coin(d, o.amount)) }
+        if let c = a.stake?.credit { stakeBack.append(PrivateActivity.coin(c.denom, c.out.amount)) }
+        let (o, i) = PrivateActivity.coins(poolSpent: PrivateActivity.ofNotes(a.spends), poolBack: back.map { PrivateActivity.coin($0.denom, $0.value) },
+                                           stakeSpent: PrivateActivity.ofStake(a.stakeSpends), stakeBack: stakeBack, fee: a.fee)
+        let change = back.compactMap { $0.note?.rho.hex } + [a.stake?.out?.rho.hex, a.stake?.credit?.out.rho.hex].compactMap { $0 }
+        let tx = SentPrivateTx(hash: hash, kind: act.kind, generation: store.state.generation, counterparty: act.counterparty, fee: a.fee,
+                               submittedAt: now(), outs: o, ins: i, change: change, receives: act.receives.compactMap { $0.note?.rho.hex },
+                               spent: (a.spends.map(\.nf) + a.stakeSpends.map(\.nf)).map(\.hex))
+        store.mutate { $0.activity.record(tx) }
+        persistNoThrow()
+    }
+
+    /// A tx an existing check already looked up (a move, an undelegation, a vote): its activity row takes the outcome.
+    private func outcome(_ r: TxResult) {
+        store.mutate { s in
+            if r.code == 0 { s.activity.confirm(r.hash, height: r.height, time: r.time > 0 ? r.time : nil) }
+            else { s.activity.fail(r.hash, reason: "\(PrivateActivity.failedInBlock) (code \(r.code))", height: r.height > 0 ? r.height : nil) }
+        }
     }
 
     /// A tip far past the last verified sync height is either a
@@ -616,12 +707,12 @@ public final class PrivacyWallet: @unchecked Sendable {
     // MARK: - pool
 
     /// A private send of `amount` `denom` to `to`; the fee comes out of ERTH notes.
-    public func send(to: ShieldedAddress, denom: String, amount: UInt64, memo: Data = Data()) async throws -> TxResult {
+    public func send(to: ShieldedAddress, denom: String, amount: UInt64, memo: Data = Data(), counterparty: String = "") async throws -> TxResult {
         try Self.requireTransferable(denom)
         let m = await maxActions()
         return try await locked {
             let out = try NoteOut.to(to, denom: denom, value: amount, memo: memo)
-            return try await run { fee in
+            return try await run(Act(kind: .send, counterparty: counterparty)) { fee in
                 let b = try self.bundle([out], release: [Self.fee: fee], maxActions: m)
                 return Assembled(bundles: [b]) { bs, _, _ in MsgSend(bundle: bs[0], fee: fee) }
             }
@@ -643,7 +734,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         let m = await maxActions()
         return try await locked {
             // The memo (an exchange's deposit tag) is bound by the sighash.
-            try await run(memo: memo) { fee in
+            try await run(Act(kind: .unshield, counterparty: receiver), memo: memo) { fee in
                 let release: [String: UInt64]
                 if feeFromAmount {
                     try require(amount > fee, "the amount must exceed the \(fee)uerth fee")
@@ -664,7 +755,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func merge(denom: String) async throws -> TxResult {
         let m = await maxActions()
         return try await locked {
-            try await run { fee in
+            try await run(Act(kind: .merge)) { fee in
                 let budget = denom == Self.fee ? m : m - 1
                 let ns = Array(NoteSelection.spendable(self.store.state.notes, denom: denom).sorted(by: NoteSelection.ascending).prefix(budget))
                 try require(ns.count >= 2, "nothing to merge")
@@ -682,7 +773,11 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// so built by the caller's key): the chain mints it, so it carries a v2
     /// ciphertext of fresh secrets, which sync opens against the shield's
     /// public amount.
-    public func shieldOutput(denom: String, amount: UInt64) throws -> NoteOut { try mint(denom) }
+    public func shieldOutput(denom: String, amount: UInt64) throws -> NoteOut {
+        let n = try mint(denom)
+        expect(.shield, n)
+        return n
+    }
 
     static func requireTransferable(_ denom: String) throws {
         try require(!denom.hasPrefix(derthPrefix), "stake is owner-locked: it cannot be sent or unshielded")
@@ -812,6 +907,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let anml = try mint("uanml")
             let erth = try mint("uerth")
             let gas = try mint("uerth")
+            store.mutate { s in if let rho = gas.note?.rho { s.activity.expect(rho, .gasGrant) } }
             var aff = Fr.zero
             if let r = referrer {
                 try require(Handles.valid(r.handle), "\(r.handle) is not a handle")
@@ -884,7 +980,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             }
             let result: TxResult
             do {
-                result = try await run(accepted: pending, rejected: refused) { fee in
+                result = try await run(Act(kind: .register, receives: [prep.anml, prep.erth]), accepted: pending, rejected: refused) { fee in
                     Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)]) { bs, _, _ in
                         var m = base
                         m.fee = bs[0]
@@ -907,6 +1003,10 @@ public final class PrivacyWallet: @unchecked Sendable {
             try recordPendingLocked(result)
             // A switch: the move suggestion is drawn now, so its reminder comes
             // even if Identity is never opened.
+            if result.attr("register", "switched") == "true" {
+                store.mutate { $0.activity.update(result.hash) { $0.kind = .switchIdentity } }
+                persistNoThrow()
+            }
             if result.attr("register", "switched") == "true", let leaf = result.attr("register", "leaf_index").flatMap(Int64.init) {
                 drawMoveSuggestion(leaf: leaf, activatedAt: result.time, generation: prep.generation)
             }
@@ -956,7 +1056,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let m = try membership(scope: PrivacyHash.claimScope(day: day), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: (day - 1).multipliedReportingOverflow(by: UInt64(Self.secondsPerDay)).partialValue,
                                    maxPredecessor: PrivacyHash.noBound)
-            let r = try await run { fee in
+            let r = try await run(Act(kind: .claimAnml, receives: [anml])) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
                     MsgClaimAnmlPrivate(fee: bs[0], membership: mem!, day: day, pc: anml.pc.bytes, ciphertext: anml.ciphertext)
                 }
@@ -1133,7 +1233,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                     : WalletSync.caretakerMemo(nk: nk, kind: WalletSync.recordHolds, expiresAt: estimate, split: split, generation: g)
             }
             let r = try await boundAttempt(wait) {
-                try await run { fee in
+                try await run(Act(kind: .caretaker)) { fee in
                     Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
                         MsgSetCaretaker(fee: bs[0], membership: mem!, percentages: w, maxPredecessor: maxPred)
                     }
@@ -1372,7 +1472,8 @@ public final class PrivacyWallet: @unchecked Sendable {
             try require(fixed.isEmpty || fixed == rc.targetID, "this identity already moved to another wallet; switch to that one")
             if let why = rc.refusal(move) { throw PrivacyError(why) }
         }
-        return try await run(accepted: { [self] hash, timeout in
+        let party = move.kind == PendingMove.handleKind ? "@\(move.handle)" : "caretaker vote"
+        return try await run(Act(kind: .move, counterparty: party), accepted: { [self] hash, timeout in
             var p = move
             p.txHash = hash; p.timeoutHeight = timeout
             var ok = true
@@ -1452,6 +1553,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                 // Settled already through the other slot of a move within the wallet.
                 guard store.state.slot(g).pendingMoves.contains(p) else { continue }
                 let r = try? await chain.tx(p.txHash)
+                if let r { outcome(r) }
                 if let r, r.code == 0 { confirmMove(p.txHash) }
                 else if let r { store.mutate { _ = $0.voidRecordHeights.insert(r.height) }; dropMove(p, generation: g) }
                 // A timeout no sane tip gives is settled by the tx's status alone.
@@ -1614,7 +1716,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: maxPred)
             let record = try stateRecord(keys, store.state.generation) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordHolds, handle: handle, generation: $1) }
             let r = try await boundAttempt(wait) {
-                try await run { fee in
+                try await run(Act(kind: .handle, counterparty: "@\(handle)")) { fee in
                     Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
                         MsgBindHandle(fee: bs[0], membership: mem!, handle: handle, address: addr, maxPredecessor: maxPred)
                     }
@@ -1660,7 +1762,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: PrivacyHash.noBound)
             let record = try stateRecord(keys, store.state.generation) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordNone, generation: $1) }
-            let r = try await run { fee in
+            let r = try await run(Act(kind: .handle, counterparty: "released @\(store.state.handle)")) { fee in
                 Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
                     MsgBindHandle(fee: bs[0], membership: mem!, handle: "", address: "", maxPredecessor: PrivacyHash.noBound)
                 }
@@ -1793,7 +1895,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             // The chain's statement: max_activation no bound, max_predecessor the ballot's (opened - 86400).
             let m = try membership(scope: b.scope, excludedDsc: b.excludedDsc, excludedCountry: b.excludedCountry,
                                    maxActivation: b.maxActivation, maxPredecessor: b.maxPredecessor)
-            return try await run { fee in
+            return try await run(Act(kind: .vote, counterparty: "proposal \(proposalID)")) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
                     MsgVoteProposalPrivate(fee: bs[0], membership: mem!, proposalID: proposalID, option: yes ? .yes : .no)
                 }
@@ -1811,7 +1913,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let maxPred = UInt64(max(0, Int64(day) * Self.secondsPerDay - Self.activationMargin))
             let m = try membership(scope: PrivacyHash.proposeRemovalScope(optionID: optionID, day: day), excludedDsc: .zero,
                                    excludedCountry: .zero, maxActivation: PrivacyHash.noBound, maxPredecessor: maxPred)
-            return try await run { fee in
+            return try await run(Act(kind: .vote, counterparty: "removal of option \(optionID)")) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
                     MsgProposeRemoval(fee: bs[0], membership: mem!, optionID: optionID)
                 }
@@ -1828,7 +1930,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             }
             let m = try membership(scope: b.scope, excludedDsc: b.excludedDsc, excludedCountry: b.excludedCountry,
                                    maxActivation: b.maxActivation, maxPredecessor: b.maxPredecessor)
-            return try await run { fee in
+            return try await run(Act(kind: .vote, counterparty: "removal of option \(optionID)")) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
                     MsgVoteRemoval(fee: bs[0], membership: mem!, optionID: optionID, option: yes ? .yes : .no)
                 }
@@ -2144,7 +2246,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             if Self.haircutOf(stake) > q.haircut {
                 throw QuoteChanged(message: "a slash reached stake you moved to this validator since the quote; review it again")
             }
-            return try await run { fee in
+            return try await run(Act(kind: .stake, counterparty: q.validator)) { fee in
                 // The fee is the bundle's uerth balance less amount.
                 let b = try self.bundle(release: try Self.plus([Self.fee: q.amount], Self.fee, fee), maxActions: mx)
                 return Assembled(bundles: [b], stake: stake) { bs, sp, _ in
@@ -2174,7 +2276,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                     : "nothing to merge")
             }
             let stake = try laneA(denom, spends: two, vIn: 0, vOut: 0, d)
-            return try await run { fee in
+            return try await run(Act(kind: .restake, counterparty: validator)) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
                     MsgRestake(bundle: bs[0], validator: validator, stake: sp!)
                 }
@@ -2260,7 +2362,8 @@ public final class PrivacyWallet: @unchecked Sendable {
             let payout = try mint(Self.fee)
             let pc = payout.pc
             let started = now()
-            return try await run(accepted: { [self] hash, timeout in
+            store.mutate { s in if let rho = payout.note?.rho { s.activity.expect(rho, .unbondingPayout) } }
+            return try await run(Act(kind: .unstake, counterparty: validator), accepted: { [self] hash, timeout in
                 recordUnbond(PendingUnbond(txHash: hash, validator: validator, derth: amount, pc: pc, startedAt: started, until: timeout))
             }, rejected: { [self] hash in
                 dropUnbond(hash)
@@ -2351,7 +2454,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             if Self.haircutOf(stake) > q.haircut {
                 throw QuoteChanged(message: "a slash reached stake you moved to this validator since the quote; review it again")
             }
-            return try await run { fee in
+            return try await run(Act(kind: .redelegate, counterparty: "\(q.src) → \(q.dst)")) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake,
                           extraGas: Self.redelegateHeadroom(entries: q.pairEntries, counted: q.pairCounted)) { bs, sp, _ in
                     MsgRedelegate(bundle: bs[0], srcValidator: q.src, dstValidator: q.dst, amount: q.amount, stake: sp!,
@@ -2426,6 +2529,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             if paid.contains(u.pc) { dropUnbond(u.txHash); continue }
             if u.confirmed { continue }
             if let r = (try? await chain.tx(u.txHash)) ?? nil {
+                outcome(r)
                 let epoch = r.attr(Self.undelegateEvent, "epoch").flatMap(UInt64.init)
                 var due: Int64?
                 if r.code == 0, let e = epoch { due = await reads.unbondDueBy(epoch: e) }
@@ -2567,7 +2671,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
         let sent = Sent()
         do {
-            let r = try await run(accepted: { [self] hash, timeout in
+            let r = try await run(Act(kind: .vote, counterparty: "proposal \(proposalID)"), accepted: { [self] hash, timeout in
                 sent.value = true
                 for v in used { recordVote(StakeVoteRecord(proposalID: proposalID, vnf: v, txHash: hash, until: timeout, confirmed: false)) }
             }, rejected: { [self] hash in
@@ -2701,6 +2805,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         for v in pending {
             var r: TxResult?
             if let h = v.txHash { r = (try? await chain.tx(h)) ?? nil }
+            if let r { outcome(r) }
             var next: StakeVoteRecord? = v
             if let r {
                 // A 1119 refuses the whole msg for the one note the chain names: only that one is final.
@@ -3112,7 +3217,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             try store.save()
             let stake = try leave(validator, amount: amount, d, salt: keys.otagSalt(counter))
             let w = Self.weights(splits)
-            return try await run { fee in
+            return try await run(Act(kind: .position, counterparty: "locked with \(validator)")) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
                     MsgLockPosition(bundle: bs[0], validator: validator, amount: amount, splits: w, stake: sp!)
                 }
@@ -3132,7 +3237,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return try await locked {
             let stake = try await ownerPlan(position, counter: counter)
             let w = Self.weights(splits)
-            return try await run { fee in
+            return try await run(Act(kind: .position, counterparty: "updated position \(position.id)")) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
                     MsgUpdatePosition(bundle: bs[0], positionID: position.id, splits: w, stake: sp!)
                 }
@@ -3154,7 +3259,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let stake = try laneA(denom, spends: StakeSelection.merge(spendableStake(denom)) { Self.freeOf($0, d) }, vIn: position.derth, vOut: 0, d,
                                   salt: keys.otagSalt(counter))
             let record = try NoteOut.to(keys.address, denom: Self.fee, value: 0, memo: WalletSync.unlockMemo(nk: keys.nk, counter: counter))
-            return try await run { fee in
+            return try await run(Act(kind: .position, counterparty: "unlocked position \(position.id)")) { fee in
                 Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)], stake: stake) { bs, sp, _ in
                     MsgUnlockPosition(bundle: bs[0], positionID: position.id, stake: sp!)
                 }
@@ -3167,7 +3272,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         let mx = await maxActions()
         return try await locked {
             let stake = try await ownerPlan(position, counter: counter)
-            return try await run(accepted: { hash, _ in accepted(hash) }) { fee in
+            return try await run(Act(kind: .vote, counterparty: "proposal \(proposalID), position \(position.id)"), accepted: { hash, _ in accepted(hash) }) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
                     MsgPositionVote(bundle: bs[0], positionID: position.id, proposalID: proposalID, options: try PrivateMsgs.canonicalOptions(options), stake: sp!)
                 }
@@ -3182,13 +3287,15 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// with a value-blind (v2) ciphertext opened against the amount the chain
     /// publishes. The fee comes from the bundle's ERTH balance (the one fee
     /// rule: a swap of ANML into ERTH needs an ERTH note for it too).
-    public func noteSwap(denomIn: String, amountIn: UInt64, denomOut: String, minOut: UInt64, to: ShieldedAddress? = nil) async throws -> TxResult {
+    public func noteSwap(denomIn: String, amountIn: UInt64, denomOut: String, minOut: UInt64, to: ShieldedAddress? = nil,
+                         counterparty: String = "") async throws -> TxResult {
         try require(denomIn != denomOut && amountIn > 0 && minOut > 0, "a swap needs two denoms and positive amounts")
         try Self.requireTransferable(denomIn)
         let mx = await maxActions()
         return try await locked {
             let out = try payout(denomOut, to: to)
-            return try await run { fee in
+            let mine = to.map { $0.ownerPK == keys.ownerPK } ?? true
+            return try await run(Act(kind: mine ? .swap : .send, counterparty: counterparty, receives: mine ? [out] : [])) { fee in
                 let b = try self.bundle(release: try Self.plus([denomIn: amountIn], Self.fee, fee), maxActions: mx)
                 return Assembled(bundles: [b]) { bs, _, _ in
                     MsgNoteSwap(bundle: bs[0], denomIn: denomIn, amountIn: amountIn, denomOut: denomOut, minAmountOut: minOut,
@@ -3211,7 +3318,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return try await locked {
             let refund = try mint(token)
             let shares = try mint(Self.lpDenom(poolID))
-            return try await run { fee in
+            return try await run(Act(kind: .addLiquidity, counterparty: "pool \(poolID)", receives: [refund, shares])) { fee in
                 let b = try self.bundle(release: try Self.plus([token: tokenAmount, Self.fee: erthAmount], Self.fee, fee), maxActions: mx)
                 return Assembled(bundles: [b]) { bs, _, _ in
                     MsgAddLiquidityShielded(bundle: bs[0], poolID: poolID, minShares: minShares, refundPC: refund.pc.bytes,
@@ -3231,7 +3338,9 @@ public final class PrivacyWallet: @unchecked Sendable {
         return try await locked {
             let erth = try mint(Self.fee)
             let tok = try mint(token)
-            return try await run { fee in
+            // Both legs are minted once the LP unbonding ends: received rows of their own.
+            store.mutate { s in for n in [erth, tok] { if let rho = n.note?.rho { s.activity.expect(rho, .lpPayout) } } }
+            return try await run(Act(kind: .removeLiquidity, counterparty: "pool \(poolID)")) { fee in
                 let b = try self.bundle(release: [Self.lpDenom(poolID): shares, Self.fee: fee], maxActions: mx)
                 return Assembled(bundles: [b]) { bs, _, _ in
                     MsgRemoveLiquidityShielded(bundle: bs[0], poolID: poolID, erthPC: erth.pc.bytes, erthCiphertext: erth.ciphertext,
@@ -3277,7 +3386,12 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// by the provider's transparent key): pc and v2 ciphertext to us, since
     /// the payout is priced when the withdrawal matures.
     public func withdrawalNote() async throws -> NoteOut {
-        try await locked { try payout("uanml", to: nil) }
+        try await locked {
+            let n = try payout("uanml", to: nil)
+            store.mutate { s in if let rho = n.note?.rho { s.activity.expect(rho, .lpPayout) } }
+            persistNoThrow()
+            return n
+        }
     }
 
     /// Where a chain-priced payment goes (a swap's or a MsgBuyAnml's output,

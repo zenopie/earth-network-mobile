@@ -406,6 +406,8 @@ public struct PrivacyState: Codable, Sendable {
     /// window grows past it, WalletSync tries those notes again. As Android.
     public var unmatchedRecordFrom: UInt64?
     public var unmatchedRecordWindow: Int = 0
+    /// The private activity list's own data (PrivateActivity): what this wallet sent, and what it expects minted to it.
+    public var activity = ActivityLog()
 
     public init() {}
 
@@ -498,7 +500,7 @@ public struct PrivacyState: Codable, Sendable {
              pendingUnbonds, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax,
              syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
              voidRecordHeights, labelWindowSeconds, carriedMarks, registrationKeepUntil, positionLeases,
-             generation, generationFloor, identities, unmatchedRecordFrom, unmatchedRecordWindow
+             generation, generationFloor, identities, unmatchedRecordFrom, unmatchedRecordWindow, activity
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -521,6 +523,7 @@ public struct PrivacyState: Codable, Sendable {
         try c.encode(registrationKeepUntil, forKey: .registrationKeepUntil); try c.encode(positionLeases, forKey: .positionLeases)
         try c.encode(generation, forKey: .generation); try c.encode(generationFloor, forKey: .generationFloor)
         try c.encodeIfPresent(unmatchedRecordFrom, forKey: .unmatchedRecordFrom); try c.encode(unmatchedRecordWindow, forKey: .unmatchedRecordWindow)
+        try c.encode(activity, forKey: .activity)
         // String keys: a JSON object, not an alternating array.
         try c.encode(Dictionary(uniqueKeysWithValues: identities.filter { $0.key == generation || !$0.value.empty }.map { (String($0.key), $0.value) }),
                      forKey: .identities)
@@ -560,6 +563,7 @@ public struct PrivacyState: Codable, Sendable {
         positionLeases = try v(.positionLeases, [:])
         unmatchedRecordFrom = try c.decodeIfPresent(UInt64.self, forKey: .unmatchedRecordFrom)
         unmatchedRecordWindow = try v(.unmatchedRecordWindow, 0)
+        activity = try v(.activity, ActivityLog())
     }
 }
 
@@ -804,6 +808,8 @@ public final class PrivacyStore {
             s.positionLeases = old.positionLeases
             s.labelWindowSeconds = old.labelWindowSeconds
             s.claimedDays = old.claimedDays
+            // What it sent and expects: the resync finds the notes again and folds them in.
+            s.activity = old.activity
             Self.keepHandleState(old, &s)
             // Notes a tx in flight spends stay unspendable through the resync.
             s.carriedMarks = old.carriedMarks
@@ -814,6 +820,8 @@ public final class PrivacyStore {
             // recorded for the chain the app follows (PrivacyWallet.recordIncoming).
             Self.keepSlots(old, &s) { _ in false }
             Self.keepHandleState(old, &s)
+            // A gas grant asked for before the first sync is still expected.
+            s.activity = old.activity
         }
         state = s
         try save()

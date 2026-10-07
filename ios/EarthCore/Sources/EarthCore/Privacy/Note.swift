@@ -63,11 +63,13 @@ public struct OwnedNote: Hashable, Sendable, Codable {
     public var pendingUntil: UInt64?
     /// That tx's hash: released only once the chain says it is missing or failed (nil: a mark made before marks carried the hash).
     public var pendingTx: String?
+    /// How sync found it (nil: synced before the wallet kept it): what a received row calls it.
+    public var origin: NoteOrigin?
 
     public init(position: UInt64, height: UInt64, note: NotePlaintext, cm: Fr, nf: Fr, spentHeight: UInt64? = nil, pendingAt: Int64? = nil,
-                pendingUntil: UInt64? = nil) {
+                pendingUntil: UInt64? = nil, origin: NoteOrigin? = nil) {
         self.position = position; self.height = height; self.note = note; self.cm = cm; self.nf = nf
-        self.spentHeight = spentHeight; self.pendingAt = pendingAt; self.pendingUntil = pendingUntil
+        self.spentHeight = spentHeight; self.pendingAt = pendingAt; self.pendingUntil = pendingUntil; self.origin = origin
     }
 
     public var unspent: Bool { spentHeight == nil }
@@ -76,10 +78,17 @@ public struct OwnedNote: Hashable, Sendable, Codable {
     func withDenom(_ denom: String) -> OwnedNote {
         var n = OwnedNote(position: position, height: height,
                           note: NotePlaintext(denom: denom, value: note.value, rho: note.rho, rcm: note.rcm, memo: note.memo),
-                          cm: cm, nf: nf, spentHeight: spentHeight, pendingAt: pendingAt, pendingUntil: pendingUntil)
+                          cm: cm, nf: nf, spentHeight: spentHeight, pendingAt: pendingAt, pendingUntil: pendingUntil, origin: origin)
         n.pendingTx = pendingTx
         return n
     }
+}
+
+/// A pool note's format as found (PRIVACY_FORMATS §5): a bundle output (v1,
+/// `output`), a note the chain minted to a hidden owner (v2, `blind`), or an
+/// open mint, the referral note (`open`). As Android's NoteOrigin.
+public enum NoteOrigin: String, Codable, Hashable, Sendable {
+    case output = "v1", blind = "v2", open
 }
 
 /// A stake note's slash label (ORCHARD_DESIGN 8.7): the note holds
