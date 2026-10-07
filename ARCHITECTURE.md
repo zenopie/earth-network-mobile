@@ -58,7 +58,8 @@ javalite.
 | `Personhood.kt` | Network-wide registration count. Everything per-person is private (`privacy/`). |
 | `Gov.kt`, `Assembly.kt` | Proposals and tallies in both chambers. Votes are private msgs. |
 | `ChainErrors.kt` | Chain error codes explained in plain language. |
-| `Explorer.kt` | Blocks and transactions for the explorer and the activity list. |
+| `Explorer.kt` | Blocks for the explorer; the activity list's transactions, each looked up by hash. |
+| `SentTxLog.kt` | The hashes of the txs this wallet broadcast, per address, on the device: the activity list. Earth's public node lists no transactions by address (an address search is a whole-history scan on the validator), so a transfer received from someone else shows in the balance, not as a row. |
 | `math/PoolApr.kt`, `math/SwapQuote.kt` | Must match `x/dex` and the chain's reward maths. |
 
 ## privacy/

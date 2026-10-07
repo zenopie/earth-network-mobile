@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import network.erth.wallet.Constants
 import network.erth.wallet.chain.Bank
 import network.erth.wallet.chain.Explorer
+import network.erth.wallet.chain.SentTxLog
 import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.privacy.sync.WalletSync
 import network.erth.wallet.privacy.tx.ShieldMove
@@ -124,7 +125,8 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
 
             _activity.value = withContext(Dispatchers.IO) {
                 runCatching {
-                    Explorer.txsForAddress(address).map { it.toActivityRow(address) }
+                    val ctx = getApplication<Application>()
+                    Explorer.txsByHash(SentTxLog.hashes(ctx, address)).map { it.toActivityRow(address) }
                 }.getOrDefault(emptyList())
             }
         }

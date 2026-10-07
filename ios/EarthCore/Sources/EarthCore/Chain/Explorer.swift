@@ -3,8 +3,13 @@ import Foundation
 /// Transactions, read back off the chain.
 ///
 /// Ports the part of `chain/Explorer.kt` the wallet screen needs: what this
-/// address has done lately. The chain indexes by event, so "mine" is two
-/// searches — what I signed, and what was sent to me — merged.
+/// address has done lately. That is the transactions this wallet sent
+/// (``SentTxLog``), each looked up by hash. Not a search by address: Earth's
+/// public node refuses one, because CometBFT loads every match of a search
+/// before it pages and cannot cancel it, so an address search is a scan of
+/// that address's whole history on the only validator (round-5 R5-E-1); and
+/// the node indexes no address events. A transfer someone else sent to this
+/// address shows in its balance, not as a row.
 public enum Explorer {
 
     public struct Tx: Sendable, Identifiable, Equatable {
@@ -113,44 +118,39 @@ public extension EarthClient {
         )
     }
 
-    /// This address's recent transactions, newest first.
-    ///
-    /// Two queries because the chain indexes the signer and the recipient
-    /// under different events, and a received transfer was signed by someone
-    /// else — searching only `message.sender` would show a wallet nothing it
-    /// had ever been paid.
-    func transactions(for address: String, limit: Int = 20) async -> [Explorer.Tx] {
-        async let sent = searchTransactions("message.sender='\(address)'", limit: limit)
-        async let received = searchTransactions("transfer.recipient='\(address)'", limit: limit)
-
-        var byHash = [String: Explorer.Tx]()
-        for tx in await sent + (await received) { byHash[tx.hash] = tx }
-        return byHash.values.sorted { $0.height > $1.height }.prefix(limit).map { $0 }
-    }
-
-    private func searchTransactions(_ query: String, limit: Int) async -> [Explorer.Tx] {
-        let escaped = query.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? query
-        guard let json = try? await rest.get(
-            "/cosmos/tx/v1beta1/txs?query=\(escaped)&order_by=ORDER_BY_DESC&limit=\(limit)"
-        ) else { return [] }
-
-        let responses = json.tx_responses.array
-        let bodies = json.txs.array
-
-        return responses.enumerated().compactMap { index, response in
-            guard let hash = response.txhash.string else { return nil }
-            let messages = bodies.indices.contains(index)
-                ? bodies[index].body.messages.array
-                : []
-            return Explorer.Tx(
-                hash: hash,
-                height: response.height.int64(default: 0),
-                success: response.code.int64(default: 0) == 0,
-                timestamp: response.timestamp.string(default: ""),
-                // "/cosmos.bank.v1beta1.MsgSend" -> "MsgSend".
-                types: messages.compactMap { $0["@type"].string?.components(separatedBy: ".").last },
-                first: (messages.first?.raw as? [String: Any]) ?? [:]
-            )
+    /// These transactions, newest first: each looked up by hash (a point
+    /// read in the node's index). A hash the node does not know (not yet
+    /// indexed, or dropped from the mempool) is left out.
+    func transactions(hashes: [String]) async -> [Explorer.Tx] {
+        await withTaskGroup(of: Explorer.Tx?.self) { group in
+            for hash in hashes where SentTxLog.isHash(hash) {
+                group.addTask {
+                    guard let json = try? await rest.get("/cosmos/tx/v1beta1/txs/\(hash)") else { return nil }
+                    return Explorer.tx(lookup: json)
+                }
+            }
+            var out: [Explorer.Tx] = []
+            for await tx in group { if let tx { out.append(tx) } }
+            return out.sorted { $0.height > $1.height }
         }
+    }
+}
+
+public extension Explorer {
+    /// A `GET /cosmos/tx/v1beta1/txs/{hash}` answer as a row's data, or nil
+    /// when it names no tx.
+    static func tx(lookup json: JSON) -> Tx? {
+        let response = json.tx_response
+        guard let hash = response.txhash.string, !hash.isEmpty else { return nil }
+        let messages = json.tx.body.messages.array
+        return Tx(
+            hash: hash,
+            height: response.height.int64(default: 0),
+            success: response.code.int64(default: 0) == 0,
+            timestamp: response.timestamp.string(default: ""),
+            // "/cosmos.bank.v1beta1.MsgSend" -> "MsgSend".
+            types: messages.compactMap { $0["@type"].string?.components(separatedBy: ".").last },
+            first: (messages.first?.raw as? [String: Any]) ?? [:]
+        )
     }
 }

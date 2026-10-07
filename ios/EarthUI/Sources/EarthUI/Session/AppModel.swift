@@ -550,6 +550,9 @@ public final class AppModel {
         closePrivacy()
         // The wallets' private data goes with them; a failure is shown, not dropped.
         do { try PrivacySession.forgetAll() } catch { privacySyncError = describe(error) }
+        // And the activity list's record of what each wallet sent.
+        for w in wallets { SentTxLog.standard.clear(w.address) }
+        if !address.isEmpty { SentTxLog.standard.clear(address) }
         store.delete()
         sessionPin = nil
         PrivacySession.setDataKey(nil)
@@ -738,7 +741,7 @@ public final class AppModel {
         async let unbondings = client.unbondingDelegations(address)
         async let rewards = client.totalRewards(address)
         async let bonded = client.totalBonded()
-        async let transactions = client.transactions(for: address)
+        async let transactions = client.transactions(hashes: SentTxLog.standard.hashes(for: address))
 
         self.balances = await balances.compactMapValues { BigInt($0) }
         self.pools = await pools

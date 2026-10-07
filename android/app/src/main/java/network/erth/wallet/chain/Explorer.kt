@@ -145,35 +145,30 @@ object Explorer {
     // --- transactions ---
 
     /**
-     * Transactions matching a CometBFT query string, newest first. The LCD
-     * returns two parallel arrays — `txs` (decoded bodies) and `tx_responses`
-     * (execution results) — which are zipped here.
+     * These transactions, newest first: each looked up by hash (a point read
+     * in the node's index). A hash the node does not know (not yet indexed,
+     * or dropped from the mempool) is left out.
+     *
+     * Not a search by address: Earth's public node refuses one, because
+     * CometBFT loads every match of a search before it pages and cannot
+     * cancel it, so an address search is a scan of that address's whole
+     * history on the only validator (round-5 R5-E-1), and the node indexes no
+     * address events. The wallet's activity is the txs it sent ([SentTxLog]);
+     * a transfer someone else sent shows in the balance, not as a row.
      */
-    private fun searchTxs(query: String, limit: Int = 20): List<Tx> {
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val json = getJson(
-            "/cosmos/tx/v1beta1/txs?query=$encoded&order_by=ORDER_BY_DESC&limit=$limit"
-        ) ?: return emptyList()
-        val responses = json.optJSONArray("tx_responses") ?: return emptyList()
-        val bodies = json.optJSONArray("txs")
-        val out = ArrayList<Tx>(responses.length())
-        for (i in 0 until responses.length()) {
-            out.add(toTx(responses.getJSONObject(i), bodies?.optJSONObject(i)))
-        }
-        return out
+    suspend fun txsByHash(hashes: List<String>): List<Tx> = coroutineScope {
+        hashes.filter(SentTxLog::isHash)
+            .map { h -> async(Dispatchers.IO) { getJson("/cosmos/tx/v1beta1/txs/$h")?.let(::fromLookup) } }
+            .awaitAll()
+            .filterNotNull()
+            .sortedByDescending { it.height }
     }
 
-    /**
-     * Transactions involving an address — both those it signed and those that
-     * paid it. A `message.sender` query alone misses incoming transfers, since
-     * those are indexed under the sender, so both are queried and merged.
-     */
-    fun txsForAddress(address: String, limit: Int = 20): List<Tx> {
-        val sent = searchTxs("message.sender='$address'", limit)
-        val received = searchTxs("transfer.recipient='$address'", limit)
-        val byHash = LinkedHashMap<String, Tx>()
-        for (tx in sent + received) byHash[tx.hash] = tx
-        return byHash.values.sortedByDescending { it.height }.take(limit)
+    /** A `GET /cosmos/tx/v1beta1/txs/{hash}` answer, or null when it names no tx. */
+    internal fun fromLookup(json: JSONObject): Tx? {
+        val res = json.optJSONObject("tx_response") ?: return null
+        if (res.optString("txhash", "").isEmpty()) return null
+        return toTx(res, json.optJSONObject("tx"))
     }
 
     private fun toTx(res: JSONObject, body: JSONObject?): Tx {

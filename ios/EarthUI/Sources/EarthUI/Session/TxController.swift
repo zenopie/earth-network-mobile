@@ -349,11 +349,15 @@ public final class TxController {
         guard let wallet = wallets.first(where: { $0.address == model.address }) else { throw WalletStore.Error.notFound }
         let key = try EarthKey(mnemonic: wallet.mnemonic)
         let messages = try await build(key)
+        let signer = key.address
         return try await model.client.broadcast(
             messages,
             key: key,
             gasLimit: details.gasLimit,
-            feeUerth: details.feeUerth
+            feeUerth: details.feeUerth,
+            // The activity list is the txs this wallet sent (SentTxLog): the
+            // public node lists none by address.
+            accepted: { SentTxLog.standard.record($0, for: signer) }
         )
     }
 

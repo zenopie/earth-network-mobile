@@ -48,6 +48,8 @@ public struct EarthClient: Sendable {
     }
 
     /// Sign, broadcast, and wait for the block. Returns the tx hash.
+    /// `accepted` gets the hash once the node has taken the tx into its
+    /// mempool, before the wait.
     ///
     /// Waiting is not optional politeness: a caller that re-queries chain state
     /// straight after broadcasting sees the state before its own transaction
@@ -58,7 +60,8 @@ public struct EarthClient: Sendable {
         key: EarthKey,
         gasLimit: UInt64 = TransactionSigner.defaultGasLimit,
         feeUerth: String = TransactionSigner.defaultFeeUerth,
-        memo: String = ""
+        memo: String = "",
+        accepted: @Sendable (String) -> Void = { _ in }
     ) async throws -> String {
         let account = try await account(key.address)
         let signed = try TransactionSigner.sign(
@@ -84,6 +87,9 @@ public struct EarthClient: Sendable {
         guard let hash = txResponse.txhash.string else {
             throw Error.notCommitted(hash: "")
         }
+        // In the mempool: from here it is this wallet's transaction whatever
+        // its block says (SentTxLog, the activity list).
+        accepted(hash)
         return try await awaitCommit(hash)
     }
 

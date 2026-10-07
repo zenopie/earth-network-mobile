@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.chain.EarthTx
 import network.erth.wallet.chain.Fees
+import network.erth.wallet.chain.SentTxLog
 import network.erth.wallet.chain.TxUnconfirmedException
 import network.erth.wallet.crypto.EarthWallet
 import network.erth.wallet.wallet.SecureWalletManager
@@ -162,7 +163,12 @@ class TxController : ViewModel() {
                     } else {
                         SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
                             val key = EarthWallet.deriveKey(mnemonic)
-                            EarthTx.broadcast(key, msgs!!, gasLimit, feeUerth.toString())
+                            val signer = EarthWallet.address(key)
+                            // The activity list is the txs this wallet sent:
+                            // the public node lists none by address.
+                            EarthTx.broadcast(key, msgs!!, gasLimit, feeUerth.toString()) {
+                                SentTxLog.record(context, signer, it)
+                            }
                         }
                     }
                 }

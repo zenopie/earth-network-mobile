@@ -52,6 +52,9 @@ object EarthTx {
         // Defaults to whatever gasLimit costs, so a caller that raises the gas
         // and forgets the fee gets a valid transaction rather than a rejection.
         feeUerth: String = Fees.forGasString(gasLimit),
+        // Gets the hash once the node has taken the tx into its mempool,
+        // before the wait (SentTxLog, the activity list).
+        accepted: (hash: String) -> Unit = {},
     ): String {
         // Already on a background thread here (broadcast does network IO), so
         // this is the right place to learn the node's gas price. Fees.forGas
@@ -108,6 +111,7 @@ object EarthTx {
         val checkCode = txResp.optInt("code", 0)
         if (checkCode != 0) throw IOException("tx rejected (code $checkCode): ${txResp.optString("raw_log")}")
         val txHash = txResp.getString("txhash")
+        accepted(txHash)
         // Wait for the tx to be included in a block and verify its execution result,
         // so callers that immediately re-query chain state see the committed effect.
         return awaitCommit(txHash)
