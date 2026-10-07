@@ -201,9 +201,10 @@ internal fun EarthContent(
             // Fees for private actions come from the shielded part only.
             erthBalance = state?.let { formatUerth(it.balanceUerth + it.shieldedErthUerth) },
             anmlBalance = state?.let { it.anmlBalance ?: "0" },
-            publicErthUerth = state?.balanceUerth,
-            privateErthUerth = state?.shieldedErthUerth,
-            privateStakeUerth = privateStakeValue,
+            coins = state?.let { s -> ShieldMove.coins(s.holdings.associate { it.denom to it.amount }, s.shielded) },
+            unshieldableUerth = state?.unshieldableErthUerth ?: 0L,
+            shieldFee = TxController.DEFAULT_FEE_UERTH,
+            unshieldFee = TxController.feeFor(TxController.PRIVATE_GAS_ESTIMATE),
             onMove = { moving = it },
             balancesVisible = balancesVisible,
             activity = activity,
@@ -234,7 +235,7 @@ internal fun EarthContent(
             // the portfolio here: its ERTH value, the derth amount beneath.
             // An undelegation waiting for its payout shows from this wallet's
             // own record until the chain mints the payout to it.
-            holdings = state?.holdings.orEmpty() + state?.shielded.orEmpty()
+            holdings = state?.shielded.orEmpty()
                 .filterKeys { it.startsWith("derth/") }
                 .map { (denom, amount) ->
                     val op = denom.removePrefix("derth/")

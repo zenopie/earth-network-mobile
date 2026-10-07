@@ -53,7 +53,7 @@ object Tokens {
             )
 
     /** "uerth" -> "ERTH". Micro-denoms are the only convention this chain uses. */
-    private fun symbolOf(denom: String): String =
+    fun symbolOf(denom: String): String =
         denom.removePrefix("u").uppercase()
 
     /** The mark for a denom, in its own colours. Public: sheets outside the

@@ -57,6 +57,9 @@ import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.wallet.ActivityItem
 import network.erth.wallet.ui.wallet.ActivityRow
+import network.erth.wallet.ui.wallet.CoinRow
+import network.erth.wallet.ui.wallet.CoinSheet
+import network.erth.wallet.privacy.tx.ShieldMove
 import network.erth.wallet.ui.wallet.Holding
 import network.erth.wallet.ui.wallet.MoveDirection
 
@@ -82,12 +85,13 @@ fun HomeScreen(
     /** Null while the balance is still being read; their shimmer stands in. */
     erthBalance: String?,
     anmlBalance: String?,
-    /** The account's ERTH (public) and the notes' (private); null while loading. */
-    publicErthUerth: Long?,
-    privateErthUerth: Long?,
-    /** Private stake in ERTH at its validators' live rates; hidden at zero. */
-    privateStakeUerth: Long,
-    /** Opens the Shield / Unshield sheet. */
+    /** Every coin, public and private (ShieldMove.coins); null while loading. */
+    coins: List<ShieldMove.Coin>?,
+    /** What one ERTH unshield can spend: whether a coin's sheet offers Unshield. */
+    unshieldableUerth: Long,
+    shieldFee: Long,
+    unshieldFee: Long,
+    /** Opens the Shield / Unshield sheet, from a coin's sheet. */
     onMove: (MoveDirection) -> Unit,
     balancesVisible: Boolean,
     activity: List<ActivityRow>?,
@@ -104,7 +108,7 @@ fun HomeScreen(
     stakedUerth: Long,
     rewardsUerth: Long,
     unbondingUerth: Long,
-    /** Everything held, so the portfolio can show what is not ERTH or ANML. */
+    /** Held but not a coin (private stake, unstaking, positions): Portfolio's positions. */
     holdings: List<Holding>,
     onSeeAllActivity: () -> Unit,
     modifier: Modifier = Modifier,
@@ -119,6 +123,8 @@ fun HomeScreen(
 ) {
     // Which list is under the cards. The third action swaps it.
     var panel by remember { mutableStateOf(HomePanel.Activity) }
+    // The coin whose sheet is open, by denom: read from [coins] each time, so a refresh shows in it.
+    var coinOpen by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = modifier.fillMaxSize(),
@@ -163,18 +169,23 @@ fun HomeScreen(
             rewardsUerth = rewardsUerth,
             unbondingUerth = unbondingUerth,
             holdings = holdings,
-            split = {
-                BalanceSplit(
-                    anml = anmlBalance,
-                    publicUerth = publicErthUerth,
-                    privateUerth = privateErthUerth,
-                    privateStakeUerth = privateStakeUerth,
-                    onMove = onMove,
-                    visible = balancesVisible,
-                )
-            },
+            coins = coins,
+            balancesVisible = balancesVisible,
+            onCoin = { coinOpen = it },
             onSeeAll = onSeeAllActivity,
             contentPadding = contentPadding,
+        )
+    }
+
+    coins?.firstOrNull { it.denom == coinOpen }?.let { coin ->
+        CoinSheet(
+            coin = coin,
+            visible = balancesVisible,
+            unshieldableUerth = unshieldableUerth,
+            shieldFee = shieldFee,
+            unshieldFee = unshieldFee,
+            onMove = { coinOpen = null; onMove(it) },
+            onDismiss = { coinOpen = null },
         )
     }
 }
@@ -245,104 +256,6 @@ private fun BalanceWidget(erth: String?, anml: String?, visible: Boolean) {
                 )
             }
         }
-    }
-}
-
-/**
- * Where the ERTH is, and the way across: private (shielded notes, invisible on
- * chain, what private fees come from) and public (the account, what Keplr,
- * exchanges and validator actions see).
- *
- * In Portfolio rather than under the balance: the headline stays the one
- * total, and the split sits with the rest of what is held. Shield and Unshield
- * sit directly under the two lines they move between. ANML is always private;
- * private stake is held, not spendable, and valued at its validators' live
- * rates.
- */
-@Composable
-private fun BalanceSplit(
-    anml: String?,
-    publicUerth: Long?,
-    privateUerth: Long?,
-    privateStakeUerth: Long,
-    onMove: (MoveDirection) -> Unit,
-    visible: Boolean,
-) {
-    Column(
-        Modifier
-            .padding(start = 24.dp, end = 24.dp, bottom = 8.dp)
-            .fillMaxWidth()
-            .background(EarthColors.Surfaces.bgSecondary, RoundedCornerShape(16.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        BalanceLine("Private", locked = true, value = privateUerth?.let { "${formatUerth(it)} ERTH" }, visible = visible)
-        BalanceLine("Public", locked = false, value = publicUerth?.let { "${formatUerth(it)} ERTH" }, visible = visible)
-        if (privateStakeUerth > 0) {
-            BalanceLine("Staked (private)", locked = true, value = "${formatUerth(privateStakeUerth)} ERTH", visible = visible)
-        }
-        // ANML exists only shielded.
-        BalanceLine("ANML", locked = true, value = anml?.let { "$it ANML" }, visible = visible)
-        Row(
-            Modifier.fillMaxWidth().padding(top = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            MoveButton("Shield", Modifier.weight(1f)) { onMove(MoveDirection.Shield) }
-            MoveButton("Unshield", Modifier.weight(1f)) { onMove(MoveDirection.Unshield) }
-        }
-    }
-}
-
-@Composable
-private fun BalanceLine(label: String, locked: Boolean, value: String?, visible: Boolean) {
-    val shimmer = rememberEarthShimmer()
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) {
-            if (locked) {
-                Image(
-                    modifier = Modifier.size(12.dp),
-                    painter = painterResource(R.drawable.ic_lock),
-                    contentDescription = "private",
-                    colorFilter = ColorFilter.tint(EarthAccent.ink),
-                )
-            }
-        }
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = label,
-            style = EarthTypography.textSm,
-            color = EarthColors.Text.textSecondary,
-            modifier = Modifier.weight(1f),
-        )
-        when {
-            !visible -> Text("••••", style = EarthTypography.textSm, color = EarthColors.Text.textPrimary)
-            value == null -> Box(Modifier.shimmer(shimmer)) { ShimmerRectangle(width = 72.dp, height = 14.dp) }
-            else -> Text(
-                text = value,
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-@Composable
-private fun MoveButton(text: String, modifier: Modifier, onClick: () -> Unit) {
-    Box(
-        modifier
-            .height(36.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(EarthColors.Btns.Secondary.btnSecondaryBg)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            style = EarthTypography.textSm.copy(fontWeight = FontWeight.SemiBold),
-            color = EarthColors.Btns.Secondary.btnSecondaryFg,
-        )
     }
 }
 
@@ -461,8 +374,9 @@ private fun HomeListPanel(
     rewardsUerth: Long,
     unbondingUerth: Long,
     holdings: List<Holding>,
-    /** The private/public split and Shield / Unshield, at the top of Portfolio. */
-    split: @Composable () -> Unit,
+    coins: List<ShieldMove.Coin>?,
+    balancesVisible: Boolean,
+    onCoin: (String) -> Unit,
     onSeeAll: () -> Unit,
     contentPadding: PaddingValues,
 ) {
@@ -507,7 +421,29 @@ private fun HomeListPanel(
                 }
             }
             if (panel == HomePanel.Portfolio) {
-                item { split() }
+                if (coins == null) {
+                    items(2) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp, vertical = 12.dp)
+                                .shimmer(shimmer),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ShimmerCircle(size = 44.dp)
+                            Spacer(Modifier.width(14.dp))
+                            Column {
+                                ShimmerRectangle(width = 64.dp, height = 16.dp)
+                                Spacer(Modifier.height(6.dp))
+                                ShimmerRectangle(width = 120.dp, height = 12.dp)
+                            }
+                        }
+                    }
+                } else {
+                    items(coins, key = { it.denom }) { coin ->
+                        CoinRow(coin, balancesVisible) { onCoin(coin.denom) }
+                    }
+                }
                 portfolio(stakedUerth, rewardsUerth, unbondingUerth, holdings)
                 return@LazyColumn
             }
@@ -550,14 +486,9 @@ private fun HomeListPanel(
 }
 
 /**
- * What is held beyond the spendable balance.
- *
- * ERTH and ANML are the widget at the top of this screen, and their
- * private/public split is [BalanceSplit] just above this, so neither is
- * repeated as a row — but *staked* ERTH is not that balance. It is
- * held and not spendable, which is exactly the distinction the balance above
- * cannot make, and a wallet showing only the spendable figure looks to its
- * owner like it lost the rest.
+ * What is held but not spendable, under the coins: stake, positions, rewards,
+ * unbonding. Named apart because a wallet that shows only the spendable
+ * figure looks to its owner like it lost the rest.
  */
 private fun LazyListScope.portfolio(
     stakedUerth: Long,
@@ -565,23 +496,15 @@ private fun LazyListScope.portfolio(
     unbondingUerth: Long,
     holdings: List<Holding>,
 ) {
-    val others = holdings.filter { it.denom != "uerth" && it.denom != "uanml" && it.amount > 0 }
-    val hasPosition = stakedUerth > 0 || rewardsUerth > 0 || unbondingUerth > 0
-
-    if (others.isEmpty() && !hasPosition) {
-        item {
-            Text(
-                text = "Nothing else yet. Staked ERTH, rewards, and any token other " +
-                    "than ERTH and ANML appear here — including your share of a pool " +
-                    "you provide liquidity to.",
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textTertiary,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-            )
-        }
-        return
+    if (stakedUerth <= 0 && rewardsUerth <= 0 && unbondingUerth <= 0 && holdings.isEmpty()) return
+    item {
+        Text(
+            text = "Positions",
+            style = EarthTypography.textSm.copy(fontWeight = FontWeight.SemiBold),
+            color = EarthColors.Text.textSecondary,
+            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 4.dp),
+        )
     }
-
     if (stakedUerth > 0) {
         item { PositionRow("Staked", "Delegated · earning", "${formatUerth(stakedUerth)} ERTH") }
     }
@@ -600,7 +523,7 @@ private fun LazyListScope.portfolio(
             )
         }
     }
-    items(others) { holding ->
+    items(holdings) { holding ->
         PositionRow(holding.symbol, holding.detail ?: holding.denom, holding.display)
     }
 }
