@@ -812,6 +812,8 @@ class PrivacyStore private constructor(
                 // recorded for the chain the app follows (PrivacySession.recorderFor).
                 keepSlots(old, this) { false }
                 keepHandleState(old, this)
+                // A gas grant asked for before the first sync is still expected.
+                activity = old.activity.copy()
             }
         }
         save()
