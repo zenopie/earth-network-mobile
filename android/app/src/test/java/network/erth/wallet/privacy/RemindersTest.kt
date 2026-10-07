@@ -68,4 +68,35 @@ class RemindersTest {
         assertTrue(Reminders.text(Reminders.Reminder.GroundworksExpiring(3, now + 7 * 86_400, false), now).contains("expires in 7 days"))
         assertTrue(Reminders.text(Reminders.Reminder.GroundworksExpiring(3, now - 1, true), now).contains("Choose a split again"))
     }
+
+    /** The move reminder grows urgent as the deadline nears. */
+    @Test
+    fun theMoveReminderEscalates() {
+        val far = Reminders.text(Reminders.Reminder.MoveSuggested(now - 1, now + 20 * 86_400), now)
+        assertTrue(far, far.contains("within 20 days"))
+        val near = Reminders.text(Reminders.Reminder.MoveSuggested(now - 1, now + 2 * 86_400), now)
+        assertTrue(near, near.startsWith("Move your handle and caretaker vote from your previous identity now"))
+        assertTrue(Reminders.text(Reminders.Reminder.MoveSuggested(now - 1), now).contains("suggested time"))
+    }
+
+    /**
+     * Before the registration's year ends: a handle or caretaker vote whose
+     * lease ends within RENEW_FIRST_WINDOW_SECONDS after it is to be renewed
+     * first (the live identity can; after the lapse it cannot).
+     */
+    @Test
+    fun renewBeforeTheRegistrationLapses() {
+        val end = now + 10 * 86_400
+        val base = Reminders.Inputs(now, identityLive = true, claimOpensAt = null, claimedToday = true, caretakerExpiresAt = 0,
+            handle = "alice", handleEntry = null, registrationEndsAt = end, handleExpiresAt = end + 5 * 86_400)
+        val r = Reminders.due(base).filterIsInstance<Reminders.Reminder.RenewBeforeLapse>().single()
+        assertEquals("alice", r.handle)
+        assertTrue(Reminders.text(r, now).startsWith("Your registration ends in 10 days. Renew @alice before then"))
+        // A lease that outlasts the window, or a registration far from its end: nothing.
+        assertTrue(Reminders.due(base.copy(handleExpiresAt = end + PrivacyWallet.RENEW_FIRST_WINDOW_SECONDS)).none { it is Reminders.Reminder.RenewBeforeLapse })
+        assertTrue(Reminders.due(base.copy(registrationEndsAt = now + Reminders.LEAD_SECONDS + 1)).none { it is Reminders.Reminder.RenewBeforeLapse })
+        // The vote too.
+        val v = Reminders.due(base.copy(handle = "", caretakerExpiresAt = end + 86_400)).filterIsInstance<Reminders.Reminder.RenewBeforeLapse>().single()
+        assertTrue(Reminders.text(v, now).contains("Renew your caretaker vote before then"))
+    }
 }

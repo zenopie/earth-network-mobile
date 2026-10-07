@@ -232,12 +232,19 @@ class IdentitySlot {
      */
     var moveSuggestedAt: Long = 0
     var moveSuggestedLeaf: Long = -1
+    /**
+     * The earliest lease end of what the predecessor still holds to move
+     * here, as Identity last read it (0: none known): past it, the old
+     * identity can neither move nor renew it. The suggestion is capped
+     * before it, and the reminder grows urgent as it nears.
+     */
+    var moveDeadline: Long = 0
 
     /** Whether it holds or did nothing (such a slot is not written). */
     val empty: Boolean get() = identity == null && caretakerCastAt == 0L && caretakerSplit.isEmpty() && caretakerExpiresAt == 0L &&
         !caretakerMovedOut && handle.isEmpty() && !handleMovedOut && handleSetAt == 0L && handleExpiresAt == 0L && handleExpiresFor.isEmpty() &&
         !caretakerSplitUnknown && handleRecordPos == -1L && caretakerRecordPos == -1L && pendingMoves.isEmpty() && switchTarget.isEmpty() &&
-        moveSuggestedAt == 0L && moveSuggestedLeaf == -1L
+        moveSuggestedAt == 0L && moveSuggestedLeaf == -1L && moveDeadline == 0L
 
     /** A copy; [keepIdentity] filters the registration kept. */
     fun copy(keepIdentity: (IdentityRecord) -> Boolean = { true }): IdentitySlot = IdentitySlot().also { c ->
@@ -247,6 +254,7 @@ class IdentitySlot {
         c.handleExpiresAt = handleExpiresAt; c.handleExpiresFor = handleExpiresFor; c.caretakerSplitUnknown = caretakerSplitUnknown
         c.handleRecordPos = handleRecordPos; c.caretakerRecordPos = caretakerRecordPos; c.pendingMoves.addAll(pendingMoves)
         c.switchTarget = switchTarget; c.moveSuggestedAt = moveSuggestedAt; c.moveSuggestedLeaf = moveSuggestedLeaf
+        c.moveDeadline = moveDeadline
     }
 
     fun toJson(generation: Int): JSONObject = JSONObject().apply {
@@ -265,6 +273,7 @@ class IdentitySlot {
         put("pending_moves", JSONArray().apply { pendingMoves.forEach { put(PrivacyState.moveJson(it)) } })
         put("switch_target", switchTarget)
         put("move_suggested_at", moveSuggestedAt); put("move_suggested_leaf", moveSuggestedLeaf)
+        put("move_deadline", moveDeadline)
     }
 
     companion object {
@@ -283,6 +292,7 @@ class IdentitySlot {
             j.optJSONArray("pending_moves")?.let { a -> for (i in 0 until a.length()) pendingMoves.add(PrivacyState.moveFromJson(a.getJSONObject(i))) }
             switchTarget = j.optString("switch_target")
             moveSuggestedAt = j.optLong("move_suggested_at"); moveSuggestedLeaf = j.optLong("move_suggested_leaf", -1)
+            moveDeadline = j.optLong("move_deadline")
         }
     }
 }
@@ -414,6 +424,7 @@ class PrivacyState {
     var switchTarget: String get() = current.switchTarget; set(v) { current.switchTarget = v }
     var moveSuggestedAt: Long get() = current.moveSuggestedAt; set(v) { current.moveSuggestedAt = v }
     var moveSuggestedLeaf: Long get() = current.moveSuggestedLeaf; set(v) { current.moveSuggestedLeaf = v }
+    var moveDeadline: Long get() = current.moveDeadline; set(v) { current.moveDeadline = v }
     /** Heights of this wallet's txs that failed in their block: their state records are void. */
     val voidRecordHeights: MutableSet<Long> = sortedSetOf()
     /** Undelegations whose payout has not arrived yet. */

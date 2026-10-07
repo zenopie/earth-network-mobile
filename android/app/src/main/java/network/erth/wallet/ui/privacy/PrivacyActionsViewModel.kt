@@ -150,6 +150,13 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                     ownAddress = w.address.encode(),
                     groundworks = groundworks,
                     moveSuggestedAt = w.moveSuggestionDue(),
+                    moveDeadline = w.moveDeadline(),
+                    // The chain's registered_at is the registration's block time (activated_at).
+                    registrationEndsAt = st.identity?.takeIf { live }?.let { id ->
+                        val validity = params?.registrationValiditySeconds?.takeIf { it in 1..network.erth.wallet.privacy.handles.Handles.MAX_AHEAD_SECONDS } ?: (365L * 86_400)
+                        network.erth.wallet.privacy.handles.Handles.satAdd(id.activatedAt, validity)
+                    } ?: 0L,
+                    handleExpiresAt = entry?.expiresAt ?: runCatching { w.handleExpiresAt() }.getOrDefault(0L),
                 ),
             )
             return PersonalState(

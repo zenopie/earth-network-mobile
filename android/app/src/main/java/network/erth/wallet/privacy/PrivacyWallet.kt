@@ -1300,16 +1300,23 @@ class PrivacyWallet(
      * uniformly from [MOVE_DELAY_MIN_SECONDS] to [MOVE_DELAY_MAX_SECONDS],
      * after the registration's block time. A move that lands right after a
      * switch links the handle, its owner_pk and the split to the passport's
-     * public registration by timing (ORCHARD_DESIGN 6.6); nothing hurries it
-     * while this identity stays live. Only a suggestion: the user chooses,
-     * and nothing is sent unasked. 0 without a verified registration.
+     * public registration by timing (ORCHARD_DESIGN 6.6). But the move has
+     * a deadline: [deadline], the earliest lease end of what the
+     * predecessor holds (0: none known). Past it the old identity can
+     * neither move nor renew it, and this one cannot claim a handle or cast
+     * a vote for up to a year, so the suggestion is never later than
+     * [MOVE_DEADLINE_MARGIN_SECONDS] before it (now, when there is not that
+     * long left). The deadline is kept for the reminder. Only a suggestion:
+     * the user chooses, and nothing is sent unasked. 0 without a verified
+     * registration.
      */
     @Synchronized
-    fun suggestedMoveAt(): Long {
+    fun suggestedMoveAt(deadline: Long = store.state.moveDeadline): Long {
         val id = store.state.identity?.takeIf { it.verified } ?: return 0
         val s = store.state
-        if (s.moveSuggestedLeaf == id.leafIndex && s.moveSuggestedAt > 0) return s.moveSuggestedAt
-        return drawMoveSuggestion(id.leafIndex, id.activatedAt)
+        val drawn = if (s.moveSuggestedLeaf == id.leafIndex && s.moveSuggestedAt > 0) s.moveSuggestedAt else drawMoveSuggestion(id.leafIndex, id.activatedAt)
+        if (s.moveDeadline != deadline) { s.moveDeadline = maxOf(0L, deadline); store.save() }
+        return cappedMoveAt(drawn, deadline)
     }
 
     private fun drawMoveSuggestion(leaf: Long, activatedAt: Long, g: Int = generation): Long {
@@ -1330,13 +1337,21 @@ class PrivacyWallet(
     @Synchronized
     fun clearMoveSuggestion() {
         val s = store.state
-        if (s.moveSuggestedAt <= 0) return
-        s.moveSuggestedAt = -1
+        if (s.moveSuggestedAt <= 0 && s.moveDeadline == 0L) return
+        if (s.moveSuggestedAt > 0) s.moveSuggestedAt = -1
+        s.moveDeadline = 0
         store.save()
     }
 
-    /** The suggested move time once it has come, for the reminder (0: none due). */
-    fun moveSuggestionDue(): Long = store.state.moveSuggestedAt.takeIf { it in 1..now() } ?: 0
+    /** The suggested move time (capped at the deadline) once it has come, for the reminder (0: none due). */
+    fun moveSuggestionDue(): Long {
+        val s = store.state
+        val at = s.moveSuggestedAt.takeIf { it > 0 } ?: return 0
+        return cappedMoveAt(at, s.moveDeadline).coerceAtLeast(1).takeIf { it <= now() } ?: 0
+    }
+
+    /** The move's deadline as Identity last read it (0: none known). */
+    fun moveDeadline(): Long = store.state.moveDeadline
 
     /** Marks a confirmed move recorded in its target (a retried [MoveRecorder.record] succeeded). */
     @Synchronized
@@ -2919,6 +2934,25 @@ class PrivacyWallet(
         /** The suggested wait before a move after a switch: drawn uniformly between these (hours to days). */
         const val MOVE_DELAY_MIN_SECONDS = 6 * 3600L
         const val MOVE_DELAY_MAX_SECONDS = 3 * 86_400L
+
+        /**
+         * The suggested move comes at least this long before the earliest
+         * lease end of what is to move: room for the reminder to be seen and
+         * for a move that needs a retry.
+         */
+        const val MOVE_DEADLINE_MARGIN_SECONDS = 3 * 86_400L
+
+        /**
+         * Before a switch, and before the registration's year ends: a handle
+         * or caretaker split whose lease ends within this long is worth
+         * renewing first (the live identity can), so a move after the switch
+         * or renewal has a full lease to land in rather than days.
+         */
+        const val RENEW_FIRST_WINDOW_SECONDS = 30 * 86_400L
+
+        /** [drawn], no later than [MOVE_DEADLINE_MARGIN_SECONDS] before [deadline] (0: none). */
+        fun cappedMoveAt(drawn: Long, deadline: Long): Long =
+            if (deadline <= 0) drawn else minOf(drawn, Handles.satSub(deadline, MOVE_DEADLINE_MARGIN_SECONDS))
 
         /** A register proof's public signals: [current_date, address, nullifier, dsc_key, idc]. */
         const val REGISTER_SIGNALS = 5

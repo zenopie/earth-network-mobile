@@ -226,6 +226,8 @@ internal fun EarthContent(
                     is Reminders.Reminder.GroundworksExpiring -> { { nav.push(EarthRoute.Positions) } }
                     is Reminders.Reminder.HandleExpiring, is Reminders.Reminder.HandlePaysElsewhere -> { { nav.push(EarthRoute.Handle) } }
                     is Reminders.Reminder.MoveSuggested -> { { nav.push(EarthRoute.Personhood) } }
+                    // The handle first when it is one of them; the caretaker vote is renewed where it is cast.
+                    is Reminders.Reminder.RenewBeforeLapse -> if (r.handle.isNotEmpty()) { { nav.push(EarthRoute.Handle) } } else { { nav.push(EarthRoute.Stream(true)) } }
                 }
             },
             // Private stake (derth) is notes, not bank balances, so it joins
@@ -586,11 +588,22 @@ internal fun EarthContent(
                     }
                 }
             }
+            // What this identity holds whose lease ends soon: renewed first (it still can), its move after the switch has a full lease.
+            val renewFirst = personal?.takeIf { it.identityLive }?.let { p ->
+                network.erth.wallet.ui.privacy.renewSoonText(p.handle, p.handleEntry?.expiresAt ?: 0L, p.caretakerExpiresAt, now)
+            }
             SwitchIdentityScreen(
                 wallets = walletList,
                 currentIndex = walletsState?.selectedIndex ?: SecureWalletManager.getSelectedWalletIndex(),
                 targetWarning = targetWarning,
                 unmoved = unmoved,
+                renewFirst = renewFirst,
+                onRenewFirst = {
+                    val p = personal
+                    val handleSoon = p != null && p.handle.isNotEmpty() &&
+                        network.erth.wallet.ui.privacy.renewSoonText(p.handle, p.handleEntry?.expiresAt ?: 0L, 0L, now) != null
+                    nav.push(if (handleSoon) EarthRoute.Handle else EarthRoute.Stream(true))
+                },
                 onTargetChange = ::check,
                 onContinue = { target ->
                     // The target registers the same passport to its next

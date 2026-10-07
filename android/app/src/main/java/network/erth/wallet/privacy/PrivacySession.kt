@@ -166,9 +166,35 @@ object PrivacySession {
         val suggestedAt: Long = 0,
         /** The predecessor is this wallet's own identity generation [fromGeneration] (re-entry or a fresh identity): one phrase, one fee payer. */
         val fromGeneration: Int = -1,
+        /** Its handle's lease end (0: unknown or none). */
+        val handleExpiresAt: Long = 0,
     ) {
         val anything: Boolean get() = handle.isNotEmpty() || voteLive || inFlight.isNotEmpty()
         val withinWallet: Boolean get() = fromIndex == SELF
+
+        private val handleToMove: Boolean get() = handleLive && inFlight.none { it.kind == network.erth.wallet.privacy.sync.PendingMove.HANDLE && !it.confirmed }
+        private val voteToMove: Boolean get() = voteLive && inFlight.none { it.kind == network.erth.wallet.privacy.sync.PendingMove.CARETAKER && !it.confirmed }
+
+        /**
+         * The move's deadline: the earliest lease end of what is still to
+         * move (0: none known). Past it the old identity can neither move
+         * nor renew it.
+         */
+        val deadline: Long get() = listOfNotNull(
+            handleExpiresAt.takeIf { handleToMove && it > 0 },
+            voteExpiresAt.takeIf { voteToMove && it > 0 },
+        ).minOrNull() ?: 0L
+
+        /** What runs out at [deadline], for the sentence that names it. */
+        val deadlineWhat: String get() {
+            val h = handleToMove && handleExpiresAt > 0 && handleExpiresAt == deadline
+            val v = voteToMove && voteExpiresAt > 0 && voteExpiresAt == deadline
+            return when {
+                h && v -> "@$handle's lease and your caretaker vote end"
+                h -> "@$handle's lease ends"
+                else -> "your caretaker vote's lease ends"
+            }
+        }
     }
 
     /** [MoveOffer.fromIndex] of an earlier identity of the selected wallet. */
@@ -204,8 +230,10 @@ object PrivacySession {
                 inFlight = w.outgoingMoves(k).filter { !it.confirmed },
                 feeErth = w.poolBalances()[PrivacyWallet.FEE] ?: 0L,
                 fromGeneration = k,
+                handleExpiresAt = handleExp,
             )
-            return if (offer.anything) offer.copy(suggestedAt = w.suggestedMoveAt()) else offer.also { w.clearMoveSuggestion() }
+            // Capped before what it holds stops being movable.
+            return if (offer.anything) offer.copy(suggestedAt = w.suggestedMoveAt(offer.deadline)) else offer.also { w.clearMoveSuggestion() }
         }
         val selected = SecureWalletManager.getSelectedWalletIndex()
         for (info in SecureWalletManager.listWallets()) {
@@ -226,9 +254,11 @@ object PrivacySession {
                 voteLive = p.caretakerLive(), voteExpiresAt = p.caretakerExpiresAt(),
                 inFlight = p.outgoingMoves().filter { !it.confirmed || !it.recorded },
                 feeErth = p.poolBalances()[PrivacyWallet.FEE] ?: 0L,
+                handleExpiresAt = handleExp,
             )
-            // Something to bring: the suggested time (drawn once). Nothing: its reminder ends.
-            return if (offer.anything) offer.copy(suggestedAt = w.suggestedMoveAt()) else offer.also { w.clearMoveSuggestion() }
+            // Something to bring: the suggested time (drawn once, capped before
+            // what it holds stops being movable). Nothing: its reminder ends.
+            return if (offer.anything) offer.copy(suggestedAt = w.suggestedMoveAt(offer.deadline)) else offer.also { w.clearMoveSuggestion() }
         }
         // No predecessor on this phone (a switch from a lost phrase): nothing can move here.
         w.clearMoveSuggestion()

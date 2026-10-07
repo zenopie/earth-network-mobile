@@ -45,9 +45,22 @@ object Reminders {
         /**
          * After a switch: the time the wallet suggested for bringing the
          * predecessor's handle and caretaker vote over ([at]) has come.
-         * The move itself is the user's to make.
+         * [deadline] (0: unknown) is the earliest lease end of what is to
+         * move: past it the old identity can neither move nor renew it, so
+         * the reminder grows urgent as it nears. The move itself is the
+         * user's to make.
          */
-        data class MoveSuggested(val at: Long) : Reminder
+        data class MoveSuggested(val at: Long, val deadline: Long = 0) : Reminder
+
+        /**
+         * The registration ends at [registrationEndsAt] and this identity's
+         * handle ([handle], "" none) or caretaker vote ends soon after
+         * ([handleExpiresAt], [voteExpiresAt]; 0 when not at stake): once the
+         * registration lapses this identity can renew neither, and after a
+         * renewal they can be moved only until their leases end. Renewing
+         * them now gives that move a full lease.
+         */
+        data class RenewBeforeLapse(val registrationEndsAt: Long, val handle: String, val handleExpiresAt: Long, val voteExpiresAt: Long) : Reminder
     }
 
     /**
@@ -94,6 +107,12 @@ object Reminders {
         val groundworks: List<GroundworksLease> = emptyList(),
         /** PrivacyWallet.moveSuggestionDue: the suggested move time once it has come (0: none). */
         val moveSuggestedAt: Long = 0,
+        /** PrivacyWallet.moveDeadline: when what is to move stops being movable (0: unknown). */
+        val moveDeadline: Long = 0,
+        /** When the live registration ends: its activated_at plus registration_validity_seconds (0: unknown). */
+        val registrationEndsAt: Long = 0,
+        /** The held handle's lease end (0: unknown). */
+        val handleExpiresAt: Long = 0,
     )
 
     fun due(i: Inputs): List<Reminder> {
@@ -106,7 +125,9 @@ object Reminders {
         }
         i.groundworks.mapNotNullTo(out) { groundworks(it, i.now) }
         if (!i.identityLive) return out
-        if (i.moveSuggestedAt in 1..i.now) out.add(Reminder.MoveSuggested(i.moveSuggestedAt))
+        // Until what is to move stops being movable; past that a move cannot bring it.
+        if (i.moveSuggestedAt in 1..i.now && (i.moveDeadline <= 0 || i.now < i.moveDeadline)) out.add(Reminder.MoveSuggested(i.moveSuggestedAt, i.moveDeadline))
+        renewBeforeLapse(i)?.let { out.add(it) }
         val held = i.handleEntry?.takeIf { i.handle.isNotEmpty() && it.handle == i.handle }
         val entries = (listOfNotNull(held) + i.addressed).distinctBy { it.handle }
         for (e in entries) {
@@ -119,6 +140,21 @@ object Reminders {
             out.add(Reminder.HandlePaysElsewhere(held.handle))
         }
         return out
+    }
+
+    /**
+     * From [LEAD_SECONDS] before the registration ends: the handle or
+     * caretaker vote whose lease ends within
+     * PrivacyWallet.RENEW_FIRST_WINDOW_SECONDS after it.
+     */
+    fun renewBeforeLapse(i: Inputs): Reminder.RenewBeforeLapse? {
+        val end = i.registrationEndsAt
+        if (!i.identityLive || end <= 0 || i.now < Handles.satSub(end, LEAD_SECONDS) || i.now >= end) return null
+        val soon = Handles.satAdd(end, PrivacyWallet.RENEW_FIRST_WINDOW_SECONDS)
+        val h = i.handleExpiresAt.takeIf { i.handle.isNotEmpty() && it in 1 until soon } ?: 0L
+        val v = i.caretakerExpiresAt.takeIf { it in 1 until soon } ?: 0L
+        if (h == 0L && v == 0L) return null
+        return Reminder.RenewBeforeLapse(end, if (h > 0) i.handle else "", h, v)
     }
 
     /**
@@ -148,8 +184,18 @@ object Reminders {
             else "@${r.handle} expires in ${days(Handles.satSub(r.expiresAt, now))}. Renew it to keep it."
         is Reminder.HandlePaysElsewhere ->
             "@${r.handle} still pays the wallet it moved from. Renew it here to point it at this wallet."
-        is Reminder.MoveSuggested ->
-            "The suggested time to bring your handle and caretaker vote from your previous identity has come. Open Identity to move them."
+        is Reminder.MoveSuggested -> when {
+            r.deadline <= 0 ->
+                "The suggested time to bring your handle and caretaker vote from your previous identity has come. Open Identity to move them."
+            Handles.satSub(r.deadline, now) <= PrivacyWallet.MOVE_DEADLINE_MARGIN_SECONDS ->
+                "Move your handle and caretaker vote from your previous identity now: in ${days(Handles.satSub(r.deadline, now))} they can no longer be moved, and your previous identity cannot renew them. Open Identity to move them."
+            else ->
+                "Bring your handle and caretaker vote from your previous identity within ${days(Handles.satSub(r.deadline, now))}: after that they can no longer be moved. Open Identity to move them."
+        }
+        is Reminder.RenewBeforeLapse -> {
+            val what = listOfNotNull(r.handle.takeIf { it.isNotEmpty() }?.let { "@$it" }, "your caretaker vote".takeIf { r.voteExpiresAt > 0 }).joinToString(" and ")
+            "Your registration ends in ${days(Handles.satSub(r.registrationEndsAt, now))}. Renew $what before then: once it lapses, this identity can no longer renew them, and after you renew your registration they can be moved only until their leases end."
+        }
     }
 
     private fun days(seconds: Long): String {

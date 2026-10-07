@@ -261,6 +261,13 @@ fun SwitchIdentityScreen(
      * strands it there for good.
      */
     unmoved: String? = null,
+    /**
+     * What this identity holds whose lease ends soon (renewSoonText), or
+     * null: renewed before the switch, its move afterwards has a full lease
+     * to land in. [onRenewFirst] opens where it is renewed.
+     */
+    renewFirst: String? = null,
+    onRenewFirst: () -> Unit = {},
 ) {
     val dimens = EarthTheme.dimens
     var target by remember { mutableStateOf<Int?>(null) }
@@ -297,6 +304,17 @@ fun SwitchIdentityScreen(
                 "that wallet's secret. Its handle and caretaker vote wait out their leases. Back up every " +
                 "wallet's recovery phrase.",
         )
+        if (renewFirst != null) {
+            Spacer(Modifier.height(dimens.space8))
+            Text(renewFirst, style = EarthTypography.textSm, color = EarthColors.Utility.ErrorRed.utilityError700)
+            Spacer(Modifier.height(dimens.space8))
+            EarthButton(
+                text = "Renew first",
+                onClick = onRenewFirst,
+                modifier = Modifier.fillMaxWidth(),
+                colors = EarthButtonDefaults.secondaryColors(),
+            )
+        }
         if (unmoved != null) {
             Spacer(Modifier.height(dimens.space8))
             Text(
@@ -420,6 +438,7 @@ fun MoveOfferCard(
 ) {
     val dimens = EarthTheme.dimens
     // Before the suggested time a move asks first; it is never sent on its own.
+    // The suggestion is already capped before the deadline.
     var early by remember { mutableStateOf<(() -> Unit)?>(null) }
     fun move(go: () -> Unit) { if (offer.suggestedAt > now) early = go else go() }
     early?.let { go ->
@@ -453,16 +472,7 @@ fun MoveOfferCard(
         )
         if (offer.suggestedAt > 0) {
             Spacer(Modifier.height(dimens.space8))
-            Note(
-                if (offer.suggestedAt > now) {
-                    "Suggested: move after ${moveTime(offer.suggestedAt)}. A move right after a switch can be linked to " +
-                        "it by its timing, so the wallet picked a random time for you. Nothing hurries it while this stays " +
-                        "your live identity, and the wallet reminds you then; it never moves anything on its own."
-                } else {
-                    "The suggested time to move has come. Nothing hurries it while this stays your live identity; " +
-                        "move before you switch again."
-                },
-            )
+            Note(moveTimingText(offer, now))
         }
         Spacer(Modifier.height(dimens.space8))
         if (offer.handle.isNotEmpty() && !handleInFlight) {
@@ -500,6 +510,50 @@ fun MoveOfferCard(
     }
 }
 
+/**
+ * When to move, and the deadline: the earliest lease end of what is still
+ * to move, past which the old identity can neither move nor renew it.
+ * Docs quote these.
+ */
+internal fun moveTimingText(offer: network.erth.wallet.privacy.PrivacySession.MoveOffer, now: Long): String {
+    val d = offer.deadline
+    val lost = "after that your previous identity can neither move nor renew it, and this identity cannot claim a " +
+        "handle or cast a caretaker vote for up to a year."
+    return when {
+        d > 0 && d - now <= network.erth.wallet.privacy.PrivacyWallet.MOVE_DEADLINE_MARGIN_SECONDS ->
+            "Move now: ${offer.deadlineWhat} on ${moveTime(d)}, too soon to wait after your switch; $lost"
+        offer.suggestedAt > now && d > 0 ->
+            "Suggested: move after ${moveTime(offer.suggestedAt)}. A move right after a switch can be linked to it by " +
+                "its timing, so the wallet picked a random time for you. Move by ${moveTime(d)}, when ${offer.deadlineWhat}; " +
+                "$lost The wallet reminds you; it never moves anything on its own."
+        offer.suggestedAt > now ->
+            "Suggested: move after ${moveTime(offer.suggestedAt)}. A move right after a switch can be linked to it by " +
+                "its timing, so the wallet picked a random time for you. Move before what your previous identity holds " +
+                "lapses: it can no longer renew it. The wallet reminds you; it never moves anything on its own."
+        d > 0 ->
+            "The suggested time to move has come. Move by ${moveTime(d)}, when ${offer.deadlineWhat}; $lost Move before you switch again, too."
+        else ->
+            "The suggested time to move has come. Move before what your previous identity holds lapses (it can no " +
+                "longer renew it), and before you switch again."
+    }
+}
+
+/**
+ * Before a switch: what this identity holds whose lease ends within
+ * PrivacyWallet.RENEW_FIRST_WINDOW_SECONDS ([handleExpiresAt],
+ * [voteExpiresAt]; 0 for none), as a prompt to renew it first, or null.
+ */
+internal fun renewSoonText(handle: String, handleExpiresAt: Long, voteExpiresAt: Long, now: Long): String? {
+    val soon = network.erth.wallet.privacy.handles.Handles.satAdd(now, network.erth.wallet.privacy.PrivacyWallet.RENEW_FIRST_WINDOW_SECONDS)
+    val what = listOfNotNull(
+        handleExpiresAt.takeIf { handle.isNotEmpty() && it in (now + 1) until soon }?.let { "@$handle (its lease ends ${moveTime(it)})" },
+        voteExpiresAt.takeIf { it in (now + 1) until soon }?.let { "your caretaker vote (it ends ${moveTime(it)})" },
+    )
+    if (what.isEmpty()) return null
+    return "Renew ${what.joinToString(" and ")} before you switch. After the switch a move can bring it to your new " +
+        "identity only until its lease ends, and this identity can no longer renew it; renewed now, the move has a full lease."
+}
+
 /** A suggested move time, in the phone's time zone. */
 private fun moveTime(at: Long): String =
     java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(at * 1000))
@@ -507,9 +561,10 @@ private fun moveTime(at: Long): String =
 internal const val SWITCH_NOTE = "Switching moves your personhood to a fresh identity: another wallet's, or this " +
     "wallet's next one. Your passport is registered again and your current identity stops counting as you. Once the " +
     "switch lands, open Identity where you registered to bring your handle and caretaker vote over; each is a private " +
-    "move proven with both identities' secrets, which stay on this phone. Do it before switching again: a move goes " +
-    "only to the passport's live identity. Anything not moved stays with the old identity until it lapses, and the new " +
-    "identity cannot claim a handle or cast a caretaker vote until then (up to a year)."
+    "move proven with both identities' secrets, which stay on this phone. Do it before their leases end, since only a " +
+    "live handle or vote moves and the old identity can no longer renew them, and before switching again, since a move " +
+    "goes only to the passport's live identity. Anything not moved stays with the old identity until it lapses, and " +
+    "the new identity cannot claim a handle or cast a caretaker vote until then (up to a year)."
 
 /**
  * Which fresh identity a compromise calls for: the next generation only for

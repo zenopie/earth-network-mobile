@@ -227,4 +227,35 @@ class IdentitySwitchTest : WalletTest() {
         b.clearMoveSuggestion()
         assertEquals(0L, b.moveSuggestionDue())
     }
+
+    /**
+     * The suggestion is never later than MOVE_DEADLINE_MARGIN_SECONDS before
+     * the earliest lease end of what is to move (a lapsed handle cannot
+     * move, and the old identity cannot renew it); with less room than
+     * that it is due at once, and the reminder says how long is left.
+     */
+    @Test
+    fun theSuggestionIsCappedBeforeTheLeaseEnds() {
+        val chain = FakeChain()
+        val (_, b, _) = switched(chain, "999")
+        val act = b.store.state.identity!!.activatedAt
+        val drawn = b.suggestedMoveAt()
+        // A lease ending a day after the registration: no room for the wait, due now.
+        val soon = act + 86_400
+        val capped = b.suggestedMoveAt(soon)
+        assertEquals(soon - PrivacyWallet.MOVE_DEADLINE_MARGIN_SECONDS, capped)
+        assertEquals(soon, b.moveDeadline())
+        assertEquals(capped, b.moveSuggestionDue())
+        val due = Reminders.due(Reminders.Inputs(now = chain.now, identityLive = true, claimOpensAt = null, claimedToday = false,
+            caretakerExpiresAt = 0, handle = "", handleEntry = null, moveSuggestedAt = b.moveSuggestionDue(), moveDeadline = b.moveDeadline()))
+        val r = due.filterIsInstance<Reminders.Reminder.MoveSuggested>().single()
+        assertTrue(Reminders.text(r, chain.now).contains("now"))
+        // Past the deadline nothing can move: no reminder.
+        assertTrue(Reminders.due(Reminders.Inputs(now = soon, identityLive = true, claimOpensAt = null, claimedToday = false,
+            caretakerExpiresAt = 0, handle = "", handleEntry = null, moveSuggestedAt = capped, moveDeadline = soon)).none { it is Reminders.Reminder.MoveSuggested })
+        // A distant lease end leaves the drawn time as it was.
+        assertEquals(drawn, b.suggestedMoveAt(act + 300L * 86_400))
+        b.clearMoveSuggestion()
+        assertEquals(0L, b.moveDeadline())
+    }
 }
