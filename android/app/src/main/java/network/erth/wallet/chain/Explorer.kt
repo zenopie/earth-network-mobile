@@ -4,6 +4,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -155,13 +158,95 @@ object Explorer {
      * history on the only validator (round-5 R5-E-1), and the node indexes no
      * address events. The wallet's activity is the txs it sent ([SentTxLog]);
      * a transfer someone else sent shows in the balance, not as a row.
+     *
+     * Gentle on the node (round-6 R6-E-7): a tx found in a block never
+     * changes, so it is kept in memory and not asked for again; at most
+     * [LOOKUP_CONCURRENCY] lookups are in flight; and a lookup the node could
+     * not answer (busy, rate-limited, unreachable) is retried with a backoff
+     * rather than taken for "no such tx".
      */
-    suspend fun txsByHash(hashes: List<String>): List<Tx> = coroutineScope {
-        hashes.filter(SentTxLog::isHash)
-            .map { h -> async(Dispatchers.IO) { getJson("/cosmos/tx/v1beta1/txs/$h")?.let(::fromLookup) } }
+    suspend fun txsByHash(hashes: List<String>): List<Tx> =
+        lookupAll(hashes, fetch = { h -> withContext(Dispatchers.IO) { lookup(h) } }, sleep = { delay(it) })
+
+    /** What one lookup said. */
+    internal sealed interface Lookup {
+        data class Found(val tx: Tx) : Lookup
+        /** The node answered: it has no such tx (yet). */
+        data object NotFound : Lookup
+        /** The node could not be asked, or did not answer: ask again. */
+        data object Unavailable : Lookup
+    }
+
+    internal const val LOOKUP_CONCURRENCY = 4
+    internal const val LOOKUP_ATTEMPTS = 3
+    private const val LOOKUP_BACKOFF_MS = 1000L
+    private const val FOUND_CACHE = 512
+
+    /** Txs found in a block, by upper-case hash: they never change. */
+    private val found = object : LinkedHashMap<String, Tx>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Tx>?) = size > FOUND_CACHE
+    }
+
+    /** Drops the remembered lookups (the wallet's data was forgotten). */
+    fun forgetLookups() = synchronized(found) { found.clear() }
+
+    internal suspend fun lookupAll(
+        hashes: List<String>,
+        fetch: suspend (String) -> Lookup,
+        sleep: suspend (Long) -> Unit,
+    ): List<Tx> = coroutineScope {
+        val gate = Semaphore(LOOKUP_CONCURRENCY)
+        hashes.filter(SentTxLog::isHash).map { it.uppercase() }.distinct()
+            .map { h ->
+                async<Tx?> {
+                    synchronized(found) { found[h] }?.let { return@async it }
+                    for (attempt in 1..LOOKUP_ATTEMPTS) {
+                        when (val r = gate.withPermit { fetch(h) }) {
+                            is Lookup.Found -> {
+                                if (r.tx.height > 0) synchronized(found) { found[h] = r.tx }
+                                return@async r.tx
+                            }
+                            Lookup.NotFound -> return@async null
+                            Lookup.Unavailable ->
+                                if (attempt < LOOKUP_ATTEMPTS) sleep(LOOKUP_BACKOFF_MS shl (attempt - 1))
+                        }
+                    }
+                    null
+                }
+            }
             .awaitAll()
             .filterNotNull()
             .sortedByDescending { it.height }
+    }
+
+    /** One `GET /cosmos/tx/v1beta1/txs/{hash}`. */
+    private fun lookup(hash: String): Lookup {
+        val (code, body) = try {
+            EarthRest.get("/cosmos/tx/v1beta1/txs/$hash")
+        } catch (e: Exception) {
+            return Lookup.Unavailable
+        }
+        return classify(code, body)
+    }
+
+    /**
+     * An answer as a lookup result. 404 is the node's "no such tx" (the
+     * gateway's NotFound); 400 a hash it will never know. Everything else
+     * that is not a tx (a busy edge's 503, Cloudflare's 429, a timeout, a
+     * 5xx, no connection) says nothing about the tx.
+     */
+    internal fun classify(code: Int, body: String): Lookup = when (code) {
+        in 200..299 -> {
+            val json = try {
+                JSONObject(body)
+            } catch (e: Exception) {
+                null
+            }
+            // Not JSON (a portal, a proxy's page): not the node's answer.
+            if (json == null) Lookup.Unavailable else fromLookup(json)?.let { Lookup.Found(it) } ?: Lookup.NotFound
+        }
+        400, 404 -> Lookup.NotFound
+        else -> Lookup.Unavailable
     }
 
     /** A `GET /cosmos/tx/v1beta1/txs/{hash}` answer, or null when it names no tx. */
