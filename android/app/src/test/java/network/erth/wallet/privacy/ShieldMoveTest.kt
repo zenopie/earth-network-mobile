@@ -41,4 +41,31 @@ class ShieldMoveTest {
         assertEquals(90L, ShieldMove.maxShield(100, 10))
         assertEquals(0L, ShieldMove.maxShield(5, 10))
     }
+
+    /** ERTH and ANML always and first, the rest by denom; stake is a position, not a coin. */
+    @Test
+    fun coinsListEveryHeldDenomOnce() {
+        val coins = ShieldMove.coins(
+            mapOf("uerth" to 5L, "uusdc" to 7L, "uatom" to 0L, "dexlp/2" to 3L),
+            mapOf("uerth" to 9L, "uanml" to 4L, "derth/earthvaloper1x" to 8L, "uusdc" to 1L),
+        )
+        assertEquals(listOf("uerth", "uanml", "dexlp/2", "uusdc"), coins.map { it.denom })
+        assertEquals(ShieldMove.Coin("uerth", 5, 9), coins[0])
+        assertEquals(ShieldMove.Coin("uusdc", 7, 1), coins[3])
+        assertEquals(listOf("uerth", "uanml"), ShieldMove.coins(emptyMap(), emptyMap()).map { it.denom })
+    }
+
+    @Test
+    fun onlyErthMovesAndOnlyWhatCoversItsFee() {
+        assertEquals(null, ShieldMove.shieldBlocked("uerth", 11, 10))
+        assertEquals("No public ERTH to shield.", ShieldMove.shieldBlocked("uerth", 0, 10))
+        assertEquals("Public ERTH doesn't cover the shield fee.", ShieldMove.shieldBlocked("uerth", 10, 10))
+        assertEquals("ANML is always private.", ShieldMove.shieldBlocked("uanml", 5, 10))
+        assertEquals("Only ERTH moves between public and private.", ShieldMove.shieldBlocked("uusdc", 5, 10))
+        assertEquals(null, ShieldMove.unshieldBlocked("uerth", 11, 11, 10))
+        assertEquals("No private ERTH to unshield.", ShieldMove.unshieldBlocked("uerth", 0, 0, 10))
+        assertEquals("Private ERTH doesn't cover the unshield fee.", ShieldMove.unshieldBlocked("uerth", 10, 10, 10))
+        assertEquals("ANML can't be made public.", ShieldMove.unshieldBlocked("uanml", 5, 5, 1))
+        assertEquals("Only ERTH moves between public and private.", ShieldMove.unshieldBlocked("uusdc", 5, 5, 1))
+    }
 }
