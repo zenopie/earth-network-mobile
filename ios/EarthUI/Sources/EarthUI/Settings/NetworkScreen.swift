@@ -31,6 +31,7 @@ struct NetworkScreen: View {
                     Text(status ?? "Checking…")
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
+                    if let notice = model.nodeNotice { errorText(notice) }
 
                     Text("Every balance, chain query and transaction goes through this node. Run your own and nobody else sees which account asks what, or when. The handle directory, the private-note index, the registration gas grant and passport circuit downloads still come from api.erth.network.")
                         .font(EarthType.bodySmall)
@@ -54,11 +55,12 @@ struct NetworkScreen: View {
 
                     EarthButton(title: "Check and use this node", busy: checking) { check() }
                         .disabled(candidate == nil || checking)
-                    if !node.isDefault {
+                    if !node.isDefault || NodeSettings.saved != nil {
                         EarthButton(title: "Reset to default", role: .secondary) {
                             NodeSettings.reset()
                             node = NodeSettings.current
                             lcd = ""; rpc = ""; error = nil
+                            model.refreshNodeNotice()
                             Task { await model.refresh() }
                         }
                     }
@@ -70,17 +72,23 @@ struct NetworkScreen: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .task(id: node) {
-                if !node.isDefault, lcd.isEmpty {
-                    lcd = node.lcd.absoluteString
-                    rpc = node.rpc?.absoluteString ?? ""
+                // The saved node, also when a failed recheck set it aside: its fields stay filled to check it again.
+                if let saved = NodeSettings.saved, lcd.isEmpty {
+                    lcd = saved.lcd.absoluteString
+                    rpc = saved.rpc?.absoluteString ?? ""
                 }
                 status = nil
+                // The light probe while its last full check stands, else (or when that fails) the full check.
                 do {
-                    let p = try await NodeSettings.probe(node)
+                    let p = try await NodeSettings.status(node)
                     status = "Connected · \(p.chainID) · height \(p.height)"
                 } catch {
                     status = "Not answering: \(error.localizedDescription)"
                 }
+                let before = node
+                node = NodeSettings.current
+                model.refreshNodeNotice()
+                if node != before { await model.refresh() }
             }
         }
     }
@@ -121,6 +129,7 @@ struct NetworkScreen: View {
                 _ = try await NodeSettings.probe(c)
                 NodeSettings.save(c)
                 node = c
+                model.refreshNodeNotice()
                 await model.refresh()
             } catch {
                 self.error = error.localizedDescription

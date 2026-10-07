@@ -23,6 +23,7 @@ struct WalletScreen: View {
     @State private var panel = Panel.activity
     @State private var handleOpen = false
     @State private var identityOpen = false
+    @State private var networkOpen = false
 
     enum Panel { case activity, portfolio }
 
@@ -30,6 +31,12 @@ struct WalletScreen: View {
         VStack(spacing: 0) {
             Spacer().frame(height: 8)
             BalanceWidget()
+            // A node that failed its recheck (or awaits it) leads: Earth's node is in use meanwhile.
+            if let notice = model.nodeNotice {
+                ReminderBanner(text: notice) { networkOpen = true }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 6)
+            }
             // What is due, never done unasked: each reminder opens where it is done.
             ForEach(Array(model.reminders.enumerated()), id: \.offset) { _, r in
                 ReminderBanner(text: Reminders.text(r, now: Int64(Date().timeIntervalSince1970))) { open(r) }
@@ -60,6 +67,7 @@ struct WalletScreen: View {
         .sheet(isPresented: $moving) { MoveSheet(direction: moveDirection).earthThemed() }
         .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
         .sheet(isPresented: $identityOpen) { IdentityScreen().earthThemed() }
+        .sheet(isPresented: $networkOpen) { NetworkScreen().earthThemed() }
     }
 
     private func open(_ r: Reminders.Reminder) {
@@ -71,6 +79,9 @@ struct WalletScreen: View {
         case .groundworksExpiring: model.governLink = .positions; model.tab = .govern
         case .handleExpiring, .handlePaysElsewhere: handleOpen = true
         case .moveSuggested: identityOpen = true
+        // The handle first when it is one of them; the caretaker vote is renewed where it is cast.
+        case let .renewBeforeLapse(_, h, _, _):
+            if h.isEmpty { model.governLink = .caretaker; model.tab = .govern } else { handleOpen = true }
         }
     }
 }

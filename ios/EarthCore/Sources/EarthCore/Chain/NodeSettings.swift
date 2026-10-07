@@ -29,39 +29,195 @@ public enum NodeSettings {
 
     private static let lcdKey = "node.lcd"
     private static let rpcKey = "node.rpc"
+    /// The saved node failed a recheck: why, shown until the user checks a node again (Earth's node meanwhile).
+    private static let suspendedKey = "node.suspended"
+    /// The last full check each node passed (by its URLs), with the genesis pin it passed against.
+    private static let verifiedKey = "node.verified"
+
+    /// How long a passed full check stands. The heavy check (the whole
+    /// genesis) runs at launch for a saved node, again once this old while the
+    /// app runs, and when a node's light status probe fails; the Network
+    /// screen otherwise shows the light probe. As Android.
+    public static let recheckSeconds: Int64 = 6 * 3600
+    /// How often a running app looks whether the saved node is due a recheck.
+    public static let recheckTickSeconds: UInt64 = 15 * 60
+
+    /// Where the node choice is kept: UserDefaults; tests use a dictionary.
+    public protocol Store: Sendable {
+        func get(_ key: String) -> String?
+        /// Sets every key (nil removes it).
+        func put(_ values: [String: String?])
+    }
+
+    struct Defaults: Store {
+        func get(_ key: String) -> String? { UserDefaults.standard.string(forKey: key) }
+        func put(_ values: [String: String?]) {
+            for (k, v) in values { if let v { UserDefaults.standard.set(v, forKey: k) } else { UserDefaults.standard.removeObject(forKey: k) } }
+        }
+    }
+
     private static let lock = NSLock()
     nonisolated(unsafe) private static var cached: Node?
+    nonisolated(unsafe) private static var noticeValue: String?
+    nonisolated(unsafe) private static var storeValue: Store = Defaults()
+    /// Unix seconds; tests pin it.
+    nonisolated(unsafe) static var clock: @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) }
+    /// The full check; tests replace it.
+    nonisolated(unsafe) static var fullCheck: @Sendable (Node) async throws -> Probe = { try await probe($0) }
 
     public static var current: Node {
         lock.withLock {
             if let cached { return cached }
-            let loaded = load()
+            let loaded = load(storeValue)
             cached = loaded
             return loaded
         }
     }
 
-    private static func load() -> Node {
-        let d = UserDefaults.standard
-        guard let lcdText = d.string(forKey: lcdKey), let lcd = normalize(lcdText), problem(lcd) == nil else { return defaultNode }
-        // A node saved before the RPC was required is dropped: its genesis was never checked.
-        guard let rpcText = d.string(forKey: rpcKey), let rpc = normalize(rpcText), problem(rpc) == nil else { return defaultNode }
-        return Node(lcd: lcd, rpc: rpc)
+    /// What the person should know about their node: it is waiting for its
+    /// check, or it failed one and Earth's node is in use. Nil otherwise.
+    public static var notice: String? {
+        _ = current
+        return lock.withLock { noticeValue }
+    }
+
+    /// Starts over from `store` (tests; the app keeps UserDefaults).
+    static func reload(_ store: Store) {
+        lock.withLock { storeValue = store; cached = nil; noticeValue = nil }
+    }
+
+    /// The saved node is used at once only if it passed this build's full
+    /// check before (against the genesis pinned now); one saved by an earlier
+    /// build, or that failed a recheck, is not: Earth's node answers until
+    /// `recheck` passes it (a failed one waits for the person to check it
+    /// again). Under `lock`.
+    private static func load(_ s: Store) -> Node {
+        noticeValue = nil
+        guard let saved = saved(s) else { return defaultNode }
+        if let why = s.get(suspendedKey) { noticeValue = suspendedText(why); return defaultNode }
+        if verifiedAt(s, saved) != nil { return saved }
+        noticeValue = unchecked
+        return defaultNode
+    }
+
+    /// Runs the full check on the saved node: at launch (`force`), then
+    /// whenever the last pass is older than `recheckSeconds` (or it never
+    /// passed). Passed: it is used (again). An LCD that cannot be reached
+    /// leaves things as they are: nothing answers, so nothing wrong is read;
+    /// the next tick tries again. Any other failure (another chain or
+    /// genesis, an LCD and RPC that disagree, a node far behind, an RPC that
+    /// does not serve the genesis) suspends it: Earth's node is used, and
+    /// `notice` says why, until the person checks a node again. Returns
+    /// whether the node in use changed. As Android's NodeConfig.recheck.
+    @discardableResult
+    public static func recheck(force: Bool) async -> Bool {
+        let before = current
+        let s = lock.withLock { storeValue }
+        guard let saved = saved(s), s.get(suspendedKey) == nil else { return false }
+        if !force && fresh(s, saved) { return false }
+        _ = try? await check(s, saved)
+        return current != before
+    }
+
+    /// The full check of `node`; a pass is recorded, and the saved node's failure suspends it.
+    private static func check(_ s: Store, _ node: Node) async throws -> Probe {
+        let p: Probe
+        do { p = try await fullCheck(node) } catch {
+            if node == saved(s), !(error is LCDUnreachable) { suspendSaved(s, error.localizedDescription) }
+            throw error
+        }
+        markVerified(s, node)
+        if node == saved(s) { lock.withLock { noticeValue = nil; cached = node } }
+        return p
+    }
+
+    /// What the Network screen shows for `node`: the light probe (the LCD's
+    /// latest block: chain id, height, age) while its last full check stands,
+    /// else, or when the light probe fails, the full check (recorded when it
+    /// passes; the saved node suspended when it fails).
+    public static func status(_ node: Node) async throws -> Probe {
+        let s = lock.withLock { storeValue }
+        if fresh(s, node), let p = try? await lightProbe(node) { return p }
+        return try await check(s, node)
     }
 
     public static func save(_ node: Node) {
-        let d = UserDefaults.standard
-        d.set(node.lcd.absoluteString, forKey: lcdKey)
-        d.set(node.rpc?.absoluteString ?? "", forKey: rpcKey)
-        lock.withLock { cached = node }
+        let s = lock.withLock { storeValue }
+        s.put([lcdKey: node.lcd.absoluteString, rpcKey: node.rpc?.absoluteString ?? "", suspendedKey: nil])
+        // Saved only after `probe` passed it.
+        markVerified(s, node)
+        lock.withLock { cached = node; noticeValue = nil }
     }
 
     public static func reset() {
-        let d = UserDefaults.standard
-        d.removeObject(forKey: lcdKey)
-        d.removeObject(forKey: rpcKey)
-        lock.withLock { cached = defaultNode }
+        let s = lock.withLock { storeValue }
+        s.put([lcdKey: nil, rpcKey: nil, suspendedKey: nil, verifiedKey: nil])
+        lock.withLock { cached = defaultNode; noticeValue = nil }
     }
+
+    /// The node the person saved (suspended or not), nil for none.
+    public static var saved: Node? { saved(lock.withLock { storeValue }) }
+
+    private static func saved(_ s: Store) -> Node? {
+        guard let lcdText = s.get(lcdKey), let lcd = normalize(lcdText), problem(lcd) == nil else { return nil }
+        // A node saved before the RPC was required is dropped: its genesis cannot be checked.
+        guard let rpcText = s.get(rpcKey), let rpc = normalize(rpcText), problem(rpc) == nil else { return nil }
+        return Node(lcd: lcd, rpc: rpc)
+    }
+
+    private static func suspendSaved(_ s: Store, _ reason: String) {
+        s.put([suspendedKey: reason])
+        if let n = saved(s) { forget(s, n) }
+        lock.withLock { noticeValue = suspendedText(reason); cached = defaultNode }
+    }
+
+    private static func key(_ node: Node) -> String { node.lcd.absoluteString + "\n" + (node.rpc?.absoluteString ?? "") }
+
+    /// Every recorded pass: node key to (genesis pin, unix seconds), oldest first. A few nodes at most.
+    private static func verified(_ s: Store) -> [(key: String, genesis: String, at: Int64)] {
+        guard let text = s.get(verifiedKey), let data = text.data(using: .utf8),
+              let list = try? JSONDecoder().decode([VerifiedEntry].self, from: data) else { return [] }
+        return list.map { ($0.key, $0.genesis, $0.at) }
+    }
+
+    private struct VerifiedEntry: Codable { let key: String; let genesis: String; let at: Int64 }
+
+    private static func writeVerified(_ s: Store, _ all: [(key: String, genesis: String, at: Int64)]) {
+        let list = all.suffix(maxVerified).map { VerifiedEntry(key: $0.key, genesis: $0.genesis, at: $0.at) }
+        if let d = try? JSONEncoder().encode(list) { s.put([verifiedKey: String(decoding: d, as: UTF8.self)]) }
+    }
+
+    private static func markVerified(_ s: Store, _ node: Node) {
+        var all = verified(s).filter { $0.key != key(node) }
+        all.append((key(node), Constants.genesisSHA256.lowercased(), clock()))
+        writeVerified(s, all)
+    }
+
+    private static func forget(_ s: Store, _ node: Node) {
+        let all = verified(s)
+        let kept = all.filter { $0.key != key(node) }
+        if kept.count != all.count { writeVerified(s, kept) }
+    }
+
+    /// When `node` last passed the full check against the genesis pinned now; nil when it never did.
+    private static func verifiedAt(_ s: Store, _ node: Node) -> Int64? {
+        verified(s).last { $0.key == key(node) && $0.genesis == Constants.genesisSHA256.lowercased() }?.at
+    }
+
+    /// Its last pass stands: under `recheckSeconds` old (and not in the future).
+    private static func fresh(_ s: Store, _ node: Node) -> Bool {
+        guard let at = verifiedAt(s, node) else { return false }
+        let age = clock() - at
+        return age >= 0 && age < recheckSeconds
+    }
+
+    private static let maxVerified = 4
+
+    private static func suspendedText(_ reason: String) -> String {
+        "Your node no longer passes the wallet's check, so the wallet switched to Earth's node: \(reason) Check your node, then save it again in Settings → Network."
+    }
+
+    private static let unchecked = "Your node has not passed this version's check yet. Until it does, the wallet uses Earth's node. Settings → Network shows the result."
 
     /// A base URL as typed, trimmed of whitespace and trailing slashes; nil
     /// when it is not an http(s) URL with a host and nothing past its path.
@@ -174,16 +330,7 @@ public enum NodeSettings {
         guard let rpcURL = node.rpc else { throw ProbeError(message: rpcRequired) }
         if let p = problem(rpcURL) { throw ProbeError(message: "RPC: \(p)") }
         let rest = EarthRest(lcd: node.lcd, rpc: rpcURL, allowLocal: true)
-        let j: JSON
-        do { j = try await rest.get("/cosmos/base/tendermint/v1beta1/blocks/latest") } catch {
-            throw ProbeError(message: "Could not reach the LCD: \(error.localizedDescription)")
-        }
-        let header = j.sdk_block.header.exists ? j.sdk_block.header : j.block.header
-        guard header.exists else { throw ProbeError(message: "That does not look like a Cosmos LCD.") }
-        let chainID = header.chain_id.string(default: "")
-        guard chainID == Constants.chainID else { throw ProbeError(message: "That node follows \"\(chainID)\", not \(Constants.chainID).") }
-        guard let height = header.height.uint64 else { throw ProbeError(message: "The LCD did not say its latest height.") }
-        try checkLag("The LCD", RESTPrivateChain.parseTime(header.time.string(default: "")))
+        let (chainID, height) = try await lcdLatest(rest)
 
         let r: JSON
         do { r = try await rest.getRPC("/status") } catch {
@@ -216,6 +363,35 @@ public enum NodeSettings {
         }
         guard lcdHash == rpcHash else { throw ProbeError(message: splitNodes) }
         return Probe(chainID: chainID, height: height)
+    }
+
+    /// The light probe: the LCD's latest block, its chain id, height and age
+    /// (what `probe` checks first). For a node whose full check stands.
+    public static func lightProbe(_ node: Node) async throws -> Probe {
+        if let p = problem(node.lcd) { throw ProbeError(message: "LCD: \(p)") }
+        let (chainID, height) = try await lcdLatest(EarthRest(lcd: node.lcd, rpc: node.rpc, allowLocal: true))
+        return Probe(chainID: chainID, height: height)
+    }
+
+    /// The LCD's latest block: chain id earth-1, its height, at most `maxLagSeconds` old.
+    private static func lcdLatest(_ rest: EarthRest) async throws -> (String, UInt64) {
+        let j: JSON
+        do { j = try await rest.get("/cosmos/base/tendermint/v1beta1/blocks/latest") } catch {
+            throw LCDUnreachable(message: "Could not reach the LCD: \(error.localizedDescription)")
+        }
+        let header = j.sdk_block.header.exists ? j.sdk_block.header : j.block.header
+        guard header.exists else { throw ProbeError(message: "That does not look like a Cosmos LCD.") }
+        let chainID = header.chain_id.string(default: "")
+        guard chainID == Constants.chainID else { throw ProbeError(message: "That node follows \"\(chainID)\", not \(Constants.chainID).") }
+        guard let height = header.height.uint64 else { throw ProbeError(message: "The LCD did not say its latest height.") }
+        try checkLag("The LCD", RESTPrivateChain.parseTime(header.time.string(default: "")))
+        return (chainID, height)
+    }
+
+    /// The node's LCD did not answer at all: nothing was read from it, so nothing wrong was.
+    public struct LCDUnreachable: Swift.Error, LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
     }
 
     /// sha256 of the genesis a CometBFT RPC serves: /genesis_chunked's base64

@@ -76,6 +76,10 @@ public final class AppModel {
     public private(set) var derthRates: [String: Decimal] = [:]
     /// R: how long a caretaker split counts after it is cast (default 365 days).
     public private(set) var leaseSeconds: Int64 = 365 * 86_400
+    /// registration_validity_seconds: a registration lapses this long after its block time.
+    public private(set) var registrationValiditySeconds: Int64 = 365 * 86_400
+    /// What the person should know about their node (NodeSettings.notice): it awaits its check, or failed one.
+    public private(set) var nodeNotice: String?
     /// handle_lease_seconds: a handle's lease from each renewal.
     public private(set) var handleLeaseSeconds: Int64 = Handles.defaultLeaseSeconds
     /// This identity's handle ("" for none), its directory entry, and whether it moved one away.
@@ -225,6 +229,7 @@ public final class AppModel {
 
     public func start() {
         watchDeviceLock()
+        watchNode()
         clearIfReinstalled()
         walletName = UserDefaults.standard.string(forKey: "walletName") ?? walletName
         #if targetEnvironment(simulator)
@@ -253,6 +258,29 @@ public final class AppModel {
         #endif
         phase = store.exists ? .locked : .setup
     }
+
+    /// The saved node's full check (genesis, chain, LCD and RPC agreeing)
+    /// now, and again whenever its last pass is `recheckSeconds` old while
+    /// the app runs: a node re-initialised on another genesis, or one saved
+    /// by a build before the check, is not used on its say-so
+    /// (NodeSettings.recheck). A change of node refreshes what is shown.
+    private func watchNode() {
+        nodeNotice = NodeSettings.notice
+        Task { [weak self] in
+            var force = true
+            while !Task.isCancelled {
+                let changed = await NodeSettings.recheck(force: force)
+                force = false
+                guard let self else { return }
+                self.nodeNotice = NodeSettings.notice
+                if changed { await self.refresh() }
+                try? await Task.sleep(nanoseconds: NodeSettings.recheckTickSeconds * 1_000_000_000)
+            }
+        }
+    }
+
+    /// Re-reads the node notice (after the Network screen checked or reset a node).
+    public func refreshNodeNotice() { nodeNotice = NodeSettings.notice }
 
     /// How an unlock attempt ended, so the lock screen can say what actually
     /// happened: a Keychain error or an unreadable vault is not a wrong PIN,
@@ -899,7 +927,7 @@ public final class AppModel {
         await refreshRemovalBallots()
         // The list the sync just read.
         applyValidatorList(PrivacyQueries.cachedValidators)
-        if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds }
+        if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds; registrationValiditySeconds = p.registrationValiditySeconds }
         // The claim wait uses the lease the chain's bound uses (LeaseBounds: the longest ever in force), never Params.
         if let b = try? await queries.leaseBounds(), (1 ... Handles.maxAheadSeconds).contains(b.handleLeaseSeconds) { handleLeaseSeconds = b.handleLeaseSeconds }
         await refreshPersonal()
@@ -934,12 +962,18 @@ public final class AppModel {
         handleEntry = snap.handle.isEmpty ? nil : dir?[snap.handle]
         addressedHandles = addressed
         caretakerExpiresAt = await w.caretakerExpiresAt()
+        let live = snap.identityStatus == .live
+        // The chain's registered_at is the registration's block time (activated_at).
+        let registrationEndsAt = live ? snap.identity.map { Handles.satAdd(Int64(clamping: $0.activatedAt), registrationValiditySeconds) } ?? 0 : 0
+        var handleExp = handleEntry?.expiresAt ?? 0
+        if handleEntry == nil { handleExp = await w.handleExpiresAt() }
         reminders = Reminders.due(Reminders.Inputs(
-            now: Int64(Date().timeIntervalSince1970), identityLive: snap.identityStatus == .live, claimOpensAt: w.claimOpensAt(),
+            now: Int64(Date().timeIntervalSince1970), identityLive: live, claimOpensAt: w.claimOpensAt(),
             claimedToday: w.claimedToday(), caretakerExpiresAt: caretakerExpiresAt, handle: snap.handle, handleEntry: handleEntry,
             addressed: addressed, ownAddress: w.address.encode(),
             groundworks: groundworksLeases.values.sorted { $0.positionID < $1.positionID },
-            moveSuggestedAt: w.moveSuggestionDue()))
+            moveSuggestedAt: w.moveSuggestionDue(), moveDeadline: w.moveDeadline(),
+            registrationEndsAt: registrationEndsAt, handleExpiresAt: handleExp))
     }
 
     /// What the identity this wallet's registration succeeded (another wallet
@@ -963,8 +997,29 @@ public final class AppModel {
         public var suggestedAt: Int64 = 0
         /// The predecessor is this wallet's own identity generation `fromGeneration` (re-entry or a fresh identity): one phrase, one fee payer.
         public var fromGeneration: Int = -1
+        /// Its handle's lease end (0: unknown or none).
+        public var handleExpiresAt: Int64 = 0
         public var anything: Bool { !handle.isEmpty || voteLive || !inFlight.isEmpty }
         public var withinWallet: Bool { fromIndex == AppModel.selfIndex }
+
+        private var handleToMove: Bool { handleLive && !inFlight.contains { $0.kind == PendingMove.handleKind && !$0.confirmed } }
+        private var voteToMove: Bool { voteLive && !inFlight.contains { $0.kind == PendingMove.caretakerKind && !$0.confirmed } }
+
+        /// The move's deadline: the earliest lease end of what is still to
+        /// move (0: none known). Past it the old identity can neither move nor
+        /// renew it. As Android.
+        public var deadline: Int64 {
+            [handleToMove && handleExpiresAt > 0 ? handleExpiresAt : nil, voteToMove && voteExpiresAt > 0 ? voteExpiresAt : nil]
+                .compactMap { $0 }.min() ?? 0
+        }
+
+        /// What runs out at `deadline`, for the sentence that names it.
+        public var deadlineWhat: String {
+            let h = handleToMove && handleExpiresAt > 0 && handleExpiresAt == deadline
+            let v = voteToMove && voteExpiresAt > 0 && voteExpiresAt == deadline
+            if h && v { return "@\(handle)'s lease and your caretaker vote end" }
+            return h ? "@\(handle)'s lease ends" : "your caretaker vote's lease ends"
+        }
     }
 
     /// `MoveOffer.fromIndex` of an earlier identity of the selected wallet.
@@ -994,7 +1049,9 @@ public final class AppModel {
                                   voteLive: await w.caretakerLive(generation: k), voteExpiresAt: await w.caretakerExpiresAt(generation: k),
                                   inFlight: w.outgoingMoves(generation: k).filter { !$0.confirmed }, feeErth: w.poolBalances()[PrivacyWallet.fee] ?? 0)
             offer.fromGeneration = k
-            if offer.anything { offer.suggestedAt = await w.suggestedMoveAt() } else { await w.clearMoveSuggestion() }
+            offer.handleExpiresAt = handleExp
+            // Capped before what it holds stops being movable.
+            if offer.anything { offer.suggestedAt = await w.suggestedMoveAt(deadline: offer.deadline) } else { await w.clearMoveSuggestion() }
             return offer
         }
         for index in wallets.indices where index != selected {
@@ -1009,8 +1066,10 @@ public final class AppModel {
                                   handleLive: !snap.handle.isEmpty && (handleExp == 0 || handleExp > now),
                                   voteLive: await p.caretakerLive(), voteExpiresAt: await p.caretakerExpiresAt(),
                                   inFlight: p.outgoingMoves(), feeErth: p.poolBalances()[PrivacyWallet.fee] ?? 0)
-            // Something to bring: the suggested time (drawn once). Nothing: its reminder ends.
-            if offer.anything { offer.suggestedAt = await w.suggestedMoveAt() } else { await w.clearMoveSuggestion() }
+            offer.handleExpiresAt = handleExp
+            // Something to bring: the suggested time (drawn once, capped before
+            // what it holds stops being movable). Nothing: its reminder ends.
+            if offer.anything { offer.suggestedAt = await w.suggestedMoveAt(deadline: offer.deadline) } else { await w.clearMoveSuggestion() }
             return offer
         }
         // No predecessor on this phone (a switch from a lost phrase): nothing can move here.
