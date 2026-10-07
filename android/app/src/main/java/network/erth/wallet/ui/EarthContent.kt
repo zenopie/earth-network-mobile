@@ -42,6 +42,8 @@ import network.erth.wallet.ui.earn.EarnUiState
 import network.erth.wallet.ui.earn.EarnViewModel
 import network.erth.wallet.ui.earn.MoveStakeSheet
 import network.erth.wallet.ui.earn.PrivateStakeRow
+import network.erth.wallet.ui.earn.UnstakingRow
+import network.erth.wallet.ui.earn.asRate
 import network.erth.wallet.ui.earn.StakeSheet
 import network.erth.wallet.ui.explore.ExploreScreen
 import network.erth.wallet.ui.explore.ExploreUiState
@@ -145,6 +147,8 @@ internal fun EarthContent(
 
     // Which sheet, if any, is open on top of the current screen.
     var staking by remember { mutableStateOf<StakeIntent?>(null) }
+    // The validator a stake card's action names (null: the picker).
+    var stakingFor by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<StreamId?>(null) }
     var liquidity by remember { mutableStateOf<Pair<LiquidityAction, Dex.Pool>?>(null) }
     // Groundworks positions: choosing stake to lock, then its split; or re-splitting one.
@@ -181,10 +185,6 @@ internal fun EarthContent(
         earnState?.derthValue(derth, validator) ?: derth
     fun monikerOf(validator: String): String =
         earnState?.monikerOf(validator) ?: validator
-    val privateStakeValue = Amounts.satAdd(
-        Amounts.satSum(derthHeld.entries) { (denom, amount) -> derthValue(amount, denom.removePrefix("derth/")) },
-        privacyState?.positions?.let { ps -> Amounts.satSum(ps) { derthValue(it.position.derth, it.position.validator) } } ?: 0L,
-    )
 
     // LP shares: public ones are ordinary coins (dexlp/<pool>) in the
     // balances call; private ones (a shielded deposit's) are share notes of
@@ -276,11 +276,16 @@ internal fun EarthContent(
             lpShares = shares,
             onAddLiquidity = { liquidity = LiquidityAction.Add to it },
             onRemoveLiquidity = { liquidity = LiquidityAction.Remove to it },
-            onStake = { staking = StakeIntent.Stake },
-            onUnstake = { staking = StakeIntent.Unstake },
-            onMove = { staking = StakeIntent.Move },
-            privateStakedUerth = privateStakeValue,
+            onStake = { stakingFor = it; staking = StakeIntent.Stake },
+            onUnstake = { stakingFor = it; staking = StakeIntent.Unstake },
+            onMove = { stakingFor = it; staking = StakeIntent.Move },
+            canStake = privacyState != null,
+            balancesVisible = balancesVisible,
             privateStake = privacyState?.stake.orEmpty().map { h ->
+                val denom = "derth/${h.validator}"
+                val joining = earnState?.roundStartHeight?.let { e ->
+                    network.erth.wallet.privacy.StakeRound.joining(privacyState?.stakeNotes.orEmpty(), denom, e)
+                }
                 PrivateStakeRow(
                     validator = h.validator,
                     moniker = monikerOf(h.validator),
@@ -288,9 +293,22 @@ internal fun EarthContent(
                     valueUerth = derthValue(h.derth, h.validator),
                     free = h.free,
                     locked = h.locked,
+                    lockedUerth = derthValue(h.locked, h.validator),
                     lockedUntil = h.lockedUntil,
                     notes = h.notes,
                     mergeable = h.mergeable,
+                    joiningUerth = joining?.let { derthValue(it, h.validator) },
+                    standing = earnState?.all?.firstOrNull { it.validator == h.validator }?.let { network.erth.wallet.privacy.StakeRound.Standing.of(it) },
+                    commission = earnState?.commissionOf(h.validator) ?: 0.0,
+                )
+            },
+            unstaking = state?.unstaking.orEmpty().map { u ->
+                UnstakingRow(
+                    key = u.txHash,
+                    validator = u.validator,
+                    moniker = monikerOf(u.validator),
+                    valueUerth = u.value ?: derthValue(u.derth, u.validator),
+                    dueBy = u.dueBy,
                 )
             },
             onMerge = { validator ->
@@ -1004,6 +1022,9 @@ internal fun EarthContent(
         if (intent == StakeIntent.Move) {
             val windowDays = (privacyState?.labelWindowSeconds ?: 0L) / 86_400
             MoveStakeSheet(
+                initial = stakingFor,
+                sourceDetail = { "${network.erth.wallet.ui.earn.stakeAmount(derthValue(it.amountUerth, it.validatorOperator))} ERTH can move now" },
+                destinationDetail = { v -> stakeTerms(v.commission, earnState) },
                 sources = derthRows,
                 destinations = earnState?.validators.orEmpty(),
                 note = "Moved stake keeps earning, with no unbonding gap. It stays at the new validator" +
@@ -1047,7 +1068,17 @@ internal fun EarthContent(
         val stake = intent == StakeIntent.Stake
         StakeSheet(
             title = if (stake) "Stake ERTH privately" else "Unstake",
-            choices = if (stake) earnState?.validators.orEmpty() else derthRows,
+            choices = if (stake) earnState?.pickList.orEmpty() else derthRows,
+            initial = stakingFor,
+            unit = if (stake) "ERTH" else "derth",
+            detailFor = { v ->
+                if (stake) {
+                    val held = derthHeld["derth/${v.validatorOperator}"]
+                    stakeTerms(v.commission, earnState) + (held?.let { " · you have ${network.erth.wallet.ui.earn.stakeAmount(derthValue(it, v.validatorOperator))} ERTH" } ?: "")
+                } else {
+                    "${network.erth.wallet.ui.earn.stakeAmount(derthValue(v.amountUerth, v.validatorOperator))} ERTH staked · ${formatUerth(v.amountUerth)} derth"
+                }
+            },
             capFor = { v ->
                 if (stake) {
                     // A reserve, not one fee: staking everything-but-the-fee
@@ -1061,9 +1092,11 @@ internal fun EarthContent(
             // derth is not a coin: a stake note only its owner can merge,
             // vote, lock or unstake. Nothing can send or sell it.
             note = if (stake) {
-                "Staked ERTH stays locked to this wallet: it can't be sent, unshielded or traded, only unstaked or moved."
+                val ends = earnState?.roundEndsAt?.let { " when today's round ends at ${network.erth.wallet.ui.earn.clock(it)}" } ?: " when today's round ends"
+                "It joins its validator$ends and earns from the moment it lands. Staked ERTH stays private and locked to this wallet: it can't be sent or traded, only unstaked or moved."
             } else {
-                "Unstaked ERTH arrives in this wallet as private ERTH once the unbonding period ends. Nothing more to do or pay." +
+                val days = earnState?.unbondingSeconds?.let { " (about ${maxOf(1, it / 86_400)} days)" } ?: ""
+                "It stops earning now and is paid to your private ERTH automatically after the unbonding period$days. Nothing more to do or pay." +
                     (if (holdings.any { it.locked > 0 }) " Stake moved here recently can be unstaked once its window closes." else "")
             },
             onDismiss = { staking = null },
@@ -1466,6 +1499,13 @@ private fun minShares(poolId: Long, erthIn: java.math.BigInteger, tokenIn: java.
 
 /** Which direction the stake sheet was opened in. */
 private enum class StakeIntent { Stake, Unstake, Move }
+
+/** A validator's terms in a picker: commission, and the rate it leaves. */
+private fun stakeTerms(commission: Double, earn: EarnUiState?): String {
+    val c = "${"%.0f".format(commission * 100)}% commission"
+    val rate = earn?.let { network.erth.wallet.chain.math.StakingApr.forValidator(it.totalBondedUerth, commission) } ?: return c
+    return "$c · ${rate.asRate()} APR"
+}
 
 /**
  * The sentence a confirm sheet shows when the tx settles a slash's cut of

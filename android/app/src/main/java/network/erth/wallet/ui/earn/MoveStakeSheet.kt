@@ -53,10 +53,16 @@ fun MoveStakeSheet(
     note: String,
     onConfirm: (src: String, dst: String, amountDerth: Long) -> Unit,
     onDismiss: () -> Unit,
+    /** The validator it leaves, when a card's Move opened it. */
+    initial: String? = null,
+    /** A source row's line: what may move now, in ERTH. */
+    sourceDetail: (DelegationRow) -> String = { "${formatUerth(it.amountUerth)} derth can move now" },
+    /** A destination row's line: its terms. */
+    destinationDetail: (DelegationRow) -> String = { "${"%.0f".format(it.commission * 100)}% commission" },
 ) {
     val dimens = EarthTheme.dimens
     val amountKeys = doneKeyboard(keyboardType = KeyboardType.Decimal)
-    var src by remember { mutableStateOf(sources.firstOrNull()) }
+    var src by remember { mutableStateOf(sources.firstOrNull { it.validatorOperator == initial } ?: sources.firstOrNull()) }
     var dst by remember { mutableStateOf<DelegationRow?>(null) }
     var amount by remember { mutableStateOf("") }
 
@@ -68,37 +74,6 @@ fun MoveStakeSheet(
         amountDerth <= 0 -> "Enter more than zero."
         amountDerth > cap -> "That is more than the ${formatUerth(cap)} derth that can move now."
         else -> null
-    }
-
-    @Composable
-    fun Choice(v: DelegationRow, selected: Boolean, trailing: String?, onClick: () -> Unit) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(
-                    if (selected) EarthAccent.tint else EarthColors.Surfaces.bgSecondary,
-                    RoundedCornerShape(dimens.space12),
-                )
-                .clickable(onClick = onClick)
-                .padding(dimens.space12),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = v.moniker,
-                    style = EarthTypography.textMd,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                    color = EarthColors.Text.textPrimary,
-                )
-                Text(
-                    text = "${"%.0f".format(v.commission * 100)}% commission",
-                    style = EarthTypography.textSm,
-                    color = EarthColors.Text.textTertiary,
-                )
-            }
-            trailing?.let { Text(text = it, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary) }
-        }
-        Spacer(Modifier.height(dimens.space8))
     }
 
     EarthSheet(onDismiss = onDismiss) {
@@ -113,18 +88,20 @@ fun MoveStakeSheet(
         EarthLabel("From")
         Spacer(Modifier.height(dimens.space8))
         sources.forEach { v ->
-            Choice(v, v.validatorOperator == src?.validatorOperator, "${formatUerth(v.amountUerth)} derth") {
+            ValidatorPickRow(v, sourceDetail(v), v.validatorOperator == src?.validatorOperator) {
+                if (src?.validatorOperator != v.validatorOperator) amount = ""
                 src = v
                 if (dst?.validatorOperator == v.validatorOperator) dst = null
-                amount = ""
             }
+            Spacer(Modifier.height(dimens.space8))
         }
 
         Spacer(Modifier.height(dimens.space8))
         EarthLabel("To")
         Spacer(Modifier.height(dimens.space8))
         destinations.filter { it.validatorOperator != src?.validatorOperator }.forEach { v ->
-            Choice(v, v.validatorOperator == dst?.validatorOperator, null) { dst = v }
+            ValidatorPickRow(v, destinationDetail(v), v.validatorOperator == dst?.validatorOperator) { dst = v }
+            Spacer(Modifier.height(dimens.space8))
         }
 
         Spacer(Modifier.height(dimens.space8))

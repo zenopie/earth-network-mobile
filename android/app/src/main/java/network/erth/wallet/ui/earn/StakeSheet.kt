@@ -1,6 +1,13 @@
 package network.erth.wallet.ui.earn
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -59,10 +66,16 @@ fun StakeSheet(
     note: String? = null,
     onConfirm: (validator: String, amountUerth: Long) -> Unit,
     onDismiss: () -> Unit,
+    /** The validator to start on (a card's Add or Unstake). */
+    initial: String? = null,
+    /** The line under a pickable row's name: its terms, or what you hold there. */
+    detailFor: (DelegationRow) -> String = { "${"%.0f".format(it.commission * 100)}% commission" },
+    /** What the cap is in ("ERTH", or "derth" to unstake). */
+    unit: String = "ERTH",
 ) {
     val dimens = EarthTheme.dimens
     val amountKeys = doneKeyboard(keyboardType = KeyboardType.Decimal)
-    var selected by remember { mutableStateOf(choices.firstOrNull()) }
+    var selected by remember { mutableStateOf(choices.firstOrNull { it.validatorOperator == initial && it.pickable } ?: choices.firstOrNull { it.pickable }.takeIf { initial == null && choices.count { c -> c.pickable } == 1 }) }
     var amount by remember { mutableStateOf("") }
 
     val cap = selected?.let(capFor) ?: 0L
@@ -71,7 +84,7 @@ fun StakeSheet(
         amount.isEmpty() -> null
         amountUerth == null -> "Enter an amount, for example 1.5."
         amountUerth <= 0 -> "Enter more than zero."
-        amountUerth > cap -> "That is more than ${formatUerth(cap)} ERTH."
+        amountUerth > cap -> "That is more than ${formatUerth(cap)} $unit."
         else -> null
     }
 
@@ -88,41 +101,12 @@ fun StakeSheet(
         Spacer(Modifier.height(dimens.space8))
 
         choices.forEach { v ->
-            val isSelected = v.validatorOperator == selected?.validatorOperator
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(
-                        if (isSelected) {
-                            EarthAccent.tint
-                        } else {
-                            EarthColors.Surfaces.bgSecondary
-                        },
-                        RoundedCornerShape(dimens.space12),
-                    )
-                    .clickable { selected = v; amount = "" }
-                    .padding(dimens.space12),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = v.moniker,
-                        style = EarthTypography.textMd,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                        color = EarthColors.Text.textPrimary,
-                    )
-                    Text(
-                        text = "${"%.0f".format(v.commission * 100)}% commission",
-                        style = EarthTypography.textSm,
-                        color = EarthColors.Text.textTertiary,
-                    )
-                }
-                Text(
-                    text = formatUerth(capFor(v)),
-                    style = EarthTypography.textSm,
-                    color = EarthColors.Text.textTertiary,
-                )
-            }
+            ValidatorPickRow(
+                row = v,
+                detail = if (v.pickable) detailFor(v) else v.standing?.reason.orEmpty(),
+                selected = v.validatorOperator == selected?.validatorOperator,
+                onClick = { if (selected?.validatorOperator != v.validatorOperator) amount = ""; selected = v },
+            )
             Spacer(Modifier.height(dimens.space8))
         }
 
@@ -135,14 +119,14 @@ fun StakeSheet(
             modifier = Modifier.fillMaxWidth(),
             error = error,
             placeholder = { Text("0") },
-            suffix = { Text("ERTH") },
+            suffix = { Text(unit) },
             keyboardOptions = amountKeys.first,
             keyboardActions = amountKeys.second,
         )
 
         Spacer(Modifier.height(dimens.space8))
         Text(
-            text = "Available ${formatUerth(cap)} ERTH",
+            text = if (unit == "ERTH") "From private ERTH · ${formatUerth(cap)} available" else "Staked ${formatUerth(cap)} $unit",
             style = EarthTypography.textSm,
             color = EarthColors.Text.textTertiary,
             modifier = Modifier.clickable { amount = cap.fromBaseUnits() },
@@ -166,5 +150,67 @@ fun StakeSheet(
             colors = brandButtonColors(),
         )
         Spacer(Modifier.height(dimens.space16))
+    }
+}
+
+/**
+ * A validator in a picker: its initial, name, one line on its terms or why it
+ * cannot be picked, and its standing where the row is from the whole list.
+ */
+@Composable
+internal fun ValidatorPickRow(row: DelegationRow, detail: String, selected: Boolean, onClick: () -> Unit) {
+    val dimens = EarthTheme.dimens
+    val shape = RoundedCornerShape(dimens.space12)
+    val enabled = row.pickable
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(if (selected) EarthAccent.tint else EarthColors.Surfaces.bgSecondary, shape)
+            .border(if (selected) 1.5.dp else 0.dp, if (selected) EarthAccent.ink else Color.Transparent, shape)
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(dimens.space12),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ValidatorMark(row.moniker, muted = !enabled, size = 36.dp)
+        Spacer(Modifier.width(dimens.space12))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = row.moniker,
+                    style = EarthTypography.textMd,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (enabled) EarthColors.Text.textPrimary else EarthColors.Text.textTertiary,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                row.standing?.let { s ->
+                    val active = s == network.erth.wallet.privacy.StakeRound.Standing.ACTIVE
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = s.label,
+                        style = EarthTypography.textXs,
+                        color = if (active) EarthAccent.ink else EarthColors.Text.textTertiary,
+                        modifier = Modifier
+                            .background(if (active) EarthAccent.tint else EarthColors.Surfaces.bgTertiary, RoundedCornerShape(50))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
+            if (detail.isNotEmpty()) {
+                Text(text = detail, style = EarthTypography.textXs, color = if (enabled) EarthColors.Text.textTertiary else EarthColors.Text.textSecondary)
+            }
+        }
+        if (enabled) {
+            Spacer(Modifier.width(dimens.space8))
+            Box(
+                Modifier
+                    .size(20.dp)
+                    .background(if (selected) EarthAccent.ink else Color.Transparent, CircleShape)
+                    .border(1.5.dp, if (selected) EarthAccent.ink else EarthColors.Surfaces.strokePrimary, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (selected) Text("✓", style = EarthTypography.textXs, color = Color.White)
+            }
+        }
     }
 }

@@ -34,6 +34,8 @@ data class PrivacyActionsState(
     val stake: List<network.erth.wallet.privacy.PrivacyWallet.StakeHolding> = emptyList(),
     /** The chain's label window as last read (0: never): how long moved stake stays put. */
     val labelWindowSeconds: Long = 0,
+    /** Every stake note, spent ones included: what tells stake still joining its validator (StakeRound.joining). */
+    val stakeNotes: List<network.erth.wallet.privacy.note.OwnedStakeNote> = emptyList(),
 )
 
 /**
@@ -93,6 +95,7 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                 mergeable = w?.let { it.mergeable() + it.stakeMergeable() }.orEmpty(),
                 stake = w?.let { runCatching { it.stakeHoldings() }.getOrNull() }.orEmpty(),
                 labelWindowSeconds = w?.labelWindowSeconds ?: 0L,
+                stakeNotes = w?.stakeNotes.orEmpty(),
             )
         }
         // The positions just read give the Groundworks reminders: no second download.

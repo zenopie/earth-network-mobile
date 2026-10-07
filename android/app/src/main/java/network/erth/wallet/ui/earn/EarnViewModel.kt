@@ -21,6 +21,10 @@ data class DelegationRow(
     val moniker: String,
     val amountUerth: Long,
     val commission: Double,
+    /** Its standing, where the row is a pick from the whole list; null otherwise. */
+    val standing: network.erth.wallet.privacy.StakeRound.Standing? = null,
+    /** Whether it can be picked (a stake target), where the row is from the whole list. */
+    val pickable: Boolean = true,
 )
 
 /** One unbonding entry: neither spendable nor earning until it completes. */
@@ -53,6 +57,14 @@ data class EarnUiState(
     val derthRates: Map<String, java.math.BigDecimal> = emptyMap(),
     /** Every validator's moniker and commission, whatever its status (the list's). */
     val names: Map<String, Pair<String, Double>> = emptyMap(),
+    /** Every validator the chain lists (Query/Validators, whole), for the picker and each card's standing. */
+    val all: List<network.erth.wallet.privacy.PrivacyChainReads.ValidatorQuote> = emptyList(),
+    /** The daily round (x/shieldedstaking's epoch): when it ends, unix seconds; null until read. */
+    val roundEndsAt: Long? = null,
+    /** The block that ended the last round (StakeRound.firstHeight); null when the node could not say. */
+    val roundStartHeight: Long? = null,
+    /** x/staking's unbonding_time, in seconds; null until read. */
+    val unbondingSeconds: Long? = null,
 ) {
     /** floor(derth x rate_v) in uerth; face value until the rate is read. */
     fun derthValue(derth: Long, validator: String): Long =
@@ -62,6 +74,28 @@ data class EarnUiState(
     fun monikerOf(validator: String): String = names[validator]?.first?.ifEmpty { null } ?: validator
 
     fun commissionOf(validator: String): Double = names[validator]?.second ?: 0.0
+
+    /**
+     * Every validator the chain lists, for the stake picker: active first,
+     * the chain's order within each standing (unsorted by stake, which would
+     * only concentrate it). Only a stake target can be picked.
+     */
+    val pickList: List<DelegationRow>
+        get() {
+            val targets = validators.map { it.validatorOperator }.toSet()
+            return all.withIndex().sortedWith(compareBy({ network.erth.wallet.privacy.StakeRound.Standing.of(it.value).ordinal }, { it.index }))
+                .map { (_, v) ->
+                    val standing = network.erth.wallet.privacy.StakeRound.Standing.of(v)
+                    DelegationRow(
+                        validatorOperator = v.validator,
+                        moniker = v.moniker.ifEmpty { v.validator.shortAddress() },
+                        amountUerth = 0L,
+                        commission = v.commission,
+                        standing = standing,
+                        pickable = standing == network.erth.wallet.privacy.StakeRound.Standing.ACTIVE && v.validator in targets,
+                    )
+                }
+        }
 }
 
 /**
@@ -123,7 +157,28 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
 
+                // The round, its first block (found once per round: every
+                // probe is chain-wide, nothing about this wallet) and the
+                // unbonding period.
+                val epoch = runCatching { PrivacyQueries.epoch() }.getOrNull()
+                val startHeight = epoch?.let { e ->
+                    val key = "${network.erth.wallet.chain.NodeConfig.current.lcd}#${e.number}@${e.startTime}"
+                    roundHeights[key] ?: run {
+                        val tip = network.erth.wallet.privacy.chain.LcdChainRoots.latestBlock()
+                        tip?.time?.let { t ->
+                            network.erth.wallet.privacy.StakeRound.firstHeight(e.startTime, tip.height, t) {
+                                network.erth.wallet.privacy.chain.LcdChainRoots.blockTime(it)
+                            }
+                        }?.also { roundHeights[key] = it }
+                    }
+                }
+                val timing = runCatching { PrivacyQueries.stakingTiming() }.getOrNull()
+
                 EarnUiState(
+                    all = entries,
+                    roundEndsAt = epoch?.endTime,
+                    roundStartHeight = startHeight,
+                    unbondingSeconds = timing?.unbondingSeconds,
                     derthRates = entries.associate { it.validator to it.rate },
                     names = entries.associate { it.validator to (it.moniker to it.commission) },
                     totalBondedUerth = runCatching {
@@ -158,6 +213,11 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
      * belongs to a different address is a worse answer than no balance at all,
      * because nothing about it looks wrong.
      */
+    private companion object {
+        /** Per node and round, for the process: found once, never re-asked. */
+        val roundHeights = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    }
+
     fun clear() {
         _state.value = null
     }
