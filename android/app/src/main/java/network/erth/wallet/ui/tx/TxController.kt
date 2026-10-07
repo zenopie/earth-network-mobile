@@ -54,6 +54,14 @@ class TxController : ViewModel() {
     var preparing: TxConfirmDetails? by mutableStateOf(null)
         private set
 
+    /**
+     * Which request's sheet is up, which is being sent, and which were sent:
+     * a sheet for a request being sent or already sent never comes back.
+     */
+    private val gate = TxGate()
+    /** The request on the sheet (or being sent): its identity for [gate]. */
+    private var requestId: Any? = null
+
     private var build: ((Context) -> List<ProtoAny>)? = null
     /** The messages the sheet was read from: exactly what a confirm signs. */
     private var signed: List<ProtoAny>? = null
@@ -85,7 +93,10 @@ class TxController : ViewModel() {
         // that scales, say, by validator count under a flat fee): the sheet
         // would say "funded" and the node would reject the tx.
         val fee = feeFor(gasLimit)
+        val id = Any()
+        if (!gate.present(id)) return
 
+        requestId = id
         this.build = build
         this.signed = null
         this.private = null
@@ -135,6 +146,9 @@ class TxController : ViewModel() {
         onSuccess: (() -> Unit)? = null,
         run: (Context) -> String,
     ) {
+        val id = Any()
+        if (!gate.present(id)) return
+        requestId = id
         this.build = null
         this.signed = null
         this.preparing = null
@@ -149,13 +163,21 @@ class TxController : ViewModel() {
         val msgs = signed
         val privateRun = private
         if (msgs == null && privateRun == null) return
+        // Single flight: only the request on screen, once. A second tap, or a
+        // sheet some stale path put back, cannot send it again.
+        val id = requestId ?: return
+        if (!gate.confirm(id)) return
         pending = null
         signed = null
         lastAction = details.action
         submitting = true
+        val done = onDone
 
         viewModelScope.launch {
-            outcome = try {
+            // Whether the tx may have landed: then onDone clears the form and
+            // refreshes, after the outcome is on screen.
+            var settled = true
+            val result: TxOutcome? = try {
                 val hash = withContext(Dispatchers.IO) {
                     if (privateRun != null) {
                         // The fee the sheet showed bounds what the private run may pay.
@@ -172,27 +194,33 @@ class TxController : ViewModel() {
                         }
                     }
                 }
-                onDone?.invoke()
                 TxOutcome.Success(details.action, hash)
             } catch (e: TxUnconfirmedException) {
                 // Still run onDone: it clears the form and refreshes, and
                 // leaving a filled-in send on screen invites sending it again
                 // while the first may yet land.
-                onDone?.invoke()
                 TxOutcome.Pending(details.action, e.txHash)
             } catch (e: network.erth.wallet.privacy.tx.PrivateTxEngine.FeeAboveQuote) {
-                // Nothing was proven or sent: show the sheet again at the chain's fee.
-                if (privateRun != null) {
+                // Nothing was proven or sent: show the sheet again at the
+                // chain's fee, saying so. The same request, so the gate allows it.
+                if (privateRun != null && gate.reask(id)) {
                     private = privateRun
                     feeUerth = e.fee
-                    pending = details.copy(feeUerth = e.fee)
+                    pending = details.copy(feeUerth = e.fee, reask = TxGate.reaskNote(e.fee, e.shown))
+                    submitting = false
+                    return@launch
                 }
-                null
+                settled = false
+                TxOutcome.Failure(details.action, e)
             } catch (e: Exception) {
+                settled = false
                 TxOutcome.Failure(details.action, e)
             } finally {
+                gate.finish(id)
                 submitting = false
             }
+            outcome = result
+            if (settled) done?.invoke()
         }
     }
 
@@ -202,6 +230,9 @@ class TxController : ViewModel() {
     }
 
     fun cancel() {
+        // No sheet is up while a tx is sent; what it holds is the send's.
+        if (gate.sending) return
+        gate.cancel()
         pending = null
         preparing = null
         build = null

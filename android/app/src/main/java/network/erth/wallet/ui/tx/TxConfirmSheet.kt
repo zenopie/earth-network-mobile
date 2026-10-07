@@ -67,6 +67,12 @@ data class TxConfirmDetails(
      * moved stake this tx settles, when moved stake can move again.
      */
     val notes: List<String> = emptyList(),
+    /**
+     * Set when the sheet is shown again at a higher fee: says nothing was sent
+     * and why it is back, so a re-ask does not read as the same request
+     * popping up a second time (iOS build 21's registration).
+     */
+    val reask: String? = null,
 )
 
 /**
@@ -132,6 +138,14 @@ fun TxConfirmSheet(
                 modifier = Modifier.fillMaxWidth().padding(top = dimens.space8),
             )
             Box(Modifier.padding(vertical = dimens.space8)) { EarthCodeBlock(details.recipient) }
+        }
+        details.reask?.let { note ->
+            Text(
+                text = note,
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textPrimary,
+                modifier = Modifier.fillMaxWidth().padding(vertical = dimens.space4),
+            )
         }
         details.notes.forEach { note ->
             Text(

@@ -36,10 +36,12 @@ import network.erth.wallet.chain.TxUnconfirmedException
 import network.erth.wallet.referral.Referral
 import network.erth.wallet.privacy.chain.PrivacyQueries
 import network.erth.wallet.privacy.handles.HandleDirectory
+import network.erth.wallet.privacy.sync.WalletSync
 import network.erth.wallet.ui.designsystem.component.BlankBgScaffold
 import network.erth.wallet.ui.navigation.EarthDetailTopBar
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.tx.TxConfirmDetails
+import network.erth.wallet.ui.tx.TxGate
 import network.erth.wallet.ui.tx.TxConfirmSheet
 import network.erth.wallet.ui.tx.TxOutcome
 import network.erth.wallet.ui.tx.TxPendingSheet
@@ -114,6 +116,8 @@ class RegistrationActivity : ComponentActivity() {
                 // The fee the sheet shows, and so the most the registration may
                 // pay: a chain asking more re-shows the sheet at its fee.
                 var registerFee: Long by remember { mutableStateOf(REGISTER_FEE) }
+                // Why the sheet is back, when the chain asked more than it showed.
+                var reask: String? by remember { mutableStateOf(null) }
                 var balanceUerth: Long by remember { mutableLongStateOf(0L) }
                 var awaitingGas: Boolean by remember { mutableStateOf(false) }
                 var requestingGas: Boolean by remember { mutableStateOf(false) }
@@ -128,6 +132,12 @@ class RegistrationActivity : ComponentActivity() {
                 // transaction covers that with TxSheets; this flow builds its
                 // own sheets, so it has to raise the same state itself.
                 var submitting: Boolean by remember { mutableStateOf(false) }
+
+                // The sheet's single-flight rule, keyed by the scan (one scan,
+                // one registration): sent once, never shown again once sent,
+                // except a fee re-ask where nothing was sent. As TxController.
+                val gate = remember { TxGate() }
+                fun showSheet(s: PassportSession.Scan) { if (gate.present(s)) scan = s }
 
                 val ctx = this@RegistrationActivity
 
@@ -181,7 +191,7 @@ class RegistrationActivity : ComponentActivity() {
                                 // gas grant — which is why proving runs first,
                                 // so no grant is spent on a registration that
                                 // was never going to exist.
-                                scan = read
+                                showSheet(read)
                                 refreshBalance()
                             }
                             .onFailure { e ->
@@ -230,12 +240,14 @@ class RegistrationActivity : ComponentActivity() {
                             feeUerth = registerFee,
                             balanceUerth = balanceUerth,
                             shielded = true,
+                            reask = reask,
                         ),
                         awaitingGas = awaitingGas,
                         requestingGas = requestingGas,
                         gasError = gasError,
                         gasWork = gasWork,
-                        onConfirm = {
+                        onConfirm = confirm@{
+                            if (!gate.confirm(ready)) return@confirm
                             scan = null
                             submitting = true
                             val shown = registerFee
@@ -243,16 +255,33 @@ class RegistrationActivity : ComponentActivity() {
                                 val hash = withContext(Dispatchers.IO) {
                                     PrivacyWallet.withShownFee(shown) { PassportSession.register(ctx, ready) }
                                 }
+                                gate.finish(ready)
                                 submitting = false
                                 hash.onSuccess {
                                     setResult(RESULT_OK, Intent().putExtra(EXTRA_TX_HASH, it))
                                     finish()
                                 }.onFailure { e ->
                                     if (e is network.erth.wallet.privacy.tx.PrivateTxEngine.FeeAboveQuote) {
-                                        // Nothing was proven or sent: confirm again at the chain's fee.
+                                        // Nothing was proven or sent: confirm again at the chain's fee, saying so.
                                         registerFee = e.fee
-                                        scan = ready
+                                        reask = TxGate.reaskNote(e.fee, e.shown)
+                                        if (gate.reask(ready)) scan = ready
                                         return@onFailure
+                                    }
+                                    if (TxGate.duplicateRegistration(e)) {
+                                        // Refused at CheckTx as already registered: if this
+                                        // wallet's registration is live, a duplicate of one that landed.
+                                        val live = withContext(Dispatchers.IO) {
+                                            runCatching {
+                                                val w = PrivacySession.wallet(ctx)
+                                                w.sync()
+                                                w.identityStatus() == WalletSync.IdentityStatus.LIVE
+                                            }.getOrDefault(false)
+                                        }
+                                        if (live) {
+                                            outcome = TxOutcome.Message("Already registered", TxGate.ALREADY_REGISTERED)
+                                            return@onFailure
+                                        }
                                     }
                                     outcome = if (e is TxUnconfirmedException) {
                                         TxOutcome.Pending("Register", e.txHash)
@@ -266,6 +295,7 @@ class RegistrationActivity : ComponentActivity() {
                             // Keep the proof. Backing out of the fee is not
                             // backing out of the scan, and rebuilding it means
                             // holding the passport against the phone again.
+                            gate.cancel()
                             scan = null
                             stage = NfcStage.Failed(
                                 "Registration was not sent. Your passport does " +
@@ -322,6 +352,9 @@ class RegistrationActivity : ComponentActivity() {
                                     // the pool is synced until it appears.
                                     repeat(GAS_POLL_ATTEMPTS) {
                                         delay(GAS_POLL_INTERVAL_MS)
+                                        // Bound to this sheet: once confirmed or dismissed the
+                                        // wait stops, rather than syncing every 3 s against the send.
+                                        if (!gate.showing(ready)) return@launch
                                         refreshBalance()
                                         if (balanceUerth >= registerFee) return@launch
                                     }
