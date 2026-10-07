@@ -40,7 +40,11 @@ object PassportCircuits {
 
     @Synchronized
     private fun fetch(context: Context, variant: PassportVariants.Variant): ByteArray {
-        val url = PassportVariants.get(context).downloadBase + variant.id + ".json.gz"
+        // Content-addressed by the pinned hash: the backend serves this name
+        // immutable, so a cache never hands back another build's circuit
+        // under it (the hash is still checked below).
+        if (!Regex("[0-9a-f]{64}").matches(variant.sha256)) throw CircuitUnavailableException("circuit ${variant.id}: no pinned hash")
+        val url = PassportVariants.get(context).downloadBase + variant.id + "." + variant.sha256 + ".json.gz"
         // The platform permits cleartext (for a user's own LAN node); this does not need it.
         if (!url.startsWith("https://")) throw CircuitUnavailableException("circuit download: not https")
         val c = URL(url).openConnection() as HttpURLConnection

@@ -163,7 +163,13 @@ public enum PassportCircuits {
 
     public static func load(id: String, sha256 want: String, base: String) async throws -> Data {
         if let d = cached(id: id, sha256: want) { return d }
-        guard let url = URL(string: base + id + ".json.gz") else { throw Failure.unavailable("bad URL") }
+        // Content-addressed by the pinned hash, as Android: the backend serves
+        // this name immutable, so a cache never hands back another build's
+        // circuit under it (the hash is still checked below).
+        guard want.count == 64, want.allSatisfy({ ("0" ... "9").contains($0) || ("a" ... "f").contains($0) }) else {
+            throw Failure.unavailable("no pinned hash")
+        }
+        guard let url = URL(string: base + id + "." + want + ".json.gz") else { throw Failure.unavailable("bad URL") }
         var r = URLRequest(url: url)
         r.timeoutInterval = 120
         let session = URLSession(configuration: .ephemeral, delegate: PassportSRS.NoRedirects(), delegateQueue: nil)
