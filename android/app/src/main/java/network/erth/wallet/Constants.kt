@@ -53,9 +53,9 @@ object Constants {
     // and app_version dropped), so the bytes differ from the file's. Compute
     // it from the ceremony's genesis.json with tools/genesishash, or from any
     // node started on it. The value below is for the chain repo's genesis at
-    // b9f840e (file sha256 723549a8...); the ceremony replaces it. Must equal
+    // fb8312c (file sha256 bae959be...); the ceremony replaces it. Must equal
     // iOS Constants.genesisSHA256.
-    const val EARTH_GENESIS_SHA256 = "6d13801680bece746fe05703d0d35a88c73ee611d15181a6d0eaf00a0fbe3a95"
+    const val EARTH_GENESIS_SHA256 = "41feba567cd09cb807525e670096dff55f82c4b808939e8cbb2e5155286d438a"
     // =============================================================================
     const val EARTH_PREFIX = "earth"
     const val UERTH_DENOM = "uerth"
