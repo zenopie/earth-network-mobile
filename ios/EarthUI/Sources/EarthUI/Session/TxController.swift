@@ -38,6 +38,11 @@ public final class TxController {
         /// the estimate first shown: the sheet asks again at it.
         public var feeOverride: UInt64?
 
+        /// Set when the sheet is shown again at `feeOverride`: says nothing
+        /// was sent and why it is back, so a re-ask does not read as the same
+        /// request popping up a second time (build 21's registration).
+        public var reask: String?
+
         /// A private tx: unsigned, proven on the phone, its fee paid from a
         /// shielded ERTH note. The fee shown is an estimate (the exact figure
         /// comes from simulating at confirm time), and the balance it is
@@ -83,12 +88,16 @@ public final class TxController {
         /// — calling it a success is how a dropped send read as sent.
         case unconfirmed(action: String, hash: String)
         case failed(action: String, reason: String)
+        /// Refused as a duplicate of something that already happened: a
+        /// registration whose identity the wallet now finds live.
+        case alreadyDone(action: String, note: String)
 
         public var id: String {
             switch self {
             case let .succeeded(_, hash): hash
             case let .unconfirmed(_, hash): "unconfirmed" + hash
             case let .failed(action, reason): action + reason
+            case let .alreadyDone(action, note): "done" + action + note
             }
         }
     }
@@ -154,6 +163,12 @@ public final class TxController {
     /// it for the same reason.
     public private(set) var lastAction: String?
 
+    /// Which request's sheet is up, which is being sent, and which were sent:
+    /// a sheet for a request being sent or already sent never comes back.
+    private var gate = TxGate()
+    /// The request the running gas wait belongs to.
+    private var gasWaitFor: UUID?
+
     private var build: ((EarthKey) async throws -> [ProtoAny])?
     private var runPrivate: ((PrivacyWallet) async throws -> TxResult)?
     private var onSuccess: (() async -> Void)?
@@ -171,6 +186,8 @@ public final class TxController {
         onSuccess: (() async -> Void)? = nil,
         build: @escaping (EarthKey) async throws -> [ProtoAny]
     ) {
+        guard gate.present(details.id) else { return }
+        endGasWait()
         self.build = build
         self.runPrivate = nil
         self.onSuccess = onSuccess
@@ -187,6 +204,8 @@ public final class TxController {
         onSuccess: (() async -> Void)? = nil,
         run: @escaping (PrivacyWallet) async throws -> TxResult
     ) {
+        guard gate.present(details.id) else { return }
+        endGasWait()
         var d = details
         d.shielded = true
         self.build = nil
@@ -202,13 +221,23 @@ public final class TxController {
     }
 
     public func cancel() {
+        // No sheet is up while a tx is sent; what it holds is the send's.
+        guard !gate.sending else { return }
+        gate.cancel()
+        endGasWait()
         pending = nil
         build = nil
         runPrivate = nil
         onSuccess = nil
         host = .root
-        awaitingGas = false
         gasError = nil
+    }
+
+    /// Stops showing a gas wait; the wait itself stops at its next poll
+    /// (`awaitGas` acts only while its sheet is up).
+    private func endGasWait() {
+        gasWaitFor = nil
+        awaitingGas = false
     }
 
     /// Asks the backend for free gas, then waits for it to land.
@@ -220,7 +249,7 @@ public final class TxController {
     /// fee comes from (GasWarning). A 202 is treated like a 200: the chain is
     /// the only authority on arrival.
     public func requestGas(in model: AppModel) async {
-        guard !requestingGas, !awaitingGas, !model.address.isEmpty, let reg = pending?.registration else { return }
+        guard !requestingGas, !awaitingGas, !model.address.isEmpty, let id = pending?.id, let reg = pending?.registration else { return }
         requestingGas = true
         gasError = nil
         do {
@@ -244,6 +273,8 @@ public final class TxController {
             return
         }
         requestingGas = false
+        // Cancelled or replaced while the backend answered: nothing to wait for.
+        guard gate.showing(id) else { return }
         await awaitGas(in: model)
     }
 
@@ -261,13 +292,22 @@ public final class TxController {
     /// Waits for a gas grant to arrive, then lets the sheet notice: the
     /// backend answering is not the gas landing. A shielded grant is found by
     /// syncing the note streams; a transparent one by the account balance.
+    ///
+    /// Bound to the sheet it started from: once that request is confirmed,
+    /// cancelled or replaced, the wait stops at its next step and touches
+    /// nothing. Confirming as soon as the balance shows is the normal path
+    /// (the sheet watches the balance, not this wait), and a wait left
+    /// syncing every 3 s contends with the send for the wallet.
     public func awaitGas(in model: AppModel) async {
         guard let details = pending, let needed = UInt64(details.feeUerth), !model.address.isEmpty else { return }
+        let id = details.id
+        gasWaitFor = id
         awaitingGas = true
-        defer { awaitingGas = false }
+        defer { if gasWaitFor == id { endGasWait() } }
 
         for _ in 0 ..< Self.gasPollAttempts {
             try? await Task.sleep(nanoseconds: Self.gasPollIntervalNanos)
+            guard gate.showing(id), gasWaitFor == id else { return }
             if details.shielded {
                 await model.syncPrivacy()
                 if model.shieldedErth >= needed { return }
@@ -287,7 +327,9 @@ public final class TxController {
     private static let gasPollIntervalNanos: UInt64 = 3_000_000_000
 
     public func confirm(in model: AppModel) async {
-        guard let details = pending, build != nil || runPrivate != nil else { return }
+        // Single flight: only the request on screen, once. A second tap, or a
+        // sheet some stale path put back, cannot send it again.
+        guard let details = pending, build != nil || runPrivate != nil, gate.confirm(details.id) else { return }
         let build = self.build
         let runPrivate = self.runPrivate
         // Taken now, so what `onSuccess` queues (a chained
@@ -296,10 +338,14 @@ public final class TxController {
         let onSuccess = self.onSuccess
         self.build = nil; self.runPrivate = nil; self.onSuccess = nil
         pending = nil
+        endGasWait()
         lastAction = details.action
         submitting = true
         defer { submitting = false }
 
+        // Whether the tx may have landed: then the form is cleared and the
+        // wallet refreshed, after the outcome is on screen.
+        var settled = true
         do {
             let hash: String
             if let runPrivate {
@@ -311,13 +357,14 @@ public final class TxController {
                 hash = try await broadcast(details: details, build: build!, model: model)
             }
             outcome = .succeeded(action: details.action, hash: hash)
-            await onSuccess?()
-            await model.refresh()
         } catch let e as PrivateTxEngine.FeeAboveQuote {
-            // Nothing was proven or sent: show the sheet again at the chain's fee.
+            // Nothing was proven or sent: show the sheet again at the chain's
+            // fee, saying so. The same request, so the gate allows it.
             var again = details
             again.feeOverride = e.fee
+            again.reask = TxGate.reaskNote(fee: e.fee, shown: e.shown)
             self.build = build; self.runPrivate = runPrivate; self.onSuccess = onSuccess
+            _ = gate.reask(details.id)
             pending = again
             return
         } catch let EarthClient.Error.notCommitted(hash) {
@@ -326,10 +373,28 @@ public final class TxController {
             // it again while the first may yet land.
             if runPrivate != nil { model.publishPrivacy() }
             outcome = .unconfirmed(action: details.action, hash: hash)
+        } catch let error where details.registration != nil && TxGate.duplicateRegistration(error) {
+            // Refused at CheckTx as already registered. If this wallet's
+            // registration is live, it is a duplicate of one that landed.
+            await model.syncPrivacy()
+            if model.identityStatus == .live {
+                outcome = .alreadyDone(action: details.action, note: "This wallet is already registered. The chain refused a second copy of the registration, so nothing more was sent or paid.")
+            } else {
+                settled = false
+                outcome = .failed(action: details.action, reason: model.describe(error))
+            }
+        } catch {
+            settled = false
+            outcome = .failed(action: details.action, reason: model.describe(error))
+        }
+        // The outcome shows now. The refresh after it is a full sync and the
+        // public reads, which on a busy node take long enough to read as a
+        // send that never finished when they ran under "Sending".
+        gate.finish(details.id)
+        submitting = false
+        if settled {
             await onSuccess?()
             await model.refresh()
-        } catch {
-            outcome = .failed(action: details.action, reason: model.describe(error))
         }
     }
 

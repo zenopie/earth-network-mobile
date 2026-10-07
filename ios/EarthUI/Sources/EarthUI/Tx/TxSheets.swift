@@ -73,6 +73,16 @@ struct TxConfirmSheet: View {
                     EarthDetailRow(label: row.0, value: row.1)
                 }
             }
+            if let reask = details.reask {
+                // Above everything else the sheet says: without it, a re-ask
+                // reads as the request that was just confirmed coming back.
+                Text(reask)
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(theme.space.x12)
+                    .background(theme.colors.warnTint, in: .rect(cornerRadius: theme.space.radiusMd))
+            }
             ForEach(Array(details.notes.enumerated()), id: \.offset) { _, note in
                 Text(note)
                     .font(EarthType.bodySmall)
@@ -185,6 +195,11 @@ struct TxResultSheet: View {
                     EarthLabel("Transaction")
                     EarthCodeBlock(text: hash)
                 }
+            case let .alreadyDone(action, note):
+                header(status: .success, title: "Already \(action == "Register" ? "registered" : "done")", glyph: "checkmark.circle.fill")
+                Text(note)
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textSecondary)
             case let .failed(action, reason):
                 header(status: .failed, title: "\(action) failed", glyph: "xmark.circle.fill")
                 EarthLabel("The chain said")
