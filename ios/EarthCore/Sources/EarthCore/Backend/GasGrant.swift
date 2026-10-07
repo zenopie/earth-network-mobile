@@ -67,10 +67,20 @@ public enum GasGrant {
     public struct Refused: Swift.Error, Sendable {
         public let status: Int
         public let message: String
+        /// The service's structured reason for a chain refusal (a 403's
+        /// "kind", e.g. `kindIdcUsed`), nil when it gave none. The message is
+        /// never parsed for it.
+        public let kind: String?
 
         /// The chain's own reason, in plain words where the app has them (1127, 1113).
-        public init(status: Int, message: String) { self.status = status; self.message = ChainErrors.explain(text: message) ?? message }
+        public init(status: Int, message: String, kind: String? = nil) {
+            self.status = status; self.message = ChainErrors.explain(text: message) ?? message
+            self.kind = status == 403 ? kind.flatMap { $0.isEmpty ? nil : $0 } : nil
+        }
     }
+
+    /// The gas service's refusal kind for an identity registered before (the chain's 1130). As Android's KIND_IDC_USED.
+    public static let kindIdcUsed = "idc used"
 
     public enum Outcome: Sendable, Equatable {
         /// The send is in a block.
@@ -186,7 +196,8 @@ public enum GasGrant {
             default:
                 // 503, 429: the server gave the stamp back; the next try may use it.
                 if status == 503 || status == 429 { keep(key, current) }
-                throw Refused(status: status, message: json?.message.string ?? "The gas service is unavailable (\(status)). Try again shortly.")
+                throw Refused(status: status, message: json?.message.string ?? "The gas service is unavailable (\(status)). Try again shortly.",
+                              kind: json?.kind.string)
             }
         }
         throw Refused(status: 428, message: "The gas service kept asking for more work. Try again shortly.")

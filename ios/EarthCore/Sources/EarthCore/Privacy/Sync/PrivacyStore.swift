@@ -289,6 +289,11 @@ public struct IdentitySlot: Codable, Equatable, Sendable {
     /// suggestion only: nothing moves unasked. Android's move_suggested_at.
     public var moveSuggestedAt: Int64 = 0
     public var moveSuggestedLeaf: Int64 = -1
+    /// The earliest lease end of what the predecessor still holds to move
+    /// here, as Identity last read it (0: none known): past it the old
+    /// identity can neither move nor renew it. The suggestion is capped
+    /// before it, and the reminder grows urgent as it nears. As Android's move_deadline.
+    public var moveDeadline: Int64 = 0
 
     public init() {}
 
@@ -298,7 +303,7 @@ public struct IdentitySlot: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case identity, caretakerCastAt, caretakerSplit, caretakerExpiresAt, caretakerMovedOut, handle, handleMovedOut, handleSetAt,
              handleExpiresAt, handleExpiresFor, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, pendingMoves, switchTarget,
-             moveSuggestedAt, moveSuggestedLeaf
+             moveSuggestedAt, moveSuggestedLeaf, moveDeadline
     }
 
     /// From a slot, or (a state file from before generations) the state's own top-level keys, which are the same.
@@ -314,6 +319,7 @@ public struct IdentitySlot: Codable, Equatable, Sendable {
         caretakerRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .caretakerRecordPos)
         pendingMoves = try v(.pendingMoves, []); switchTarget = try v(.switchTarget, "")
         moveSuggestedAt = try v(.moveSuggestedAt, 0); moveSuggestedLeaf = try v(.moveSuggestedLeaf, -1)
+        moveDeadline = try v(.moveDeadline, 0)
         handleExpiresAt = try v(.handleExpiresAt, 0); handleExpiresFor = try v(.handleExpiresFor, "")
     }
 }
@@ -394,6 +400,12 @@ public struct PrivacyState: Codable, Sendable {
     public var identityRowsSeen: UInt64 = 0
     /// Pending marks a reset carried, by nullifier hex, until the resync re-finds their notes.
     public var carriedMarks: [String: CarriedMark] = [:]
+    /// The earliest note position holding a value-0 note of ours with a
+    /// record's magic whose tag matched no generation tried (nil: none), and
+    /// the smallest record window such a note was tried with: once the
+    /// window grows past it, WalletSync tries those notes again. As Android.
+    public var unmatchedRecordFrom: UInt64?
+    public var unmatchedRecordWindow: Int = 0
 
     public init() {}
 
@@ -431,14 +443,20 @@ public struct PrivacyState: Codable, Sendable {
     public var switchTarget: String { get { current.switchTarget } set { current.switchTarget = newValue } }
     public var moveSuggestedAt: Int64 { get { current.moveSuggestedAt } set { current.moveSuggestedAt = newValue } }
     public var moveSuggestedLeaf: Int64 { get { current.moveSuggestedLeaf } set { current.moveSuggestedLeaf = newValue } }
+    public var moveDeadline: Int64 { get { current.moveDeadline } set { current.moveDeadline = newValue } }
 
     /// The highest generation whose idc may have been registered, -1 for
     /// none: one with a registration record (a registration of it reached a
     /// block, whether or not it succeeded: the record lands with the fee),
     /// a registration matched or committed, and every one below the floor.
     /// Skipping a generation whose registration failed costs nothing. As Android.
-    public func usedThrough() -> Int {
-        var m = generationFloor - 1
+    public func usedThrough() -> Int { max(generationFloor - 1, usedThroughRecorded()) }
+
+    /// The highest generation with a registration on chain to show for it
+    /// (a record, a matched leaf, a committed tx), -1 for none: what a
+    /// restore can find again. The floor is not counted. As Android.
+    public func usedThroughRecorded() -> Int {
+        var m = -1
         for r in regRecords { m = max(m, r.generation) }
         for (g, t) in identities where t.identity != nil { m = max(m, g) }
         if let p = pendingRegistration, p.leafIndex != nil { m = max(m, p.generation) }
@@ -465,7 +483,7 @@ public struct PrivacyState: Codable, Sendable {
              pendingUnbonds, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax,
              syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
              voidRecordHeights, labelWindowSeconds, carriedMarks, registrationKeepUntil, positionLeases,
-             generation, generationFloor, identities
+             generation, generationFloor, identities, unmatchedRecordFrom, unmatchedRecordWindow
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -487,6 +505,7 @@ public struct PrivacyState: Codable, Sendable {
         try c.encode(labelWindowSeconds, forKey: .labelWindowSeconds); try c.encode(carriedMarks, forKey: .carriedMarks)
         try c.encode(registrationKeepUntil, forKey: .registrationKeepUntil); try c.encode(positionLeases, forKey: .positionLeases)
         try c.encode(generation, forKey: .generation); try c.encode(generationFloor, forKey: .generationFloor)
+        try c.encodeIfPresent(unmatchedRecordFrom, forKey: .unmatchedRecordFrom); try c.encode(unmatchedRecordWindow, forKey: .unmatchedRecordWindow)
         // String keys: a JSON object, not an alternating array.
         try c.encode(Dictionary(uniqueKeysWithValues: identities.filter { $0.key == generation || !$0.value.empty }.map { (String($0.key), $0.value) }),
                      forKey: .identities)
@@ -524,6 +543,8 @@ public struct PrivacyState: Codable, Sendable {
         carriedMarks = try v(.carriedMarks, [:])
         registrationKeepUntil = try v(.registrationKeepUntil, 0)
         positionLeases = try v(.positionLeases, [:])
+        unmatchedRecordFrom = try c.decodeIfPresent(UInt64.self, forKey: .unmatchedRecordFrom)
+        unmatchedRecordWindow = try v(.unmatchedRecordWindow, 0)
     }
 }
 

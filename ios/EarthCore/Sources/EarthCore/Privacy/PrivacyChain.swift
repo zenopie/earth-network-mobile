@@ -42,12 +42,14 @@ public enum PrivacyReads {
         /// current_date_max_skew_seconds (7; 0: the node did not say): how long
         /// a failed registration may still land after its current_date.
         public let currentDateMaxSkewSeconds: Int64
+        /// registration_validity_seconds: a registration lapses this long after its block time.
+        public let registrationValiditySeconds: Int64
         public init(caretakerVoteSeconds: Int64, identityRootWindowSeconds: Int64,
                     handleLeaseSeconds: Int64 = Handles.defaultLeaseSeconds, handleRenewalSeconds: Int64 = Handles.defaultRenewalSeconds,
-                    currentDateMaxSkewSeconds: Int64 = 0) {
+                    currentDateMaxSkewSeconds: Int64 = 0, registrationValiditySeconds: Int64 = 365 * 86_400) {
             self.caretakerVoteSeconds = caretakerVoteSeconds; self.identityRootWindowSeconds = identityRootWindowSeconds
             self.handleLeaseSeconds = handleLeaseSeconds; self.handleRenewalSeconds = handleRenewalSeconds
-            self.currentDateMaxSkewSeconds = currentDateMaxSkewSeconds
+            self.currentDateMaxSkewSeconds = currentDateMaxSkewSeconds; self.registrationValiditySeconds = registrationValiditySeconds
         }
     }
 
@@ -332,6 +334,7 @@ public struct PrivacyQueries: PrivacyChainReads {
         let l = p.handle_lease_seconds.int64(default: 0)
         let n = p.handle_renewal_seconds.int64(default: 0)
         let k = p.current_date_max_skew_seconds.int64(default: 0)
+        let v = p.registration_validity_seconds.int64(default: 0)
         // Zero falls back to the chain's defaults (365 days; 30 days for the renewal period).
         // Every duration at most Handles.maxAheadSeconds, so no sum of it with a
         // time can trap (a node's 2^63 lease is not one).
@@ -339,7 +342,8 @@ public struct PrivacyQueries: PrivacyChainReads {
         return PrivacyReads.PersonhoodParams(caretakerVoteSeconds: min(r > 0 ? r : 365 * 86_400, m), identityRootWindowSeconds: min(w > 0 ? w : 3_600, m),
                                              handleLeaseSeconds: min(l > 0 ? l : Handles.defaultLeaseSeconds, m),
                                              handleRenewalSeconds: min(n > 0 ? n : Handles.defaultRenewalSeconds, m),
-                                             currentDateMaxSkewSeconds: min(max(k, 0), m))
+                                             currentDateMaxSkewSeconds: min(max(k, 0), m),
+                                             registrationValiditySeconds: min(v > 0 ? v : 365 * 86_400, m))
     }
 
     /// x/personhood Query/LeaseBounds. int64 fields arrive as JSON strings; a

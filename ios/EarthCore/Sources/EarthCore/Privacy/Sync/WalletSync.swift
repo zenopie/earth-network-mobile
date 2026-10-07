@@ -495,8 +495,26 @@ public final class WalletSync {
     /// Record notes kept (newest first); only this wallet's own registrations carry a valid tag.
     public static let maxRecords = 32
     /// Generations past the highest the wallet knows whose record tags are
-    /// tried: a 1130 refusal skips one with no record of it.
+    /// tried (N): the scan stops after N consecutive generations with no
+    /// record. A registration's record lands in its own tx, so an honest
+    /// wallet leaves no gap; a gap comes only from the generation floor,
+    /// raised by a structured 1130 refusal of a generation with no record
+    /// (PrivacyWallet.identityRefused), and the floor never goes more than N
+    /// past the highest recorded generation. So every registration is within
+    /// N of the one before it, and a restore that looks N past each record
+    /// it finds reaches them all. 8 absorbs seven record-less refusals in a
+    /// row, which honest use never meets, at up to (highest + N + 1) tag
+    /// hashes per value-0 record note. As Android.
     public static let generationLookahead = 8
+    /// Record rescans (`rescanRecords`) one sync runs before leaving the rest to the next.
+    public static let maxRecordRescans = 4
+
+    /// Whether `memo` carries a registration or state record's magic (its tag not yet checked).
+    static func recordCandidate(_ memo: Data) -> Bool {
+        guard memo.count >= 3 else { return false }
+        let head = Data(memo.prefix(3))
+        return head == regMagic || head == handleMagic || head == caretakerMagic
+    }
 
     /// The highest generation whose record tags `s`'s sync tries.
     public static func maxRecordGeneration(_ s: PrivacyState) -> Int {
@@ -691,6 +709,7 @@ public final class WalletSync {
             pass += 1
             if try atIndexerTip(roots) || pass >= Self.maxPasses { break }
         }
+        try await rescanRecords(limit)
         await resolveUnresolved()
         await releaseStalePending()
         let verified = try await verifyRoots(roots)
@@ -926,6 +945,41 @@ public final class WalletSync {
         return found
     }
 
+    /// A restore's record scan grew its window (it found a record near the
+    /// top of it) after notes it had already passed carried a record's magic
+    /// and no tag it tried: those notes are tried again, from the earliest,
+    /// with the wider window, so a record past the old window is not missed
+    /// for good. Only the record side of `open` runs (its state is keyed by
+    /// note position, so a record seen again changes nothing); the notes are
+    /// the ones held, each checked against the local tree. Repeats while the
+    /// window keeps growing, up to `maxRecordRescans` a sync. As Android.
+    private func rescanRecords(_ limit: Int) async throws {
+        var rounds = 0
+        while let start = store.state.unmatchedRecordFrom, start < store.state.notesNext,
+              Self.maxRecordGeneration(store.state) > store.state.unmatchedRecordWindow, rounds < Self.maxRecordRescans {
+            rounds += 1
+            let end = store.state.notesNext
+            var pos = start
+            // Found again by this pass, with the window it tries them with.
+            store.mutate { $0.unmatchedRecordFrom = nil; $0.unmatchedRecordWindow = 0 }
+            while pos < end {
+                try tick()
+                let from = Self.aligned(pos, limit)
+                let page = try await indexer.notes(fromPos: from, limit: limit)
+                try checkPage(page.rows.count, limit)
+                try checkPositions("note", from: from, rows: page.rows.count, next: page.nextPos, complete: page.complete)
+                if page.rows.isEmpty { throw Inconsistent(message: "a note page from \(from) ends before the \(end) held") }
+                try checkPositions(page.rows.map(\.position), from: from, "note")
+                for r in page.rows where r.position >= pos && r.position < end {
+                    if store.noteTree.leaf(r.position) != r.cm { throw Inconsistent(message: "note \(r.position) differs from the one held") }
+                    // Value-0 rows are all `open` keeps; a note with value is held already.
+                    _ = open(r)
+                }
+                pos = from + UInt64(page.rows.count)
+            }
+        }
+    }
+
     /// A note row is ours if its ciphertext opens with our ek and the opening
     /// reproduces the cm under our owner key: a v1 ciphertext (217 bytes,
     /// value inside), or a value-blind v2 one (177 bytes) against the asset
@@ -962,7 +1016,17 @@ public final class WalletSync {
         if note.value > UInt64(Int64.max) { return nil }
         if note.value == 0 {
             let gens = Self.maxRecordGeneration(store.state)
-            if let m = Self.parseRegMemo(nk: keys.nk, note.memo, maxGeneration: gens), !store.state.regRecords.contains(where: { $0.position == r.position }) {
+            let reg = Self.parseRegMemo(nk: keys.nk, note.memo, maxGeneration: gens)
+            let state = Self.parseStateRecord(nk: keys.nk, note.memo, maxGeneration: gens)
+            // A record's magic and none of the tags tried: perhaps a generation past
+            // the window, tried again if the window grows (`rescanRecords`).
+            if reg == nil, state == nil, Self.recordCandidate(note.memo) {
+                store.mutate { s in
+                    if s.unmatchedRecordFrom.map({ r.position < $0 }) ?? true { s.unmatchedRecordFrom = r.position }
+                    s.unmatchedRecordWindow = s.unmatchedRecordWindow <= 0 ? gens : min(s.unmatchedRecordWindow, gens)
+                }
+            }
+            if let m = reg, !store.state.regRecords.contains(where: { $0.position == r.position }) {
                 store.mutate { s in
                     s.regRecords.append(RegRecord(height: r.height, position: r.position, dscKey: m.dscKey, country: m.country, builtAt: m.builtAt,
                                                   generation: m.generation))
@@ -971,7 +1035,7 @@ public final class WalletSync {
                     }
                 }
             }
-            if let rec = Self.parseStateRecord(nk: keys.nk, note.memo, maxGeneration: gens) {
+            if let rec = state {
                 let t = now()
                 store.mutate { Self.applyStateRecord(&$0, position: r.position, height: r.height, rec.record, now: t, generation: rec.generation) }
             }

@@ -62,14 +62,45 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// What a wallet says when its identity was registered before (personhood 1130). As Android's IDENTITY_USED.
     public static let identityUsedMessage = "This identity has been registered before, and the chain accepts each identity once. "
         + "The wallet has moved on to your next identity, from the same recovery phrase: start the registration again."
+    /// What a wallet says when a refusal named its identity used but nothing confirms it. As Android's IDENTITY_REFUSAL_UNCONFIRMED.
+    public static let identityRefusalUnconfirmedMessage = "This identity was refused as already registered, but the refusal "
+        + "did not carry the chain's code and this wallet has no record of registering it, so the wallet keeps it. "
+        + "If you use your own node over plain http, check it or switch to Earth's node, then try again."
+    /// The chain refused another identity, and the wallet has skipped as many unrecorded ones as a restore can find. As Android's IDENTITY_SKIPS_EXHAUSTED.
+    public static let identitySkipsExhaustedMessage = "The chain refused this identity as already registered, and this wallet has "
+        + "already skipped as many identities with no record as it can. Create a new wallet and register there."
     /// The chain's text for personhood 1130 (ErrIdcUsed).
     public static let identityUsedText = "identity commitment has been registered before"
+    /// ErrIdcUsed's code and codespace: a code means nothing without its codespace.
+    public static let identityUsedCode = 1130
+    public static let identityUsedCodespace = "personhood"
     /// A move within the wallet names its target as this, followed by the generation moved to.
     public static let withinTarget = "generation:"
 
-    /// Whether `error` is the chain refusing an identity as used (1130).
+    /// Whether `error` is CheckTx refusing an identity as used: the chain's code and codespace (1130, personhood).
     public static func identityRefusal(_ error: Swift.Error) -> Bool {
+        guard let r = error as? UnsignedTx.TxRejected else { return false }
+        return r.code == identityUsedCode && r.codespace == identityUsedCodespace
+    }
+
+    /// Whether `error` says in its text alone that an identity is used: a hint for a sync, never a floor.
+    public static func identityRefusalText(_ error: Swift.Error) -> Bool {
         "\(error) \(error.localizedDescription)".contains(identityUsedText)
+    }
+
+    /// The suggested move comes at least this long before the earliest lease
+    /// end of what is to move: room for the reminder to be seen and for a
+    /// move that needs a retry. As Android.
+    public static let moveDeadlineMarginSeconds: Int64 = 3 * 86_400
+    /// Before a switch, and before the registration's year ends: a handle or
+    /// caretaker split whose lease ends within this long is worth renewing
+    /// first (the live identity can), so a move after the switch or renewal
+    /// has a full lease to land in rather than days. As Android.
+    public static let renewFirstWindowSeconds: Int64 = 30 * 86_400
+
+    /// `drawn`, no later than `moveDeadlineMarginSeconds` before `deadline` (0: none).
+    public static func cappedMoveAt(_ drawn: Int64, deadline: Int64) -> Int64 {
+        deadline <= 0 ? drawn : min(drawn, Handles.satSub(deadline, moveDeadlineMarginSeconds))
     }
     /// The suggested wait before a move after a switch: drawn uniformly between these (hours to days).
     public static let moveDelayMinSeconds: Int64 = 6 * 3600
@@ -84,14 +115,19 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// The chain's own trees, every synced root is checked against.
     private let roots: ChainRoots
     private let now: @Sendable () -> Int64
+    /// Whether a tx result's code and codespace can be taken as the chain's:
+    /// the node is reached over https. An own node over plain http answers
+    /// for anyone on its network, so its codes move nothing persistent.
+    private let chainCodesTrusted: @Sendable () -> Bool
     private let engine: PrivateTxEngine
     private let mutex = AsyncMutex()
 
     public init(keys: PrivacyKeys, store: PrivacyStore, indexer: PrivacyIndexer, chain: PrivateChain, reads: PrivacyChainReads,
                 prover: PrivacyProver, chainID: String, roots: ChainRoots,
-                now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) }) {
+                now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) },
+                chainCodesTrusted: @escaping @Sendable () -> Bool = { true }) {
         self.keys = keys; self.store = store; self.indexer = indexer; self.chain = chain; self.reads = reads
-        self.chainID = chainID; self.roots = roots; self.now = now
+        self.chainID = chainID; self.roots = roots; self.now = now; self.chainCodesTrusted = chainCodesTrusted
         engine = PrivateTxEngine(chainID: chainID, chain: chain, prover: prover)
         snapshotValue = Snapshot(store: store, keys: keys, maxActions: Self.defaultMaxActions)
     }
@@ -153,6 +189,8 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let identities: [Int: IdentitySlot]
         /// The suggested move time after a switch (`moveSuggestedAt` in the state: 0 none, -1 nothing left).
         public let moveSuggestedAt: Int64
+        /// The move's deadline (`moveDeadline` in the state; 0 none known).
+        public let moveDeadline: Int64
 
         init(store: PrivacyStore, keys: PrivacyKeys, maxActions: Int, saveError: String? = nil) {
             let s = store.state
@@ -172,6 +210,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             registeredBefore = s.usedThrough() >= 0
             identities = s.identities
             moveSuggestedAt = s.moveSuggestedAt
+            moveDeadline = s.moveDeadline
         }
 
         /// Spendable pool balance per denom (pending spends excluded),
@@ -689,27 +728,68 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// The chain refused `prep`'s identity as registered before (1130; the
     /// wallet's records missed it): the next registration uses a later one.
-    public func identityRefused(_ prep: RegistrationPrep) async {
-        await lockedNoThrow { identityRefusedLocked(prep) }
+    /// Only on a structured refusal (CheckTx's code and codespace from an
+    /// https node, or the gas service's refusal kind), never on an error's
+    /// text. The floor stays below the highest recorded generation plus
+    /// `WalletSync.generationLookahead`, so a restore's record scan (which
+    /// looks that far past what it has found) always reaches the next
+    /// registration. Returns whether the wallet moved on. As Android.
+    @discardableResult
+    public func identityRefused(_ prep: RegistrationPrep) async -> Bool {
+        await locked { identityRefusedLocked(generation: prep.generation) }
     }
 
-    /// The same, for a registration known by the idc it named (the gas service's refusal of its message).
-    public func identityRefused(idc: Data) async {
-        await lockedNoThrow {
-            guard let f = try? Fr(bytes: idc) else { return }
+    /// The same, for a registration known by the idc it named (the gas service's structured refusal of its message).
+    @discardableResult
+    public func identityRefused(idc: Data) async -> Bool {
+        await locked {
+            guard let f = try? Fr(bytes: idc) else { return false }
             let top = store.state.nextGeneration()
-            guard let g = (0 ... top).first(where: { keys.idc($0) == f }) else { return }
-            guard store.state.generationFloor <= g else { return }
-            store.mutate { $0.generationFloor = min(g + 1, PrivacyKeys.maxGeneration) }
-            persistNoThrow()
+            guard let g = (0 ... top).first(where: { keys.idc($0) == f }) else { return false }
+            return identityRefusedLocked(generation: g)
         }
     }
 
-    private func identityRefusedLocked(_ prep: RegistrationPrep) {
-        guard store.state.generationFloor <= prep.generation else { return }
-        store.mutate { $0.generationFloor = min(prep.generation + 1, PrivacyKeys.maxGeneration) }
-        persistNoThrow()
+    private func identityRefusedLocked(generation g: Int) -> Bool {
+        let cap = min(PrivacyKeys.maxGeneration, store.state.usedThroughRecorded() + WalletSync.generationLookahead)
+        let floor = min(g + 1, cap)
+        if store.state.generationFloor < floor {
+            store.mutate { $0.generationFloor = floor }
+            persistNoThrow()
+        }
+        return store.state.nextGeneration() > g
     }
+
+    /// A refusal that says, in text alone, that the identity of generation
+    /// `g` was registered before: a simulate's message, an http node's, the
+    /// gas service's without its kind. Text proves nothing, so the floor
+    /// stays; a sync finds the record if one of this wallet's registrations
+    /// used it. Returns whether the wallet moved on. As Android.
+    public func identityRefusedUnconfirmed(generation g: Int) async -> Bool {
+        _ = try? await sync()
+        return nextGeneration() > g
+    }
+
+    /// The same, by the idc the refused registration named.
+    public func identityRefusedUnconfirmed(idc: Data) async -> Bool {
+        guard let f = try? Fr(bytes: idc), let g = (0 ... nextGeneration()).first(where: { keys.idc($0) == f }) else { return false }
+        return await identityRefusedUnconfirmed(generation: g)
+    }
+
+    /// The refusal said the identity was used, but neither the chain's code nor this wallet's records confirm it.
+    public struct IdentityRefusalUnconfirmed: Swift.Error, LocalizedError, Equatable {
+        public init() {}
+        public var errorDescription: String? { PrivacyWallet.identityRefusalUnconfirmedMessage }
+    }
+
+    /// The chain refused the identity, and the floor is as far as a restore can find.
+    public struct IdentitySkipsExhausted: Swift.Error, LocalizedError, Equatable {
+        public init() {}
+        public var errorDescription: String? { PrivacyWallet.identitySkipsExhaustedMessage }
+    }
+
+    /// Text alone said the identity is used: the caller syncs outside the lock, then decides.
+    private struct TextRefusal: Swift.Error {}
 
     /// A referrer named by handle, resolved from the directory: the handle and the address it names now.
     public struct Referrer: Sendable, Equatable {
@@ -757,7 +837,9 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func register(_ prep: RegistrationPrep, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data) async throws -> TxResult {
         let mx = await maxActions()
         let skewParam = try? await reads.personhoodParams().currentDateMaxSkewSeconds
-        let result: TxResult = try await locked {
+        let trusted = chainCodesTrusted()
+        let result: TxResult
+        do { result = try await locked {
             try require(publicSignals.count == Self.registerSignals, "a passport proof has \(Self.registerSignals) public signals, not \(publicSignals.count)")
             try require(try PrivateMsgs.decimalField(publicSignals[1]) == prep.binding, "the passport proof is bound to other notes")
             // The proof's idc output is the chain's check that the registrant holds
@@ -805,8 +887,14 @@ public final class PrivacyWallet: @unchecked Sendable {
                 }
             } catch {
                 // Used before, by the chain's own set (1130, refused in the ante at
-                // no cost): the next attempt proves with the next generation.
-                if Self.identityRefusal(error) { identityRefusedLocked(prep) }
+                // no cost): the next attempt proves with the next generation. The
+                // chain's code, from an https node, moves the floor; text (a
+                // simulate's message) only prompts a sync for the record.
+                if Self.identityRefusal(error) && trusted {
+                    if identityRefusedLocked(generation: prep.generation) { throw IdentityUsed() }
+                    throw IdentitySkipsExhausted()
+                }
+                if Self.identityRefusalText(error) { throw TextRefusal() }
                 throw error
             }
             try recordPendingLocked(result)
@@ -816,6 +904,10 @@ public final class PrivacyWallet: @unchecked Sendable {
                 drawMoveSuggestion(leaf: leaf, activatedAt: result.time, generation: prep.generation)
             }
             return result
+        } } catch is TextRefusal {
+            // The sync takes the lock, so it runs here, after it.
+            if await identityRefusedUnconfirmed(generation: prep.generation) { throw IdentityUsed() }
+            throw IdentityRefusalUnconfirmed()
         }
         _ = try? await sync()
         return result
@@ -974,7 +1066,15 @@ public final class PrivacyWallet: @unchecked Sendable {
         let t = snap.identities[g ?? snap.generation] ?? IdentitySlot()
         if t.caretakerSplit.isEmpty && !t.caretakerSplitUnknown { return 0 }
         if t.caretakerExpiresAt > 0 { return t.caretakerExpiresAt }
-        guard let r = try? await reads.personhoodParams().caretakerVoteSeconds else { return 0 }
+        return Self.caretakerExpiry(t, voteSeconds: try? await reads.personhoodParams().caretakerVoteSeconds)
+    }
+
+    /// `t`'s split's lapse: the chain's expires_at, or its cast time plus
+    /// `voteSeconds` (nil: unknown). 0 for none.
+    private static func caretakerExpiry(_ t: IdentitySlot, voteSeconds: Int64?) -> Int64 {
+        if t.caretakerSplit.isEmpty && !t.caretakerSplitUnknown { return 0 }
+        if t.caretakerExpiresAt > 0 { return t.caretakerExpiresAt }
+        guard let r = voteSeconds else { return 0 }
         let (v, o) = t.caretakerCastAt.addingReportingOverflow(r)
         return o ? 0 : v
     }
@@ -1139,15 +1239,19 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     private func moveCaretaker(from f: Int?, to t: Successor?, recorder rc: MoveRecorder?) async throws -> TxResult {
         let mx = await maxActions()
-        let from = f ?? generation
-        let live = await caretakerLive(generation: from)
-        let exp = await caretakerExpiresAt(generation: from)
+        // Read before the lock (a query); the split itself is read under it.
+        let voteSeconds = try? await reads.personhoodParams().caretakerVoteSeconds
         return try await locked {
+            // The source generation, its liveness and expiry under the wallet's
+            // lock, as moveHandle: a sync between them cannot move `generation`.
+            let from = f ?? store.state.generation
+            let st = store.state.slot(from)
+            let exp = Self.caretakerExpiry(st, voteSeconds: voteSeconds)
+            let live = (!st.caretakerSplit.isEmpty || st.caretakerSplitUnknown) && exp > now()
             let to = try t ?? selfSuccessorLocked(from: from)
             let recorder = f == nil ? rc : withinRecorder()
             try require(live, "this identity holds no live caretaker vote to move")
             try checkNoMove(PendingMove.caretakerKind, generation: from)
-            let st = store.state.slot(from)
             let move = PendingMove(kind: PendingMove.caretakerKind, txHash: "", timeoutHeight: 0, incoming: false, split: st.caretakerSplit,
                                    splitUnknown: st.caretakerSplitUnknown, expiresAt: exp, target: recorder?.targetID ?? "")
             // State records: moved out for this identity, held (split, expiry) for the new one.
@@ -1367,15 +1471,24 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// uniformly from `moveDelayMinSeconds` to `moveDelayMaxSeconds`, after
     /// the registration's block time. A move that lands right after a switch
     /// links the handle, its owner_pk and the split to the passport's public
-    /// registration by timing (ORCHARD_DESIGN 6.6); nothing hurries it while
-    /// this identity stays live. Only a suggestion: the user chooses, and
-    /// nothing is sent unasked. 0 without a verified registration. As Android.
-    public func suggestedMoveAt() async -> Int64 {
+    /// registration by timing (ORCHARD_DESIGN 6.6). But the move has a
+    /// deadline: `deadline`, the earliest lease end of what the predecessor
+    /// holds (0: none known; nil: the one last read). Past it the old
+    /// identity can neither move nor renew it, and this one cannot claim a
+    /// handle or cast a vote for up to a year, so the suggestion is never
+    /// later than `moveDeadlineMarginSeconds` before it (now, when there is
+    /// not that long left). The deadline is kept for the reminder. Only a
+    /// suggestion: the user chooses, and nothing is sent unasked. 0 without a
+    /// verified registration. As Android.
+    public func suggestedMoveAt(deadline: Int64? = nil) async -> Int64 {
         await locked {
             guard let id = store.state.identity, id.verified else { return 0 }
             let s = store.state
-            if s.moveSuggestedLeaf == Int64(id.leafIndex), s.moveSuggestedAt > 0 { return s.moveSuggestedAt }
-            return drawMoveSuggestion(leaf: Int64(id.leafIndex), activatedAt: Int64(id.activatedAt))
+            let drawn = s.moveSuggestedLeaf == Int64(id.leafIndex) && s.moveSuggestedAt > 0
+                ? s.moveSuggestedAt : drawMoveSuggestion(leaf: Int64(id.leafIndex), activatedAt: Int64(id.activatedAt))
+            let d = max(0, deadline ?? s.moveDeadline)
+            if store.state.moveDeadline != d { store.mutate { $0.moveDeadline = d }; persistNoThrow() }
+            return Self.cappedMoveAt(drawn, deadline: d)
         }
     }
 
@@ -1392,17 +1505,22 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// nothing, or everything moved): the suggestion and its reminder end.
     public func clearMoveSuggestion() async {
         await lockedNoThrow {
-            guard store.state.moveSuggestedAt > 0 else { return }
-            store.mutate { $0.moveSuggestedAt = -1 }
+            guard store.state.moveSuggestedAt > 0 || store.state.moveDeadline != 0 else { return }
+            store.mutate { if $0.moveSuggestedAt > 0 { $0.moveSuggestedAt = -1 }; $0.moveDeadline = 0 }
             persistNoThrow()
         }
     }
 
-    /// The suggested move time once it has come, for the reminder (0: none due).
+    /// The suggested move time (capped at the deadline) once it has come, for the reminder (0: none due).
     public func moveSuggestionDue() -> Int64 {
-        let at = snapshot.moveSuggestedAt
-        return at > 0 && at <= now() ? at : 0
+        let snap = snapshot
+        guard snap.moveSuggestedAt > 0 else { return 0 }
+        let at = max(1, Self.cappedMoveAt(snap.moveSuggestedAt, deadline: snap.moveDeadline))
+        return at <= now() ? at : 0
     }
+
+    /// The move's deadline as Identity last read it (0: none known).
+    public func moveDeadline() -> Int64 { snapshot.moveDeadline }
 
     /// Marks a confirmed move recorded in its target (a retried `MoveRecorder.record` succeeded).
     public func markRecorded(_ hash: String) async {

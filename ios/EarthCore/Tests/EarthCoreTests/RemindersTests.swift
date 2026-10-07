@@ -58,4 +58,33 @@ final class RemindersTests: PrivacyTestCase {
         XCTAssertEqual(broadcasts, chain.txs.count)
         XCTAssertEqual(sims, chain.simulated)
     }
+    /// The move reminder grows urgent as the deadline nears. As Android.
+    func testTheMoveReminderEscalates() {
+        let now: Int64 = 20_000 * 86_400
+        XCTAssertTrue(Reminders.text(.moveSuggested(at: now - 1, deadline: now + 20 * 86_400), now: now).contains("within 20 days"))
+        XCTAssertTrue(Reminders.text(.moveSuggested(at: now - 1, deadline: now + 2 * 86_400), now: now)
+            .hasPrefix("Move your handle and caretaker vote from your previous identity now"))
+        XCTAssertTrue(Reminders.text(.moveSuggested(at: now - 1), now: now).contains("suggested time"))
+    }
+
+    /// Before the registration's year ends: a handle or caretaker vote whose
+    /// lease ends within renewFirstWindowSeconds after it is to be renewed
+    /// first (the live identity can; after the lapse it cannot). As Android.
+    func testRenewBeforeTheRegistrationLapses() {
+        let now: Int64 = 20_000 * 86_400
+        let end = now + 10 * 86_400
+        var base = Reminders.Inputs(now: now, identityLive: true, claimOpensAt: nil, claimedToday: true, caretakerExpiresAt: 0,
+                                    handle: "alice", handleEntry: nil, registrationEndsAt: end, handleExpiresAt: end + 5 * 86_400)
+        let r = Reminders.due(base).first { if case .renewBeforeLapse = $0 { return true } else { return false } }
+        XCTAssertEqual(r, .renewBeforeLapse(registrationEndsAt: end, handle: "alice", handleExpiresAt: end + 5 * 86_400, voteExpiresAt: 0))
+        XCTAssertTrue(Reminders.text(r!, now: now).hasPrefix("Your registration ends in 10 days. Renew @alice before then"))
+        func none(_ i: Reminders.Inputs) -> Bool { !Reminders.due(i).contains { if case .renewBeforeLapse = $0 { return true } else { return false } } }
+        var i = base; i.handleExpiresAt = end + PrivacyWallet.renewFirstWindowSeconds
+        XCTAssertTrue(none(i))
+        i = base; i.registrationEndsAt = now + Reminders.leadSeconds + 1
+        XCTAssertTrue(none(i))
+        base.handle = ""; base.caretakerExpiresAt = end + 86_400
+        let v = Reminders.due(base).first { if case .renewBeforeLapse = $0 { return true } else { return false } }
+        XCTAssertTrue(Reminders.text(v!, now: now).contains("Renew your caretaker vote before then"))
+    }
 }

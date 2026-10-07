@@ -232,8 +232,15 @@ public final class TxController {
             requestingGas = false
             gasError = Self.describeGasFailure(error)
             // Its identity used before (1130, the chain's own set): the next
-            // registration proves with the next generation.
-            if gasError == PrivacyWallet.identityUsedMessage { await model.privacy?.identityRefused(idc: reg.msg.idc) }
+            // registration proves with the next generation. Only the service's
+            // structured kind moves the floor; the message alone only prompts
+            // a sync for a record of it. As Android.
+            let structured = (error as? GasGrant.Refused)?.kind == GasGrant.kindIdcUsed
+            if structured || gasError == PrivacyWallet.identityUsedMessage, let w = model.privacy {
+                let movedOn = structured ? await w.identityRefused(idc: reg.msg.idc) : await w.identityRefusedUnconfirmed(idc: reg.msg.idc)
+                gasError = movedOn ? PrivacyWallet.identityUsedMessage
+                    : structured ? PrivacyWallet.identitySkipsExhaustedMessage : PrivacyWallet.identityRefusalUnconfirmedMessage
+            }
             return
         }
         requestingGas = false

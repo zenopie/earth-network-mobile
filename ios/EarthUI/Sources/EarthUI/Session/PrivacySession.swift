@@ -172,7 +172,9 @@ enum PrivacySession {
             prover: PrivacyProving.prover,
             chainID: Constants.chainID,
             // Every root the indexer serves is checked against the chain's own.
-            roots: LCDChainRoots(rest: client.rest)
+            roots: LCDChainRoots(rest: client.rest),
+            // An http own node's codes could be anyone's on its network.
+            chainCodesTrusted: { !NodeSettings.isCleartext(NodeSettings.current.lcd) }
         )
         wallets[id] = w
         live[id] = WeakWallet(w)

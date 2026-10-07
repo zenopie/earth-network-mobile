@@ -304,4 +304,33 @@ final class IdentitySwitchTests: PrivacyTestCase {
         await b.clearMoveSuggestion()
         XCTAssertEqual(0, b.moveSuggestionDue())
     }
+
+    /// The suggestion is never later than moveDeadlineMarginSeconds before the
+    /// earliest lease end of what is to move; with less room than that it is
+    /// due at once, and the reminder says how long is left. As Android.
+    func testTheSuggestionIsCappedBeforeTheLeaseEnds() async throws {
+        let chain = FakeChain()
+        let (_, b, _) = try await switched(chain, "999")
+        let act = Int64(b.snapshot.identity!.activatedAt)
+        let drawn = await b.suggestedMoveAt()
+        // A lease ending a day after the registration: no room for the wait, due now.
+        let soon = act + 86_400
+        let capped = await b.suggestedMoveAt(deadline: soon)
+        XCTAssertEqual(soon - PrivacyWallet.moveDeadlineMarginSeconds, capped)
+        XCTAssertEqual(soon, b.moveDeadline())
+        XCTAssertEqual(capped, b.moveSuggestionDue())
+        let due = Reminders.due(Reminders.Inputs(now: chain.now, identityLive: true, claimOpensAt: nil, claimedToday: false, caretakerExpiresAt: 0,
+                                                 handle: "", handleEntry: nil, moveSuggestedAt: b.moveSuggestionDue(), moveDeadline: b.moveDeadline()))
+        XCTAssertTrue(due.contains(.moveSuggested(at: capped, deadline: soon)))
+        XCTAssertTrue(Reminders.text(.moveSuggested(at: capped, deadline: soon), now: chain.now).contains("now"))
+        // Past the deadline nothing can move: no reminder.
+        let after = Reminders.due(Reminders.Inputs(now: soon, identityLive: true, claimOpensAt: nil, claimedToday: false, caretakerExpiresAt: 0,
+                                                   handle: "", handleEntry: nil, moveSuggestedAt: capped, moveDeadline: soon))
+        XCTAssertFalse(after.contains { if case .moveSuggested = $0 { return true } else { return false } })
+        // A distant lease end leaves the drawn time as it was.
+        let distant = await b.suggestedMoveAt(deadline: act + 300 * 86_400)
+        XCTAssertEqual(drawn, distant)
+        await b.clearMoveSuggestion()
+        XCTAssertEqual(0, b.moveDeadline())
+    }
 }

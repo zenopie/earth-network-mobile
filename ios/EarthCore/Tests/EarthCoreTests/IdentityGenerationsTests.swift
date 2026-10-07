@@ -146,36 +146,136 @@ final class IdentityGenerationsTests: PrivacyTestCase {
         await assertThrowsAsync({ try await a.moveHandleWithin(from: 1) })
     }
 
-    /// The wallet's records missed a used identity: the chain refuses it (1130) and the next try uses the next generation.
+    func fundedPrep(_ chain: FakeChain, _ w: PrivacyWallet) async throws -> PrivacyWallet.RegistrationPrep {
+        let prep = try await w.prepareRegistration(referrer: nil)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
+        try await w.sync()
+        return prep
+    }
+
+    func send(_ w: PrivacyWallet, _ prep: PrivacyWallet.RegistrationPrep) async -> Swift.Error? {
+        do {
+            _ = try await w.register(prep, proof: Data(count: 14_656), publicSignals: signals(prep, "555"), signatureAlgorithm: "lean_poa",
+                                     dscDer: Data(count: 10))
+            return nil
+        } catch { return error }
+    }
+
+    /// The wallet's records missed a used identity: CheckTx refuses it with
+    /// the chain's code (1130, personhood) and the next try uses the next generation.
     func testARefusedIdentityMovesTheWalletToItsNextGeneration() async throws {
         let chain = FakeChain()
         let a = try wallet(chain, alice)
         try await register(chain, a, passport: "555")
         try await lapse(chain, a, 0)
-        // Generation 1 registered somewhere the wallet cannot see (no record of it here).
-        chain.usedIdcs.insert(a.keys.idc(1))
-        let prep = try await a.prepareRegistration(referrer: nil)
+        let prep = try await fundedPrep(chain, a)
         XCTAssertEqual(1, prep.generation)
-        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
-        try await a.sync()
-        do {
-            _ = try await a.register(prep, proof: Data(count: 14_656), publicSignals: signals(prep, "555"), signatureAlgorithm: "lean_poa",
-                                     dscDer: Data(count: 10))
-            XCTFail("expected 1130")
-        } catch {
-            XCTAssertTrue(PrivacyWallet.identityRefusal(error), "\(error)")
-        }
+        // Generation 1 registers somewhere the wallet cannot see, after the simulate.
+        chain.usedOnBroadcast = a.keys.idc(1)
+        let e = await send(a, prep)
+        XCTAssertTrue(e is PrivacyWallet.IdentityUsed, "\(String(describing: e))")
+        XCTAssertTrue(PrivacyWallet.identityRefusal(UnsignedTx.TxRejected(code: 1130, log: "x", codespace: "personhood")))
+        XCTAssertFalse(PrivacyWallet.identityRefusal(UnsignedTx.TxRejected(code: 1130, log: "x", codespace: "dex")))
         XCTAssertEqual(2, a.nextGeneration())
         try await register(chain, a, passport: "555")
         XCTAssertEqual(2, a.generation)
         XCTAssertEqual(.live, a.identityStatus())
         // A stale prep (its generation landed since) is refused before anything is sent.
         let sent = chain.txs.count
-        await assertThrowsAsync({
-            try await a.register(prep, proof: Data(count: 14_656), publicSignals: self.signals(prep, "555"), signatureAlgorithm: "lean_poa",
-                                 dscDer: Data(count: 10))
-        }) { $0 is PrivacyWallet.IdentityUsed }
+        let stale = await send(a, prep)
+        XCTAssertTrue(stale is PrivacyWallet.IdentityUsed)
         XCTAssertEqual(sent, chain.txs.count)
+    }
+
+    /// Text alone (a simulate's message, which anyone on the node path can
+    /// write) never moves the floor: the wallet syncs for a record and, with
+    /// none, keeps the identity.
+    func testARefusalInTextAloneDoesNotMoveTheFloor() async throws {
+        let chain = FakeChain()
+        let a = try wallet(chain, alice)
+        try await register(chain, a, passport: "555")
+        try await lapse(chain, a, 0)
+        chain.usedIdcs.insert(a.keys.idc(1))
+        let prep = try await fundedPrep(chain, a)
+        let e = await send(a, prep)
+        XCTAssertTrue(e is PrivacyWallet.IdentityRefusalUnconfirmed, "\(String(describing: e))")
+        XCTAssertEqual(0, a.store.state.generationFloor)
+        XCTAssertEqual(1, a.nextGeneration())
+        // The gas service's message without its kind: the same.
+        let moved = await a.identityRefusedUnconfirmed(generation: prep.generation)
+        XCTAssertFalse(moved)
+        XCTAssertEqual(1, a.nextGeneration())
+    }
+
+    /// The chain's code from an http own node is anyone's on its network: treated as text.
+    func testACodeFromAnHttpNodeDoesNotMoveTheFloor() async throws {
+        let chain = FakeChain()
+        let a = PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(alice), store: .memory(), indexer: chain, chain: chain, reads: FakeReads(chain: chain),
+                              prover: chain.prover, chainID: chain.chainID, roots: chain, now: { [unowned chain] in chain.now },
+                              chainCodesTrusted: { false })
+        try await register(chain, a, passport: "555")
+        try await lapse(chain, a, 0)
+        let prep = try await fundedPrep(chain, a)
+        chain.usedOnBroadcast = a.keys.idc(1)
+        let e = await send(a, prep)
+        XCTAssertTrue(e is PrivacyWallet.IdentityRefusalUnconfirmed, "\(String(describing: e))")
+        XCTAssertEqual(1, a.nextGeneration())
+    }
+
+    /// Structured refusals move the floor at most generationLookahead past the
+    /// highest recorded generation, so a restore, which looks that far past
+    /// each record it finds, finds the registration that follows.
+    func testTheFloorStaysWithinARestoresReach() async throws {
+        let chain = FakeChain()
+        let a = try wallet(chain, alice)
+        try await register(chain, a, passport: "555")
+        try await lapse(chain, a, 0)
+        // A dishonest gas service answering "idc used" (a structured kind) every time.
+        var moved = 0
+        while true {
+            let prep = try await a.prepareRegistration(referrer: nil)
+            if !(await a.identityRefused(prep)) { break }
+            moved += 1
+        }
+        XCTAssertEqual(WalletSync.generationLookahead - 1, moved)
+        XCTAssertEqual(WalletSync.generationLookahead, a.nextGeneration())
+        try await register(chain, a, passport: "555")
+        XCTAssertEqual(WalletSync.generationLookahead, a.generation)
+        let r = try wallet(chain, alice)
+        try await r.sync()
+        XCTAssertEqual(WalletSync.generationLookahead, r.generation)
+        XCTAssertEqual(.live, r.identityStatus())
+        XCTAssertEqual(WalletSync.generationLookahead + 1, r.nextGeneration())
+    }
+
+    /// A record past the window when its note was passed is tried again once
+    /// a later record widens the window: the restore rescans the notes it
+    /// passed from the earliest unmatched one.
+    func testARestoreRescansWhenItsWindowGrows() async throws {
+        let chain = FakeChain()
+        let a = try wallet(chain, alice)
+        let far = WalletSync.generationLookahead + 2
+        // A record of generation `far` early in the stream (another device's, out of order).
+        let memo = WalletSync.regMemo(nk: a.keys.nk, dscKey: Fr(UInt64(77)), country: "", builtAt: UInt64(chain.now), generation: far)
+        let n = NotePlaintext.fresh("uerth", 0, memo: memo)
+        let cm = n.cm(ownerPK: a.address.ownerPK)
+        let pos = chain.noteTree.append(cm)
+        chain.notes.append(NoteRow(position: pos, height: chain.height, cm: cm, ciphertext: try NoteCipher.encrypt(n, to: a.address), amount: nil))
+        try await register(chain, a, passport: "555")
+        // Generation 0's record widened the window to 9, short of `far`: still unmatched.
+        XCTAssertEqual(pos, a.store.state.unmatchedRecordFrom)
+        XCTAssertEqual(1, a.nextGeneration())
+        try await lapse(chain, a, 0)
+        try await register(chain, a, passport: "555")
+        // Generation 1's widened it to 10: the early note was tried again and found.
+        XCTAssertTrue(a.store.state.regRecords.contains { $0.generation == far })
+        XCTAssertEqual(far + 1, a.nextGeneration())
+        XCTAssertNil(a.store.state.unmatchedRecordFrom)
+        let r = try wallet(chain, alice)
+        try await r.sync()
+        XCTAssertTrue(r.store.state.regRecords.contains { $0.generation == far })
+        XCTAssertEqual(1, r.generation)
+        XCTAssertEqual(far + 1, r.nextGeneration())
     }
 
     /// A restore scans the records' generations: the live one, or (all lapsed) the last, and never offers a used one.
