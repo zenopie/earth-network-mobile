@@ -485,10 +485,18 @@ struct ActivityItem: View {
                     in: .rect(cornerRadius: 12)
                 )
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.kind.label + (row.failed ? " · failed" : ""))
-                    .font(EarthType.body)
-                    .foregroundStyle(row.failed ? theme.colors.textError : theme.colors.textPrimary)
-                Text("\(row.counterparty) · \(row.timestamp)")
+                HStack(spacing: 4) {
+                    // The private/public mark the coin sheets use: lock for
+                    // what the sealed store holds, globe for a public tx.
+                    Image(systemName: row.isPrivate ? "lock.fill" : "globe")
+                        .font(.caption2)
+                        .foregroundStyle(theme.colors.textTertiary)
+                        .accessibilityLabel(row.isPrivate ? "Private" : "Public")
+                    Text(row.label + (row.failed ? " · failed" : ""))
+                        .font(EarthType.body)
+                        .foregroundStyle(row.failed ? theme.colors.textError : theme.colors.textPrimary)
+                }
+                Text([row.counterparty, row.timestamp].filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
                     .lineLimit(1)

@@ -237,7 +237,7 @@ struct SendSheet: View {
                     ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
                 ]
             ), onSuccess: { await model.syncPrivacy() }) { w in
-                if let shieldedTo { return try await w.send(to: shieldedTo, denom: denom, amount: amount) }
+                if let shieldedTo { return try await w.send(to: shieldedTo, denom: denom, amount: amount, counterparty: Handles.truncate(to)) }
                 return try await w.unshield(receiver: to, denom: denom, amount: amount)
             }
             dismiss()
@@ -275,7 +275,7 @@ struct SendSheet: View {
                     ("Amount", display), (labelTitle, label),
                     ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
                 ]), onSuccess: { await model.syncPrivacy() }) { w in
-                    try await w.send(to: address, denom: denom, amount: amount)
+                    try await w.send(to: address, denom: denom, amount: amount, counterparty: "@\(entry.handle)")
                 }
             } else {
                 // A note that cannot be built is said, not dropped.

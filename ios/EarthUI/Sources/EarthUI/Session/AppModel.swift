@@ -118,6 +118,9 @@ public final class AppModel {
     /// one wrong answer a wallet must never give, so the list shows
     /// placeholders while this is nil rather than "nothing yet".
     private(set) var activity: [ActivityRow]?
+    /// The public half of `activity` (txs this wallet signed, looked up by
+    /// hash); the private half is read from the sealed store at every publish.
+    private var publicActivity: [ActivityRow]?
 
     public private(set) var pools: [Dex.Pool] = []
     public private(set) var swapFeePercent = Decimal(string: "0.3")!
@@ -562,6 +565,7 @@ public final class AppModel {
         address = ""
         balances = [:]
         activity = nil
+        publicActivity = nil
         phase = .setup
     }
 
@@ -612,6 +616,7 @@ public final class AppModel {
 
         balances = [:]
         activity = nil
+        publicActivity = nil
         closePrivacy()
         openPrivacy()
         delegations = []
@@ -755,9 +760,19 @@ public final class AppModel {
         self.rewards = BigInt(await rewards) ?? 0
         self.totalBonded = BigInt(await bonded) ?? 0
         let signer = address
-        self.activity = await transactions.compactMap { ActivityRow(tx: $0, self: signer) }
+        self.publicActivity = await transactions.compactMap { ActivityRow(tx: $0, self: signer) }
+        mergeActivity()
         await reachable
         await privacySync
+    }
+
+    /// One list: the public rows and the private ones, newest first. Private
+    /// txs are never looked up (that would tell the node which are ours):
+    /// their rows come from the sealed store and the notes sync found.
+    private func mergeActivity() {
+        guard let pub = publicActivity else { return }
+        let priv = privacy?.activity().map { ActivityRow(private: $0) } ?? []
+        activity = ActivityRow.merge(public: pub, private: priv)
     }
 
     private func probe() async {
@@ -907,6 +922,7 @@ public final class AppModel {
         // A registered wallet still may register in this launch if it can
         // switch to another wallet, which may not be.
         PrivacyProving.registrationMayFollow = snap.identityStatus != .live || wallets.count > 1
+        mergeActivity()
     }
 
     /// A full sync of the indexer's streams (nothing asked about this
