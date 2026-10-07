@@ -124,10 +124,17 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = loaded
 
             _activity.value = withContext(Dispatchers.IO) {
-                runCatching {
-                    val ctx = getApplication<Application>()
+                val ctx = getApplication<Application>()
+                val public = runCatching {
                     Explorer.txsByHash(SentTxLog.hashes(ctx, address)).map { it.toActivityRow(address) }
                 }.getOrDefault(emptyList())
+                // Private txs are never looked up (that would tell the node
+                // which are ours): their rows come from the sealed store and
+                // the notes the sync above found.
+                val private = runCatching {
+                    PrivacySession.wallet(ctx).activity().map { it.toActivityRow() }
+                }.getOrDefault(emptyList())
+                mergeActivity(public, private)
             }
         }
     }

@@ -83,30 +83,45 @@ fun TransactionDetailScreen(
             color = EarthColors.Text.textPrimary,
         )
         Text(
-            text = if (row?.failed == true) "Failed" else "Confirmed",
+            text = when {
+                row?.failed == true -> "Failed" + (row.failure?.let { ": $it" } ?: "")
+                row?.pending == true -> "Pending"
+                else -> "Confirmed"
+            },
             style = EarthTypography.textSm,
             color = EarthColors.Text.textTertiary,
         )
 
         Spacer(Modifier.height(dimens.space24))
         if (row != null) {
-            EarthDetailRow("Type", row.kind.name)
-            EarthDetailRow("Counterparty", row.counterparty)
-            EarthDetailRow("When", row.timestamp)
+            EarthDetailRow("Type", row.label())
+            EarthDetailRow("Visibility", if (row.isPrivate) "Private" else "Public")
+            if (row.counterparty.isNotEmpty()) EarthDetailRow("Counterparty", row.counterparty)
+            row.fee?.let { EarthDetailRow("Fee", it) }
+            row.height?.let { EarthDetailRow("Block", "%,d".format(it)) }
+            if (row.timestamp.isNotEmpty()) EarthDetailRow("When", row.timestamp)
         }
 
-        Spacer(Modifier.height(dimens.space16))
-        EarthLabel("Transaction hash")
-        Spacer(Modifier.height(dimens.space4))
-        EarthCodeBlock(txHash, modifier = Modifier.fillMaxWidth())
+        // A received note has no tx of its own to name.
+        val hash = if (row == null) txHash else row.hash
+        if (hash != null) {
+            Spacer(Modifier.height(dimens.space16))
+            EarthLabel("Transaction hash")
+            Spacer(Modifier.height(dimens.space4))
+            EarthCodeBlock(hash, modifier = Modifier.fillMaxWidth())
+        }
 
-        Spacer(Modifier.height(dimens.space24))
-        EarthButton(
-            text = "View in explorer",
-            onClick = onOpenExplorer,
-            modifier = Modifier.fillMaxWidth(),
-            colors = EarthButtonDefaults.secondaryColors(),
-        )
+        // Not for a private tx: opening it in an explorer tells the explorer
+        // which tx is this wallet's, the lookup the activity list never makes.
+        if (row?.isPrivate != true) {
+            Spacer(Modifier.height(dimens.space24))
+            EarthButton(
+                text = "View in explorer",
+                onClick = onOpenExplorer,
+                modifier = Modifier.fillMaxWidth(),
+                colors = EarthButtonDefaults.secondaryColors(),
+            )
+        }
         Spacer(Modifier.height(dimens.space32))
     }
 }

@@ -14,7 +14,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.ui.res.painterResource
+import network.erth.wallet.R
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +37,18 @@ data class ActivityRow(
     val timestamp: String,
     val failed: Boolean = false,
     val onClick: () -> Unit = {},
+    /** Built from the sealed store (lock), or a public tx looked up by hash (globe). */
+    val isPrivate: Boolean = false,
+    /** What the row calls itself, when the kind's own word is not enough. */
+    val title: String? = null,
+    /** Unix seconds, for one list newest first (0: unknown). */
+    val sortTime: Long = 0L,
+    /** The tx hash, when there is one (a received note has none). */
+    val hash: String? = null,
+    val fee: String? = null,
+    val pending: Boolean = false,
+    val failure: String? = null,
+    val height: Long? = null,
 )
 
 enum class ActivityKind { Sent, Received, Staked, Unstaked, Claimed, ClaimedAnml, Registered, Swapped, Allocated }
@@ -106,8 +122,18 @@ internal fun ActivityItem(row: ActivityRow) {
             Text(text = glyph, style = EarthTypography.textSm.copy(color = tint))
         }
         Column(Modifier.weight(1f).padding(start = dimens.space12)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // The private/public mark the coin sheets use: lock for what the
+                // sealed store holds, globe for a public tx.
+                Icon(
+                    painter = painterResource(if (row.isPrivate) R.drawable.ic_lock else R.drawable.ic_public),
+                    contentDescription = if (row.isPrivate) "Private" else "Public",
+                    tint = EarthColors.Text.textTertiary,
+                    modifier = Modifier.size(dimens.space12),
+                )
+                Spacer(Modifier.width(dimens.space4))
             Text(
-                text = row.kind.label() + (if (row.failed) " · failed" else ""),
+                text = row.label() + (if (row.failed) " · failed" else ""),
                 style = EarthTypography.textMd.copy(
                     color = if (row.failed) {
                         EarthColors.Utility.ErrorRed.utilityError700
@@ -116,8 +142,9 @@ internal fun ActivityItem(row: ActivityRow) {
                     },
                 ),
             )
+            }
             Text(
-                text = "${row.counterparty} · ${row.timestamp}",
+                text = listOf(row.counterparty, row.timestamp).filter { it.isNotEmpty() }.joinToString(" · "),
                 style = EarthTypography.textSm.copy(color = EarthColors.Text.textTertiary),
             )
         }
@@ -138,3 +165,5 @@ private fun ActivityKind.label(): String = when (this) {
     ActivityKind.ClaimedAnml -> "Claimed ANML"
     else -> name
 }
+
+internal fun ActivityRow.label(): String = title ?: kind.label()

@@ -180,7 +180,7 @@ fun SendFlow(
                 ),
                 shieldedErth = state.shieldedErthUerth,
                 onSuccess = { clear(); onSent() },
-                run = { ctx -> PrivacySession.wallet(ctx).send(to, selected.denom, amountUerth).hash },
+                run = { ctx -> PrivacySession.wallet(ctx).send(to, selected.denom, amountUerth, counterparty = "@${target.entry.handle}").hash },
             )
         } else {
             // MsgShield, signed by the account (the coins are its), the note
@@ -248,7 +248,7 @@ fun SendFlow(
                         amount = ""
                         onSent()
                     },
-                    run = { ctx -> PrivacySession.wallet(ctx).send(to, selected.denom, amountUerth).hash },
+                    run = { ctx -> PrivacySession.wallet(ctx).send(to, selected.denom, amountUerth, counterparty = Handles.truncate(recipient)).hash },
                 )
                 return@SendScreen
             }

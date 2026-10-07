@@ -1,6 +1,10 @@
 package network.erth.wallet.ui.wallet
 
 import network.erth.wallet.chain.Explorer
+import network.erth.wallet.privacy.ActivityCoin
+import network.erth.wallet.privacy.PrivateActivity
+import network.erth.wallet.privacy.PrivateActivityKind
+import network.erth.wallet.privacy.PrivateActivityRow
 import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.ui.components.shortAddress
 import java.text.SimpleDateFormat
@@ -63,7 +67,68 @@ internal fun Explorer.Tx.toActivityRow(self: String): ActivityRow {
         amount = msg.amountLabel(kind),
         timestamp = timestamp.toRelative(),
         failed = !success,
+        sortTime = timestamp.toUnix() ?: 0L,
+        hash = hash,
     )
+}
+
+/**
+ * A private row (PrivateActivity, built from the sealed store alone) in the
+ * list's terms. Its time is the wallet's own when it sent the tx, or one
+ * estimated from the block height ("~"); a received note names its block.
+ */
+internal fun PrivateActivityRow.toActivityRow(now: Long = System.currentTimeMillis() / 1000): ActivityRow {
+    val glyph = when (kind) {
+        PrivateActivityKind.SEND, PrivateActivityKind.UNSHIELD, PrivateActivityKind.MOVE,
+        PrivateActivityKind.MERGE, PrivateActivityKind.INFERRED -> ActivityKind.Sent
+        PrivateActivityKind.STAKE, PrivateActivityKind.REDELEGATE, PrivateActivityKind.RESTAKE, PrivateActivityKind.POSITION -> ActivityKind.Staked
+        PrivateActivityKind.UNSTAKE -> ActivityKind.Unstaked
+        PrivateActivityKind.CLAIM_ANML -> ActivityKind.ClaimedAnml
+        PrivateActivityKind.REGISTER, PrivateActivityKind.SWITCH, PrivateActivityKind.HANDLE -> ActivityKind.Registered
+        PrivateActivityKind.SWAP, PrivateActivityKind.ADD_LIQUIDITY, PrivateActivityKind.REMOVE_LIQUIDITY -> ActivityKind.Swapped
+        PrivateActivityKind.VOTE, PrivateActivityKind.CARETAKER -> ActivityKind.Allocated
+        else -> ActivityKind.Received
+    }
+    val party = counterparty.split(' ').joinToString(" ") { if (it.startsWith("earth") && it.length > 16) it.shortAddress() else it }
+        .ifEmpty { if (!kind.sent && height != null) "block ${"%,d".format(height)}" else "" }
+    val whenText = time?.let { (if (timeExact) "" else "~") + relative(it, now) }.orEmpty()
+    return ActivityRow(
+        txHash = id,
+        kind = glyph,
+        counterparty = party,
+        amount = coinsLabel(coins),
+        timestamp = when (status) {
+            PrivateActivityRow.Status.PENDING -> listOf("pending", whenText).filter { it.isNotEmpty() }.joinToString(" · ")
+            else -> whenText
+        },
+        failed = status == PrivateActivityRow.Status.FAILED,
+        isPrivate = true,
+        title = kind.label,
+        sortTime = time ?: 0L,
+        hash = hash,
+        fee = fee?.takeIf { it > 0 }?.let { "${formatUerth(it)} ERTH" },
+        pending = status == PrivateActivityRow.Status.PENDING,
+        failure = failure,
+        height = height,
+    )
+}
+
+/** "−1.5 ERTH, +2 ANML": every coin a row moved, signed. */
+internal fun coinsLabel(coins: List<ActivityCoin>): String =
+    coins.joinToString(", ") { c ->
+        val sign = if (c.amount < 0) "-" else "+"
+        val v = if (c.amount == Long.MIN_VALUE) Long.MAX_VALUE else kotlin.math.abs(c.amount)
+        "$sign${formatUerth(v)} ${PrivateActivity.symbol(c.denom)}"
+    }
+
+/**
+ * Public rows (timestamps from the chain) and private rows (the sealed
+ * store's), one list, newest first. A tx in both is shown once, as its
+ * private row (the richer one).
+ */
+internal fun mergeActivity(public: List<ActivityRow>, private: List<ActivityRow>): List<ActivityRow> {
+    val privateHashes = private.mapNotNullTo(HashSet()) { it.hash?.uppercase() }
+    return (public.filter { it.hash?.uppercase() !in privateHashes } + private).sortedByDescending { it.sortTime }
 }
 
 /**
@@ -100,18 +165,24 @@ private fun String.splitCamelCase(): String =
  * useless once it is not — nobody counts back 43 days.
  */
 private fun String.toRelative(): String {
-    val parsed = runCatching {
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-            .apply { timeZone = TimeZone.getTimeZone("UTC") }
-            .parse(substringBefore('.').removeSuffix("Z"))
-    }.getOrNull() ?: return this
+    val unix = toUnix() ?: return this
+    return relative(unix, Date().time / 1000)
+}
 
-    val minutes = (Date().time - parsed.time) / 60_000
+/** An RFC 3339 chain timestamp to unix seconds; null when it does not parse. */
+internal fun String.toUnix(): Long? = runCatching {
+    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        .apply { timeZone = TimeZone.getTimeZone("UTC") }
+        .parse(substringBefore('.').removeSuffix("Z"))!!.time / 1000
+}.getOrNull()
+
+internal fun relative(unix: Long, now: Long): String {
+    val minutes = (now - unix) / 60
     return when {
         minutes < 1 -> "just now"
         minutes < 60 -> "${minutes}m ago"
         minutes < 1_440 -> "${minutes / 60}h ago"
         minutes < 10_080 -> "${minutes / 1_440}d ago"
-        else -> SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(parsed)
+        else -> SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(unix * 1000))
     }
 }
