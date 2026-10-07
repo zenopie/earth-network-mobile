@@ -238,6 +238,7 @@ struct SwitchIdentityScreen: View {
     /// One step only: what this identity's predecessor still holds that has not moved here.
     @State private var unmoved: String?
     @State private var strandAccepted = false
+    @State private var handleOpen = false
 
     var body: some View {
         NavigationStack {
@@ -268,7 +269,29 @@ struct SwitchIdentityScreen: View {
             .onDisappear { phrase = nil }
             .sheet(isPresented: $adding) { AddWalletSheet(mode: .create).earthThemed() }
             .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
+            .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
         }
+    }
+
+    /// What this identity holds whose lease ends soon: renewed first (it still
+    /// can), its move after the switch has a full lease to land in.
+    private var renewFirst: String? {
+        guard model.privacy?.snapshot.identityStatus == .live else { return nil }
+        return Self.renewSoonText(handle: model.handle, handleExpiresAt: model.handleEntry?.expiresAt ?? 0,
+                                  voteExpiresAt: model.caretakerExpiresAt, now: Int64(Date().timeIntervalSince1970))
+    }
+
+    /// Before a switch: what this identity holds whose lease ends within
+    /// PrivacyWallet.renewFirstWindowSeconds (0 for none), as a prompt to renew
+    /// it first, or nil. As Android's renewSoonText; docs quote it.
+    static func renewSoonText(handle: String, handleExpiresAt: Int64, voteExpiresAt: Int64, now: Int64) -> String? {
+        let soon = Handles.satAdd(now, PrivacyWallet.renewFirstWindowSeconds)
+        let what = [
+            !handle.isEmpty && handleExpiresAt > now && handleExpiresAt < soon ? "@\(handle) (its lease ends \(MoveOfferCard.moveTime(handleExpiresAt)))" : nil,
+            voteExpiresAt > now && voteExpiresAt < soon ? "your caretaker vote (it ends \(MoveOfferCard.moveTime(voteExpiresAt)))" : nil,
+        ].compactMap { $0 }
+        guard !what.isEmpty else { return nil }
+        return "Renew \(what.joined(separator: " and ")) before you switch. After the switch a move can bring it to your new identity only until its lease ends, and this identity can no longer renew it; renewed now, the move has a full lease."
     }
 
     /// The target for a fresh identity in this wallet (its next generation).
@@ -295,10 +318,18 @@ struct SwitchIdentityScreen: View {
     private var form: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: theme.space.x12) {
-                Text("Switching moves your personhood to a fresh identity: another wallet's, or this wallet's next one. Your passport is registered again and your current identity stops counting as you. Once the switch lands, open Identity where you registered to bring your handle and caretaker vote over; each is a private move proven with both identities' secrets, which stay on this phone. Do it before switching again: a move goes only to the passport's live identity. Anything not moved stays with the old identity until it lapses, and the new identity cannot claim a handle or cast a caretaker vote until then (up to a year).")
+                Text("Switching moves your personhood to a fresh identity: another wallet's, or this wallet's next one. Your passport is registered again and your current identity stops counting as you. Once the switch lands, open Identity where you registered to bring your handle and caretaker vote over; each is a private move proven with both identities' secrets, which stay on this phone. Do it before their leases end, since only a live handle or vote moves and the old identity can no longer renew them, and before switching again, since a move goes only to the passport's live identity. Anything not moved stays with the old identity until it lapses, and the new identity cannot claim a handle or cast a caretaker vote until then (up to a year).")
                     .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
                 Text("A switch from a wallet whose recovery phrase is lost cannot move anything: the move needs that wallet's secret. Its handle and caretaker vote wait out their leases. Back up every wallet's recovery phrase.")
                     .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
+                if let renewFirst {
+                    Text(renewFirst).font(EarthType.bodySmall).foregroundStyle(theme.colors.textError)
+                    EarthButton(title: "Renew first", role: .secondary) {
+                        let handleSoon = Self.renewSoonText(handle: model.handle, handleExpiresAt: model.handleEntry?.expiresAt ?? 0, voteExpiresAt: 0,
+                                                            now: Int64(Date().timeIntervalSince1970)) != nil
+                        if handleSoon { handleOpen = true } else { model.governLink = .caretaker; model.tab = .govern; dismiss() }
+                    }
+                }
                 if let unmoved {
                     Text("\(unmoved) A move goes only from an identity to the one that replaced it, so after another switch it can never move. Bring it here first, from the Identity screen.")
                         .font(EarthType.bodySmall).foregroundStyle(theme.colors.textError)
@@ -318,8 +349,11 @@ struct SwitchIdentityScreen: View {
                 }
                 .buttonStyle(.plain)
                 if isSelf {
-                    // Which fresh identity a compromise calls for: a new wallet for the phrase, the next generation for the secret alone.
-                    Text("Your passport is registered to this wallet's next identity, derived from the same recovery phrase. Use it if you think this identity's secret alone was exposed, which is rare: the wallet derives it from the phrase and keeps it only in memory. It does not help if your recovery phrase may be exposed: anyone with the phrase can derive every identity of this wallet. Then create a new wallet, with a new phrase, and switch to it.")
+                    // Which fresh identity a compromise calls for: the next generation only for a secret
+                    // that leaked by itself, outside the phone. The wallet holds the key every generation
+                    // derives from in memory, so a memory compromise exposes them all, and so does the
+                    // phrase: a new wallet then. As Android's FRESH_IDENTITY_NOTE.
+                    Text("Your passport is registered to this wallet's next identity, derived from the same recovery phrase. This helps only if this identity's secret leaked by itself outside this phone, for example in a proof's witness file or a log. It does not help if this phone may be compromised or your recovery phrase may be exposed: the wallet holds the key every identity of this wallet derives from in memory, and anyone with that key or the phrase can derive them all. Then create a new wallet, with a new phrase, and switch to it.")
                         .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
                 }
                 ForEach(others, id: \.offset) { index, w in
@@ -395,9 +429,7 @@ struct MoveOfferCard: View {
                  ? "This identity replaced your previous one in this wallet (a renewal or a fresh identity). You can bring what it holds here with no wait, while this is still the passport's live identity. The fee comes from this wallet's private ERTH."
                  : "This identity replaced the one in \(offer.fromName). You can bring what it holds here with no wait, while this is still the passport's live identity. The fee comes from \(offer.fromName)'s private ERTH.")
             if offer.suggestedAt > 0 {
-                note(offer.suggestedAt > now
-                     ? "Suggested: move after \(Self.moveTime(offer.suggestedAt)). A move right after a switch can be linked to it by its timing, so the wallet picked a random time for you. Nothing hurries it while this stays your live identity, and the wallet reminds you then; it never moves anything on its own."
-                     : "The suggested time to move has come. Nothing hurries it while this stays your live identity; move before you switch again.")
+                note(Self.timingText(offer, now: now))
             }
             if !offer.handle.isEmpty && !handleInFlight {
                 if offer.handleLive {
@@ -432,6 +464,27 @@ struct MoveOfferCard: View {
 
     private func move(handle: Bool) {
         if offer.suggestedAt > now { early = handle } else { bring(handle: handle) }
+    }
+
+    /// When to move, and the deadline: the earliest lease end of what is
+    /// still to move, past which the old identity can neither move nor renew
+    /// it. As Android's moveTimingText; docs quote these.
+    static func timingText(_ offer: AppModel.MoveOffer, now: Int64) -> String {
+        let d = offer.deadline
+        let lost = "after that your previous identity can neither move nor renew it, and this identity cannot claim a handle or cast a caretaker vote for up to a year."
+        if d > 0 && d - now <= PrivacyWallet.moveDeadlineMarginSeconds {
+            return "Move now: \(offer.deadlineWhat) on \(moveTime(d)), too soon to wait after your switch; \(lost)"
+        }
+        if offer.suggestedAt > now && d > 0 {
+            return "Suggested: move after \(moveTime(offer.suggestedAt)). A move right after a switch can be linked to it by its timing, so the wallet picked a random time for you. Move by \(moveTime(d)), when \(offer.deadlineWhat); \(lost) The wallet reminds you; it never moves anything on its own."
+        }
+        if offer.suggestedAt > now {
+            return "Suggested: move after \(moveTime(offer.suggestedAt)). A move right after a switch can be linked to it by its timing, so the wallet picked a random time for you. Move before what your previous identity holds lapses: it can no longer renew it. The wallet reminds you; it never moves anything on its own."
+        }
+        if d > 0 {
+            return "The suggested time to move has come. Move by \(moveTime(d)), when \(offer.deadlineWhat); \(lost) Move before you switch again, too."
+        }
+        return "The suggested time to move has come. Move before what your previous identity holds lapses (it can no longer renew it), and before you switch again."
     }
 
     /// A suggested move time, in the phone's time zone.
