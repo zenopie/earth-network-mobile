@@ -67,6 +67,7 @@ javalite.
 | Package | Responsibility |
 |---------|----------------|
 | `PrivacyWallet.kt` | Every private action: send, swap, liquidity, stake, unstake, move, votes, registration, claims, handles, and the handle and caretaker moves a switch's old identity makes to its successor (move proofs). |
+| `PrivateActivity.kt` | The activity list's private rows, from the sealed store alone: the txs this wallet sent (recorded at acceptance), received notes, a restored wallet's spends. Never a lookup by hash. |
 | `PrivacySession.kt` | The selected wallet's `PrivacyWallet`, built from its mnemonic and kept for the session; another wallet's on demand (a switch's predecessor), and the move offer it finds by the succession leaf. |
 | `Reminders.kt` | Recurring actions (ANML claim, caretaker refresh, handle renewal) are reminded, never run unasked. |
 | `keys/` | Shielded key derivation and the shielded address. |

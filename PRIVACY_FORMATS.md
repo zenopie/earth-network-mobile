@@ -2014,6 +2014,50 @@ text alone does not.
   per wallet per process. Lock lets go of all of them (and of their copies
   of the data key and the decrypted state); one a tx still finishing holds
   is found again (weakly) by the next unlock, never opened twice.
+- **Private activity [wallet].** The activity list's private rows are
+  built from the sealed state alone; a private tx is never looked up by
+  hash for them (that would tell the node which txs are this wallet's), and
+  a private row offers no explorer link. state.json carries `activity`
+  (`PrivateActivity.kt` / `PrivateActivity.swift`):
+  - `sent`: every private tx this wallet broadcast, recorded when the node
+    took it (CheckTx code 0), at most 200 (settled ones dropped first):
+    hash, kind (REGISTER, SWITCH, MOVE, UNSHIELD, SEND, MERGE, SWAP,
+    ADD_LIQUIDITY, REMOVE_LIQUIDITY, STAKE, UNSTAKE, REDELEGATE, RESTAKE,
+    VOTE, CARETAKER, POSITION, CLAIM_ANML, HANDLE), identity generation,
+    counterparty where the wallet knows it (a handle, its new identity, a
+    validator, a proposal), fee, submitted_at (wallet clock), outs and ins
+    (per denom: the notes and stake notes it spends less its outputs back to
+    this wallet, the fee taken off uerth), `change` and `receives` (rho hex
+    of its own outputs, and of the notes the chain mints to it in the same
+    tx), `spent` (nullifier hex), and once known height, block time and
+    failure. A CheckTx refusal drops the record. It is in a block when the
+    broadcast's own wait says so, when a check the wallet already makes
+    (the pending registration, moves, undelegations, stake votes) reads it,
+    or when sync holds one of its nullifiers or outputs (the lowest
+    height); failed when the wait or those checks say so, or when
+    releasing its pending marks (§11: the chain says it is missing or
+    failed). A tx whose wait timed out and that failed in its block still
+    spends its fee bundle (§6), so sync alone shows it as in its block.
+  - `expected`: rho hex → kind of a note the chain mints to this wallet
+    later (GAS_GRANT for `pc_gas`, UNBONDING_PAYOUT, LP_PAYOUT for a
+    withdrawal's legs, SHIELD for a MsgShield's own note), at most 256.
+  - `clock`: (height, block time) of the LCD tip each sync reads anyway,
+    ascending, thinned to 32; a received note's time is interpolated from
+    it (and from registration records' block times), else extrapolated at
+    6 s a block, and shown as approximate.
+  Each pool note also keeps `origin` (`v1` bundle output, `v2` chain mint,
+  `open` referral note; absent on notes synced before). Rows: a sent tx
+  shows what it moved plus the notes minted for it (its change never
+  shows); a note no record or expectation names is a received row, labelled
+  by its expectation, else REGISTRATION_REWARD (a v2 note at the height of
+  this wallet's registration record), REFERRAL (open), FROM_EARTH (v2), or
+  RECEIVED (v1, or no origin). A restored wallet has no `sent` for its past:
+  its spent notes no record names are grouped by spent height into one
+  INFERRED row ("Private transaction") each, net of the notes made for it at
+  that height, REGISTER when a registration record sits at that height; no
+  kind or counterparty is guessed. A same-chain reset keeps `activity` (the
+  resync folds the notes in again); a relaunch (§17) drops it; it goes with
+  the store (below).
 - **Forgetting a wallet** deletes its `privacy/<id>/` directory (notes,
   identity, records, trees): every file overwritten with zeros, synced, then
   unlinked. Android offers it as Settings → "Forget private data"; iOS on

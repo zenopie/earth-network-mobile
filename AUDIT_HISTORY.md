@@ -440,3 +440,22 @@ Android and iOS in parity.
   again" and opens the split sheet on the last split seen (1854d92,
   c681d81). On iOS the caretaker and Groundworks banners now open their
   Govern sheet directly, as Android's do.
+
+## Private activity (2026-10-07)
+
+Activity listed only public txs (looked up by hash), so a wallet's
+registration, gas grant and every private tx were missing. Private rows are
+now built from the sealed store alone, with no request beyond what sync
+already makes (PRIVACY_FORMATS §20, "Private activity"): each private tx is
+recorded at acceptance and settled by its broadcast's wait, existing checks
+or sync's nullifiers and outputs; received notes are labelled by what the
+wallet expected (gas grant, unbonding and LP payouts) or their format; a
+restored wallet's unrecorded spends become one "Private transaction" per
+block (its registration by its record note). Rows merge with the public
+ones newest first, lock vs globe; a private row has no explorer link.
+Residuals: a tx whose wait timed out and that failed in its block shows as
+in its block unless an existing check saw the failure; a received v1 note in
+the same block as an inferred spend is netted into that row; notes synced
+before this version have no origin and read "Received privately". Android
+`PrivateActivityTest`, `ActivityMergeTest`; iOS `PrivateActivityTests`.
+iOS build 24.
