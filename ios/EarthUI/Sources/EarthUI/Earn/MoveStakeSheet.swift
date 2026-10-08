@@ -3,8 +3,8 @@ import EarthCore
 import SwiftUI
 
 /// Move stake: from one of your validators to another, with no unbonding gap
-/// (MsgRedelegate). Pick where it leaves, where it goes, then how much. Ports
-/// `ui/earn/MoveStakeSheet.kt`.
+/// (MsgRedelegate). Ports `ui/earn/MoveStakeSheet.kt`, laid out like Swap: the
+/// amount big, Max, where it leaves and where it goes as two rows, one button.
 ///
 /// The sources carry what may move now: stake moved in recently stays where
 /// it is until its window closes, so it is not offered. The destinations are
@@ -19,6 +19,9 @@ struct MoveStakeSheet: View {
     @State private var source: String?
     @State private var destination: String?
     @State private var amount = ""
+    @State private var picking: Side?
+
+    enum Side: Hashable { case from, to }
 
     init(source: String? = nil) {
         _source = State(initialValue: source)
@@ -26,70 +29,43 @@ struct MoveStakeSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: theme.space.x16) {
-                    EarthLabel("From")
-                    VStack(spacing: theme.space.x8) {
-                        if sources.isEmpty {
-                            Text("No private stake that can move now.")
-                                .font(EarthType.bodySmall)
-                                .foregroundStyle(theme.colors.textTertiary)
-                        }
-                        ForEach(sources, id: \.validator) { h in
-                            ValidatorPickRow(validator: h.validator,
-                                             detail: "\(Figures.balance(BigInt(model.derthValue(h.free, validator: h.validator)))) ERTH can move now",
-                                             standing: nil, selected: source == h.validator, enabled: true) {
-                                if source != h.validator { amount = "" }
-                                source = h.validator
-                                if destination == h.validator { destination = nil }
-                            }
-                        }
-                    }
-
-                    if source != nil {
-                        EarthLabel("To")
-                        VStack(spacing: theme.space.x8) {
-                            ForEach(destinations, id: \.self) { op in
-                                ValidatorPickRow(validator: op, detail: commission(op), standing: .active,
-                                                 selected: destination == op, enabled: true) { destination = op }
-                            }
-                        }
-
-                        EarthLabel("Amount")
-                        HStack {
-                            TextField("0", text: $amount)
-                                .font(EarthType.amountField)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.5)
-                                .keyboardType(.decimalPad)
-                                .onChange(of: amount) { previous, new in
-                                    amount = Amounts.filterAmountInput(new, previous: previous)
-                                }
-                            Text("derth")
-                                .font(EarthType.body)
-                                .foregroundStyle(theme.colors.textTertiary)
-                            Button("Max") { amount = Amounts.fromBaseUnits(available) }
-                                .font(EarthType.bodySmall)
-                                .foregroundStyle(theme.colors.accentInk)
-                        }
-                        Text("Can move now \(Figures.balance(available)) derth")
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textTertiary)
-                        Text(note)
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textTertiary)
-                    }
-
-                    EarthButton(title: "Review move") { review() }
-                        .disabled(parsed == nil || destination == nil)
+            VStack(spacing: 0) {
+                StakeAmountField(amount: $amount, unit: "derth", available: available,
+                                 error: Token.erth.parse(amount).flatMap { $0 > available ? "More than available" : nil })
+                Spacer().frame(height: theme.space.x24)
+                VStack(spacing: theme.space.x8) {
+                    ValidatorSelectRow(label: "From", validator: source) { picking = .from }
+                    ValidatorSelectRow(label: "To", validator: destination) { picking = .to }
                 }
-                .padding(theme.space.gutter)
+                Spacer(minLength: theme.space.x24)
+                EarthPillButton(title: "Move") { review() }
+                    .disabled(parsed == nil || destination == nil)
+                Spacer().frame(height: theme.space.x16)
             }
-            .navigationTitle("Move stake")
+            .padding(.horizontal, theme.space.gutter)
+            .navigationTitle("Move")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             .background(theme.colors.bgPrimary)
-            .scrollContentBackground(.hidden)
+            .navigationDestination(item: $picking) { side in
+                if side == .from {
+                    ValidatorPicker(title: "Move from", options: sources.map { h in
+                        .init(validator: h.validator, detail: "\(Figures.display(BigInt(model.derthValue(h.free, validator: h.validator)))) ERTH", enabled: true)
+                    }, selected: source) { op in
+                        if source != op { amount = "" }
+                        source = op
+                        if destination == op { destination = nil }
+                        picking = nil
+                    }
+                } else {
+                    ValidatorPicker(title: "Move to", options: destinations.map {
+                        .init(validator: $0, detail: ValidatorPicker.commission(model.commission(of: $0)), enabled: true)
+                    }, selected: destination) { op in
+                        destination = op
+                        picking = nil
+                    }
+                }
+            }
         }
     }
 
@@ -104,22 +80,8 @@ struct MoveStakeSheet: View {
         return value
     }
 
-    private var note: String {
-        let days = model.labelWindowSeconds / 86_400
-        return "Moved stake keeps earning, with no unbonding gap. It stays at the new validator"
-            + (days > 0 ? " for about \(days) days" : " for the unbonding period")
-            + " before it can move, unstake or lock again: a slash of the validator it left can still reach it until then."
-    }
-
     private func moniker(_ op: String) -> String {
         model.moniker(of: op)
-    }
-
-    private func commission(_ op: String) -> String {
-        let c = model.commission(of: op) ?? 0
-        let commission = String(format: "%.0f%% commission", c * 100)
-        guard let rate = StakingApr.forValidator(bondedUerth: Int64(model.totalBonded.description) ?? 0, commission: c) else { return commission }
-        return commission + " · " + Figures.rate(rate) + " APR"
     }
 
     private func review() {
@@ -139,9 +101,8 @@ struct MoveStakeSheet: View {
                         ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
                     ],
                     notes: [
-                        "The arriving stake is quoted at both validators' live rates with a small margin. If the rates move past it before the move lands, the chain refuses it and nothing is spent: just try again.",
-                        q.merges ? nil : "You hold no other stake at \(moniker(q.dst)) it can join, so it arrives as its own note there (merge it later with a tap).",
-                        "It can move, unstake or lock again after about \(q.windowSeconds / 86_400) days.",
+                        // A consequence, not an explanation: the stake is held there for the window.
+                        "Can't move, unstake or lock it again for about \(q.windowSeconds / 86_400) days.",
                         StakeNotes.haircut(q.haircut, from: moniker(q.src)),
                     ].compactMap { $0 }
                 ), onSuccess: { await model.refresh() }) { w in

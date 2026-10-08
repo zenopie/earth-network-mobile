@@ -12,7 +12,8 @@ import SwiftUI
 ///
 /// One sheet for both directions because the fields are the same and the
 /// difference is a word — two screens would drift apart on the amount rules,
-/// which are the part that matters.
+/// which are the part that matters. Laid out like Swap: the amount big, Max,
+/// the validator as one row (its picker a push away), one button.
 struct StakeSheet: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
@@ -20,92 +21,43 @@ struct StakeSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let unstaking: Bool
-    /// The round's end (unix), for the line on when new stake joins its validator.
-    let roundEnds: Int64?
-    let unbondingSeconds: Int64?
 
     @State private var validator: String?
     @State private var amount = ""
+    @State private var picking = false
     /// The whole validator list (Query/Validators, every page): never a read about one validator.
     @State private var list: PrivacyReads.ValidatorList? = PrivacyQueries.cachedValidators
 
-    init(unstaking: Bool, validator: String? = nil, roundEnds: Int64? = nil, unbondingSeconds: Int64? = nil) {
+    init(unstaking: Bool, validator: String? = nil) {
         self.unstaking = unstaking
-        self.roundEnds = roundEnds
-        self.unbondingSeconds = unbondingSeconds
         _validator = State(initialValue: validator)
     }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: theme.space.x16) {
-                    EarthLabel(unstaking ? "Take back from" : "Stake with")
-                    VStack(spacing: theme.space.x8) {
-                        if unstaking ? choices.isEmpty : rows.isEmpty {
-                            Text(unstaking ? "No private stake that can leave now." : "No validators to stake with.")
-                                .font(EarthType.bodySmall)
-                                .foregroundStyle(theme.colors.textTertiary)
-                        }
-                        if unstaking {
-                            ForEach(choices, id: \.self) { option in
-                                ValidatorPickRow(validator: option, detail: subtitle(option), standing: nil,
-                                                 selected: validator == option, enabled: true) { pick(option) }
-                            }
-                        } else {
-                            ForEach(rows, id: \.validator) { v in
-                                let standing = StakeRound.Standing(v)
-                                let open = model.stakeTargets.contains(v.validator) && standing == .active
-                                ValidatorPickRow(validator: v.validator, detail: open ? subtitle(v.validator) : (standing.reason ?? ""),
-                                                 standing: standing, selected: validator == v.validator, enabled: open) { pick(v.validator) }
-                            }
-                        }
-                    }
-
-                    if validator != nil {
-                        EarthLabel("Amount")
-                        HStack {
-                            TextField("0", text: $amount)
-                                .font(EarthType.amountField)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.5)
-                                .keyboardType(.decimalPad)
-                                .onChange(of: amount) { previous, new in
-                                    amount = Amounts.filterAmountInput(new, previous: previous)
-                                }
-                            Text(unstaking ? "derth" : "ERTH")
-                                .font(EarthType.body)
-                                .foregroundStyle(theme.colors.textTertiary)
-                            Button("Max") { amount = Amounts.fromBaseUnits(available) }
-                                .font(EarthType.bodySmall)
-                                .foregroundStyle(theme.colors.accentInk)
-                        }
-                        HStack(spacing: 5) {
-                            Image(systemName: "lock.fill").font(.system(size: 10))
-                                .foregroundStyle(theme.colors.accentInk)
-                            Text(unstaking
-                                 ? "Staked \(Figures.balance(available)) derth, worth \(Figures.balance(BigInt(model.derthValue(UInt64(available.description) ?? 0, validator: validator ?? "")))) ERTH"
-                                 : "From private ERTH · \(Figures.balance(available)) available")
-                                .font(EarthType.bodySmall)
-                                .foregroundStyle(theme.colors.textTertiary)
-                        }
-
-                        Text(unstaking ? unstakeNote : stakeNote)
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    EarthButton(title: unstaking ? "Review unstake" : "Review stake") { review() }
-                        .disabled(parsed == nil)
-                }
-                .padding(theme.space.gutter)
+            VStack(spacing: 0) {
+                StakeAmountField(amount: $amount, unit: unstaking ? "derth" : "ERTH",
+                                 available: available, error: error)
+                Spacer().frame(height: theme.space.x24)
+                ValidatorSelectRow(label: unstaking ? "From" : "To", validator: validator) { picking = true }
+                Spacer(minLength: theme.space.x24)
+                EarthPillButton(title: unstaking ? "Unstake" : "Stake") { review() }
+                    .disabled(parsed == nil)
+                Spacer().frame(height: theme.space.x16)
             }
+            .padding(.horizontal, theme.space.gutter)
             .navigationTitle(unstaking ? "Unstake" : "Stake")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             .background(theme.colors.bgPrimary)
-            .scrollContentBackground(.hidden)
+            .navigationDestination(isPresented: $picking) {
+                ValidatorPicker(title: unstaking ? "Unstake from" : "Stake with", options: options, selected: validator) { pick($0) }
+            }
+            .onAppear {
+                // One place it can go: chosen. Several to unstake from: pick first.
+                if validator == nil, options.filter(\.enabled).count == 1 { validator = options.first { $0.enabled }?.validator }
+                else if validator == nil, unstaking, options.count > 1 { picking = true }
+            }
             .task {
                 guard !unstaking else { return }
                 if let fresh = try? await PrivacyQueries(rest: model.client.rest).validators() { list = fresh }
@@ -116,40 +68,30 @@ struct StakeSheet: View {
     private func pick(_ option: String) {
         if validator != option { amount = "" }
         validator = option
+        picking = false
     }
 
-    /// Every validator the chain lists, active first, the chain's order
-    /// within each standing: unsorted by stake, which would only concentrate it.
-    private var rows: [PrivacyReads.ValidatorQuote] {
+    /// Staking: every validator the chain lists, active first, the chain's
+    /// order within each standing: unsorted by stake, which would only
+    /// concentrate it. Unstaking: where private stake may leave now
+    /// (moved-in stake whose window is open stays where it is).
+    private var options: [ValidatorPicker.Option] {
+        if unstaking {
+            return model.stakeHoldings.filter { $0.free > 0 }.map { h in
+                .init(validator: h.validator, detail: "\(Figures.display(BigInt(model.derthValue(h.free, validator: h.validator)))) ERTH", enabled: true)
+            }
+        }
         let all = list?.validators ?? []
         return all.enumerated().sorted { a, b in
             let (ra, rb) = (StakeRound.Standing(a.element).rank, StakeRound.Standing(b.element).rank)
             return ra != rb ? ra < rb : a.offset < b.offset
-        }.map(\.element)
-    }
-
-    private var stakeNote: String {
-        let name = validator.map(moniker) ?? "the validator"
-        let when = roundEnds.map { " at \(StakeRoundModel.clock($0))" } ?? " when today's round ends"
-        // Queued ERTH earns nothing until the round's end delegates it
-        // (rewards accrue only on what is delegated). derth is not a coin: a
-        // stake note only its owner can merge, vote, lock or unstake.
-        return "It starts earning when it joins \(name)\(when). Staked ERTH stays private and locked to this wallet: it can't be sent or traded, only unstaked or moved."
-    }
-
-    /// Worth saying before the tap rather than after: the stake stops earning
-    /// at once and arrives later, with nothing on screen in between but its card.
-    private var unstakeNote: String {
-        let days = unbondingSeconds.map { " (about \(max(1, $0 / 86_400)) days)" } ?? ""
-        return "It stops earning now and is paid to your private ERTH automatically after the unbonding period\(days). Nothing more to do or pay."
-            + (model.stakeHoldings.contains { $0.locked > 0 } ? " Stake moved here recently can be unstaked once its window closes." : "")
-    }
-
-    /// Unstaking can only come from somewhere private stake may leave now
-    /// (moved-in stake whose window is open stays where it is).
-    private var choices: [String] {
-        guard unstaking else { return model.stakeTargets }
-        return model.stakeHoldings.filter { $0.free > 0 }.map(\.validator)
+        }.map { v in
+            let standing = StakeRound.Standing(v.element)
+            let open = model.stakeTargets.contains(v.element.validator) && standing == .active
+            return .init(validator: v.element.validator,
+                         detail: open ? ValidatorPicker.commission(model.commission(of: v.element.validator)) : standing.label,
+                         enabled: open)
+        }
     }
 
     private func moniker(_ op: String) -> String {
@@ -167,23 +109,16 @@ struct StakeSheet: View {
         return max(0, BigInt(model.shieldedErth) - reserve)
     }
 
+    private var error: String? {
+        guard !amount.isEmpty, let value = Token.erth.parse(amount) else { return nil }
+        return value > available ? "More than available" : nil
+    }
+
     private var parsed: BigInt? {
         guard validator != nil,
               let value = Token.erth.parse(amount), value > 0, value <= available
         else { return nil }
         return value
-    }
-
-    private func subtitle(_ option: String) -> String {
-        if unstaking {
-            let held = model.privateStake[PrivacyWallet.derthDenom(option)] ?? 0
-            return "\(Figures.whole(BigInt(model.derthValue(held, validator: option)))) ERTH staked · \(Figures.whole(BigInt(held))) derth"
-        }
-        let c = model.commission(of: option) ?? 0
-        let commission = String(format: "%.0f%% commission", c * 100)
-        guard let rate = StakingApr.forValidator(bondedUerth: Int64(model.totalBonded.description) ?? 0, commission: c) else { return commission }
-        let held = model.privateStake[PrivacyWallet.derthDenom(option)].map { " · you have \(Figures.whole(BigInt(model.derthValue($0, validator: option)))) ERTH" } ?? ""
-        return commission + " · " + Figures.rate(rate) + " APR" + held
     }
 
     private func review() {
@@ -224,8 +159,7 @@ struct StakeSheet: View {
                             ("Validator", name),
                             fee,
                         ],
-                        notes: ["Quoted at the validator's live rate with a small margin. If the rate moves past it before this lands, the chain refuses it and nothing is spent: just try again.",
-                                StakeNotes.haircut(q.haircut, from: nil)].compactMap { $0 }
+                        notes: [StakeNotes.haircut(q.haircut, from: nil)].compactMap { $0 }
                     ), onSuccess: { await model.refresh() }) { w in
                         try await w.delegate(q)
                     }
@@ -249,62 +183,153 @@ enum StakeNotes {
     }
 }
 
-/// A validator in a picker: its initial, name, one line on its terms or why it
-/// cannot be picked, and its standing.
-struct ValidatorPickRow: View {
+/// The amount, big and centred as on Swap, with what is available and Max
+/// under it, and an error only when there is one.
+struct StakeAmountField: View {
     @Environment(\.earth) private var theme
-    @Environment(AppModel.self) private var model
-    let validator: String
-    let detail: String
-    let standing: StakeRound.Standing?
-    let selected: Bool
-    let enabled: Bool
-    let action: () -> Void
+    @Binding var amount: String
+    let unit: String
+    let available: BigInt
+    var error: String?
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Text(String(model.moniker(of: validator).prefix(1)).uppercased())
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(enabled ? theme.colors.accentInk : theme.colors.textTertiary)
-                    .frame(width: 36, height: 36)
-                    .background(enabled ? theme.colors.accentTint : theme.colors.bgTertiary, in: .circle)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(model.moniker(of: validator))
-                            .font(EarthType.title)
-                            .foregroundStyle(enabled ? theme.colors.textPrimary : theme.colors.textSecondary)
-                            .lineLimit(1)
-                        if let standing {
-                            Text(standing.label)
-                                .font(EarthType.caption).fontWeight(.medium)
-                                .foregroundStyle(standing == .active ? theme.colors.accentInk : theme.colors.textTertiary)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(standing == .active ? theme.colors.accentTint : theme.colors.bgTertiary, in: .capsule)
-                        }
-                    }
-                    Text(detail)
-                        .font(EarthType.caption)
-                        .foregroundStyle(enabled ? theme.colors.textTertiary : theme.colors.textSecondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+        VStack(spacing: 0) {
+            Spacer().frame(height: theme.space.x32)
+            TextField("0", text: $amount)
+                .font(.system(size: 56, weight: .semibold).monospacedDigit())
+                .foregroundStyle(theme.colors.textPrimary)
+                .multilineTextAlignment(.center)
+                .lineLimit(1)
+                .minimumScaleFactor(0.4)
+                .keyboardType(.decimalPad)
+                .onChange(of: amount) { previous, new in
+                    amount = Amounts.filterAmountInput(new, previous: previous)
                 }
-                Spacer(minLength: 8)
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 20))
-                    .foregroundStyle(selected ? theme.colors.accentInk : theme.colors.strokePrimary)
-                    .opacity(enabled ? 1 : 0)
+            Text(unit)
+                .font(EarthType.body)
+                .foregroundStyle(theme.colors.textTertiary)
+            Spacer().frame(height: theme.space.x16)
+            HStack(spacing: theme.space.x8) {
+                Text("\(Figures.display(available)) available")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textTertiary)
+                if available > 0 {
+                    AmountChip(label: "Max") { amount = Amounts.fromBaseUnits(available) }
+                }
             }
-            .padding(12)
-            .background(selected ? theme.colors.accentTint.opacity(0.5) : theme.colors.bgSecondary,
-                        in: .rect(cornerRadius: theme.space.radiusMd))
-            .overlay {
-                RoundedRectangle(cornerRadius: theme.space.radiusMd)
-                    .strokeBorder(selected ? theme.colors.accentInk : .clear, lineWidth: 1.5)
+            Text(error ?? " ")
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textError)
+                .padding(.top, theme.space.x8)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// The validator, as one row in a Swap panel's style: tap to choose.
+struct ValidatorSelectRow: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+    let label: String
+    let validator: String?
+    /// nil: fixed, nothing to choose.
+    var action: (() -> Void)?
+
+    var body: some View {
+        Button { action?() } label: {
+            HStack(spacing: theme.space.x12) {
+                ValidatorMark(validator: validator, size: 40, muted: validator == nil)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(label)
+                        .font(EarthType.caption)
+                        .foregroundStyle(theme.colors.textTertiary)
+                    Text(validator.map(model.moniker(of:)) ?? "Choose validator")
+                        .font(EarthType.body).fontWeight(.semibold)
+                        .foregroundStyle(validator == nil ? theme.colors.textSecondary : theme.colors.textPrimary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: theme.space.x8)
+                if action != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.colors.textTertiary)
+                }
             }
+            .padding(theme.space.x16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.colors.bgSecondary, in: .rect(cornerRadius: 20))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
+        .disabled(action == nil)
+    }
+}
+
+/// Choose a validator: initial, name, one small figure (commission, or what
+/// you hold there), a check on the chosen one. Ones that cannot be picked are
+/// greyed with their standing.
+struct ValidatorPicker: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+
+    struct Option: Identifiable {
+        let validator: String
+        let detail: String
+        let enabled: Bool
+        var id: String { validator }
+    }
+
+    let title: String
+    let options: [Option]
+    let selected: String?
+    let pick: (String) -> Void
+
+    static func commission(_ c: Double?) -> String {
+        String(format: "%.0f%% commission", (c ?? 0) * 100)
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                if options.isEmpty {
+                    Text("None")
+                        .font(EarthType.body)
+                        .foregroundStyle(theme.colors.textTertiary)
+                        .padding(.vertical, theme.space.x32)
+                }
+                ForEach(options) { o in
+                    Button { pick(o.validator) } label: {
+                        HStack(spacing: theme.space.x12) {
+                            ValidatorMark(validator: o.validator, size: 44, muted: !o.enabled)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(model.moniker(of: o.validator))
+                                    .font(EarthType.body).fontWeight(.semibold)
+                                    .foregroundStyle(o.enabled ? theme.colors.textPrimary : theme.colors.textTertiary)
+                                    .lineLimit(1)
+                                Text(o.detail)
+                                    .font(EarthType.caption)
+                                    .foregroundStyle(theme.colors.textTertiary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: theme.space.x8)
+                            if o.validator == selected {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 22))
+                                    .foregroundStyle(theme.colors.accentInk)
+                            }
+                        }
+                        .padding(.vertical, theme.space.x12)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!o.enabled)
+                }
+            }
+            .padding(.horizontal, theme.space.gutter)
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .background(theme.colors.bgPrimary)
+        .scrollContentBackground(.hidden)
     }
 }
