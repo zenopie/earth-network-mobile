@@ -75,4 +75,62 @@ final class StakeRoundTests: XCTestCase {
         XCTAssertEqual(StakeRound.Standing(q("")), .removed)
         XCTAssertNil(StakeRound.Standing.active.reason)
     }
+    // MARK: - earth-1, 2026-10-07: a first stake before the first round ended
+
+    /// Query/Validators for the validator as the chain served it then (the brief's entry, verbatim).
+    static let live = """
+    {"validators":[{"validator":"earthvaloper1n6amvkgfrrgy6ulhurewnm0endkgye69vpfk7m","delegatable":true,
+      "book":{"pending_delegation":"117607253770","pending_undelegation":"0","epoch_rate":"1.000000000000000000",
+              "derth_supply":"117607253770","checkpoint_seq":"0","supply_height":"2395","supply_at_block_start":"0","slash_debt":"0"},
+      "backing":"117607253770","supply":"117607253770","rate":"1.000000000000000000","delegation":"0","rewards":"0","redelegations":[]}],
+     "pagination":{"next_key":null,"total":"0"},"height":"8158"}
+    """
+    static let op = "earthvaloper1n6amvkgfrrgy6ulhurewnm0endkgye69vpfk7m"
+    static let staked: UInt64 = 117_607_253_770
+
+    private func liveRates() throws -> [String: Decimal] {
+        let page = try ValidatorPages.parse(JSON(try JSONSerialization.jsonObject(with: Data(Self.live.utf8))))
+        return Dictionary(uniqueKeysWithValues: page.validators.map { ($0.validator, $0.rate) })
+    }
+
+    /// The MsgDelegate at 2395, as a stake note; the round began at block 1 (genesis), nothing delegated yet (D = 0).
+    func testAFirstStakeBeforeTheRoundEndsIsValuedAndWaiting() throws {
+        let rates = try liveRates()
+        XCTAssertEqual(rates[Self.op], 1)
+        let ns = [note(0, 2395, Self.staked, denom: PrivacyWallet.derthDenom(Self.op))]
+        let lines = StakeRound.lines(notes: ns, positions: [], rate: { rates[$0] ?? 1 }, after: 1)
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertEqual(lines[0].validator, Self.op)
+        XCTAssertEqual(lines[0].value, Self.staked)
+        XCTAssertEqual(lines[0].joiningValue, Self.staked)
+        // After the round that delegated it: nothing waiting.
+        XCTAssertEqual(StakeRound.lines(notes: ns, positions: [], rate: { rates[$0] ?? 1 }, after: 2395)[0].joiningValue, 0)
+    }
+
+    /// What the chain holds now: the note was locked whole into Groundworks position 0 at 2541 (MsgLockPosition),
+    /// leaving a zero note the wallet drops. Counting notes alone gave 0: the Stake tab's zero.
+    func testStakeLockedInAPositionStillCounts() throws {
+        let rates = try liveRates()
+        let ns = [note(0, 2395, Self.staked, spent: 2541, denom: PrivacyWallet.derthDenom(Self.op))]
+        let ps = [StakeRound.Locked(validator: Self.op, derth: Self.staked, height: 2541)]
+        XCTAssertTrue(StakeRound.lines(notes: ns, positions: [], rate: { rates[$0] ?? 1 }, after: 1).isEmpty)
+        let lines = StakeRound.lines(notes: ns, positions: ps, rate: { rates[$0] ?? 1 }, after: 1)
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertEqual(lines[0].notes, 0)
+        XCTAssertEqual(lines[0].locked, Self.staked)
+        XCTAssertEqual(lines[0].value, Self.staked)
+        XCTAssertEqual(lines[0].lockedValue, Self.staked)
+        // Still waiting: the lock moved it, the round has not delegated it.
+        XCTAssertEqual(lines[0].joiningValue, Self.staked)
+        // A lock of stake that joined already adds nothing waiting.
+        XCTAssertEqual(StakeRound.joining(ns, positions: ps, denom: PrivacyWallet.derthDenom(Self.op), after: 2400), 0)
+        // Part locked: the remainder note and the position, one block.
+        let part = [note(0, 2395, Self.staked, spent: 2541, denom: PrivacyWallet.derthDenom(Self.op)),
+                    note(1, 2541, Self.staked - 1_000_000, denom: PrivacyWallet.derthDenom(Self.op))]
+        let one = [StakeRound.Locked(validator: Self.op, derth: 1_000_000, height: 2541)]
+        let l = StakeRound.lines(notes: part, positions: one, rate: { _ in Decimal(string: "1.5")! }, after: 1)[0]
+        XCTAssertEqual(l.derth, Self.staked)
+        XCTAssertEqual(l.value, Self.staked / 2 * 3)
+        XCTAssertEqual(l.joiningValue, Self.staked / 2 * 3)
+    }
 }
