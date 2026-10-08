@@ -211,6 +211,11 @@ data class PrivateActivityRow(
     val timeExact: Boolean,
     val status: Status,
     val failure: String? = null,
+    /**
+     * The fee came out of a gas grant Earth minted to this wallet: a note the
+     * tx spent was expected as one ([ActivityLog.expected]).
+     */
+    val feeFromGrant: Boolean = false,
 ) {
     enum class Status { PENDING, CONFIRMED, FAILED }
 
@@ -354,6 +359,7 @@ object PrivateActivity {
                     kind = t.kind, coins = t.outs.map { it.copy(amount = -it.amount) } + ins, counterparty = t.counterparty,
                     fee = t.fee, hash = t.hash, height = t.height, time = t.time ?: t.submittedAt, timeExact = true,
                     status = status, failure = t.failure,
+                    feeFromGrant = s.notes.any { it.nf.toHex() in t.spent && log.expected[it.note.rho.toHex()] == PrivateActivityKind.GAS_GRANT },
                 ),
             )
         }

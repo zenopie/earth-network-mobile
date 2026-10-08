@@ -227,12 +227,6 @@ fun EarthApp(
         )
     }
 
-    val rows = remember(activity, nav) {
-        activity?.map { row ->
-            row.copy(onClick = { nav.push(EarthRoute.TransactionDetail(row.txHash)) })
-        }
-    }
-
     BlankBgScaffold(
         modifier = modifier,
         topBar = {
@@ -316,7 +310,7 @@ fun EarthApp(
                 nav = nav,
                 tx = tx,
                 state = state,
-                activity = rows,
+                activity = activity,
                 earnState = earnState,
                 allocationState = allocationState,
                 marketsState = marketsState,

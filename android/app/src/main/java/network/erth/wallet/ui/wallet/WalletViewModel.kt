@@ -40,8 +40,8 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
      * have, and a wallet that refuses to show a balance because it could not
      * list transactions is answering the wrong question.
      */
-    private val _activity = MutableStateFlow<List<ActivityRow>?>(null)
-    val activity: StateFlow<List<ActivityRow>?> = _activity.asStateFlow()
+    private val _activity = MutableStateFlow<List<ActivityEntry>?>(null)
+    val activity: StateFlow<List<ActivityEntry>?> = _activity.asStateFlow()
 
     /**
      * Re-read from the chain, and hand back the read so a caller can wait on
@@ -126,13 +126,13 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
             _activity.value = withContext(Dispatchers.IO) {
                 val ctx = getApplication<Application>()
                 val public = runCatching {
-                    Explorer.txsByHash(SentTxLog.hashes(ctx, address)).map { it.toActivityRow(address) }
+                    Explorer.txsByHash(SentTxLog.hashes(ctx, address)).map { ActivityEntry.of(it, address) }
                 }.getOrDefault(emptyList())
                 // Private txs are never looked up (that would tell the node
                 // which are ours): their rows come from the sealed store and
                 // the notes the sync above found.
                 val private = runCatching {
-                    PrivacySession.wallet(ctx).activity().map { it.toActivityRow() }
+                    PrivacySession.wallet(ctx).activity().map { ActivityEntry.of(it) }
                 }.getOrDefault(emptyList())
                 mergeActivity(public, private)
             }

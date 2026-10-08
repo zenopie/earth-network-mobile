@@ -40,6 +40,19 @@ object Explorer {
         val types: List<String>,
         /** Raw message objects, for the detail view. */
         val messages: List<JSONObject>,
+        /**
+         * What the same lookup also says, for the detail sheet: the fee and
+         * who paid it (a fee granter, when one did), the chain's log when it
+         * failed, the memo and the gas.
+         */
+        val fee: List<network.erth.wallet.privacy.ActivityCoin> = emptyList(),
+        val feeGranter: String = "",
+        val feePayer: String = "",
+        val code: Int = 0,
+        val rawLog: String = "",
+        val memo: String = "",
+        val gasUsed: Long = 0,
+        val gasWanted: Long = 0,
     )
 
     // --- status and blocks ---
@@ -268,6 +281,17 @@ object Explorer {
             types = messages.map { it.optString("@type", "").substringAfterLast('.') }
                 .filter { it.isNotEmpty() },
             messages = messages,
+            fee = body?.optJSONObject("auth_info")?.optJSONObject("fee")?.optJSONArray("amount").toObjectList().mapNotNull { c ->
+                val a = c.optString("amount").toLongOrNull() ?: return@mapNotNull null
+                network.erth.wallet.privacy.ActivityCoin(c.optString("denom"), a)
+            },
+            feeGranter = body?.optJSONObject("auth_info")?.optJSONObject("fee")?.optString("granter", "").orEmpty(),
+            feePayer = body?.optJSONObject("auth_info")?.optJSONObject("fee")?.optString("payer", "").orEmpty(),
+            code = res.optInt("code", 0),
+            rawLog = res.optString("raw_log", ""),
+            memo = bodyObj?.optString("memo", "").orEmpty(),
+            gasUsed = res.optString("gas_used", "0").toLongOrNull() ?: 0L,
+            gasWanted = res.optString("gas_wanted", "0").toLongOrNull() ?: 0L,
         )
     }
 

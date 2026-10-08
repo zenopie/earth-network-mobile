@@ -55,8 +55,9 @@ import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import network.erth.wallet.ui.designsystem.util.stringRes
 import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.ui.theme.EarthAccent
-import network.erth.wallet.ui.wallet.ActivityItem
-import network.erth.wallet.ui.wallet.ActivityRow
+import network.erth.wallet.ui.wallet.ActivityEntry
+import network.erth.wallet.ui.wallet.ActivityView
+import network.erth.wallet.ui.wallet.activityItems
 import network.erth.wallet.ui.wallet.CoinRow
 import network.erth.wallet.ui.wallet.CoinSheet
 import network.erth.wallet.privacy.tx.ShieldMove
@@ -94,7 +95,9 @@ fun HomeScreen(
     /** Opens the Shield / Unshield sheet, from a coin's sheet. */
     onMove: (MoveDirection) -> Unit,
     balancesVisible: Boolean,
-    activity: List<ActivityRow>?,
+    activity: List<ActivityEntry>?,
+    activityView: ActivityView,
+    onActivity: (ActivityEntry) -> Unit,
     onReceive: () -> Unit,
     onSend: () -> Unit,
     onClaimAnml: () -> Unit,
@@ -165,6 +168,8 @@ fun HomeScreen(
         HomeListPanel(
             panel = panel,
             activity = activity,
+            activityView = activityView,
+            onActivity = onActivity,
             stakedUerth = stakedUerth,
             rewardsUerth = rewardsUerth,
             unbondingUerth = unbondingUerth,
@@ -369,7 +374,9 @@ private fun HomeActions(
 @Composable
 private fun HomeListPanel(
     panel: HomePanel,
-    activity: List<ActivityRow>?,
+    activity: List<ActivityEntry>?,
+    activityView: ActivityView,
+    onActivity: (ActivityEntry) -> Unit,
     stakedUerth: Long,
     rewardsUerth: Long,
     unbondingUerth: Long,
@@ -460,7 +467,7 @@ private fun HomeListPanel(
                             .shimmer(shimmer),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        ShimmerCircle(size = 32.dp)
+                        ShimmerCircle(size = 44.dp)
                         Spacer(Modifier.width(12.dp))
                         Column {
                             ShimmerRectangle(width = 96.dp, height = 14.dp)
@@ -470,16 +477,7 @@ private fun HomeListPanel(
                     }
                 }
 
-                activity.isEmpty() -> item {
-                    Text(
-                        text = "Nothing yet. Transactions appear here once they are confirmed.",
-                        style = EarthTypography.textSm,
-                        color = EarthColors.Text.textTertiary,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-                    )
-                }
-
-                else -> items(activity) { row -> ActivityItem(row) }
+                else -> activityItems(activity, activityView, onActivity)
             }
         }
     }

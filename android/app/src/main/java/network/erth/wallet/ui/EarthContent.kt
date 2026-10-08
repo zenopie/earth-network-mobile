@@ -85,7 +85,9 @@ import network.erth.wallet.ui.swap.MarketsViewModel
 import network.erth.wallet.ui.swap.SwapScreen
 import network.erth.wallet.ui.tx.TxConfirmDetails
 import network.erth.wallet.ui.tx.TxController
-import network.erth.wallet.ui.wallet.ActivityRow
+import network.erth.wallet.ui.wallet.ActivityDetailSheet
+import network.erth.wallet.ui.wallet.ActivityEntry
+import network.erth.wallet.ui.wallet.ActivityView
 import network.erth.wallet.ui.wallet.ActivityScreen
 import network.erth.wallet.ui.wallet.ReceiveScreen
 import network.erth.wallet.ui.wallet.Holding
@@ -110,7 +112,7 @@ internal fun EarthContent(
     nav: EarthNavController,
     tx: TxController,
     state: WalletUiState?,
-    activity: List<ActivityRow>?,
+    activity: List<ActivityEntry>?,
     earnState: EarnUiState?,
     allocationState: AllocationUiState?,
     marketsState: MarketsUiState?,
@@ -156,6 +158,8 @@ internal fun EarthContent(
     var resplitting by remember { mutableStateOf<PositionRow?>(null) }
     // Shield / Unshield from the wallet home.
     var moving by remember { mutableStateOf<MoveDirection?>(null) }
+    // The activity row whose detail sheet is open (by id: the live row is shown).
+    var openActivity by remember { mutableStateOf<String?>(null) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
@@ -184,6 +188,7 @@ internal fun EarthContent(
         earnState?.derthValue(derth, validator) ?: derth
     fun monikerOf(validator: String): String =
         earnState?.monikerOf(validator) ?: validator
+    val activityView = ActivityView(visible = balancesVisible, name = ::monikerOf, now = now)
 
     // LP shares: public ones are ordinary coins (dexlp/<pool>) in the
     // balances call; private ones (a shielded deposit's) are share notes of
@@ -207,6 +212,8 @@ internal fun EarthContent(
             onMove = { moving = it },
             balancesVisible = balancesVisible,
             activity = activity,
+            activityView = activityView,
+            onActivity = { openActivity = it.id },
             onReceive = { nav.push(EarthRoute.Receive) },
             onSend = { nav.push(EarthRoute.Send) },
             onClaimAnml = onClaimAnml,
@@ -402,7 +409,7 @@ internal fun EarthContent(
             modifier = inset,
         )
 
-        EarthRoute.Activity -> ActivityScreen(rows = activity.orEmpty(), modifier = inset)
+        EarthRoute.Activity -> ActivityScreen(rows = activity.orEmpty(), view = activityView, onOpen = { openActivity = it.id }, modifier = inset)
 
         EarthRoute.Settings -> {
             var forgetting by remember { mutableStateOf(false) }
@@ -909,10 +916,15 @@ internal fun EarthContent(
 
         is EarthRoute.TransactionDetail -> TransactionDetailScreen(
             txHash = route.txHash,
-            row = activity?.firstOrNull { it.txHash == route.txHash },
             onOpenExplorer = { onOpenUrl("https://explorer.erth.network/tx/${route.txHash}") },
             modifier = inset,
         )
+    }
+
+    openActivity?.let { id ->
+        activity?.firstOrNull { it.id == id }?.let { entry ->
+            ActivityDetailSheet(entry, activityView, onOpenUrl = onOpenUrl, onDismiss = { openActivity = null })
+        } ?: run { openActivity = null }
     }
 
     // Staking is private: ERTH is spent from shielded notes into the pool's

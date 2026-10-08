@@ -66,6 +66,8 @@ class PrivateActivityTest {
         assertEquals(Status.CONFIRMED, reg.status)
         assertNotNull(reg.hash)
         assertTrue(reg.fee!! > 0)
+        // Its fee came out of the gas grant's note.
+        assertTrue(reg.feeFromGrant)
         assertTrue(reg.coins.any { it.denom == "uanml" && it.amount == 1_000_000L })
         assertTrue(reg.coins.any { it.denom == "uerth" && it.amount > 0 })
         assertEquals(2, rows.size)
