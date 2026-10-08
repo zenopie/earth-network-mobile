@@ -72,4 +72,53 @@ class StakeRoundTest {
         assertEquals(StakeRound.Standing.REMOVED, StakeRound.Standing.of(q("")))
         assertNull(StakeRound.Standing.ACTIVE.reason)
     }
+    // earth-1, 2026-10-07: a first stake before the first round ended (as StakeRoundTests.swift).
+    private val live = """
+        {"validators":[{"validator":"earthvaloper1n6amvkgfrrgy6ulhurewnm0endkgye69vpfk7m","delegatable":true,
+          "book":{"pending_delegation":"117607253770","pending_undelegation":"0","epoch_rate":"1.000000000000000000",
+                  "derth_supply":"117607253770","checkpoint_seq":"0","supply_height":"2395","supply_at_block_start":"0","slash_debt":"0"},
+          "backing":"117607253770","supply":"117607253770","rate":"1.000000000000000000","delegation":"0","rewards":"0","redelegations":[]}],
+         "pagination":{"next_key":null,"total":"0"},"height":"8158"}
+    """
+    private val op = "earthvaloper1n6amvkgfrrgy6ulhurewnm0endkgye69vpfk7m"
+    private val staked = 117_607_253_770L
+    private val denom = PrivacyWallet.derthDenom(op)
+
+    private fun liveRates(): Map<String, java.math.BigDecimal> =
+        network.erth.wallet.privacy.chain.ValidatorPages.parse(org.json.JSONObject(live)).validators.associate { it.validator to it.rate }
+
+    @Test
+    fun aFirstStakeBeforeTheRoundEndsIsValuedAndWaiting() {
+        val rates = liveRates()
+        assertEquals(0, java.math.BigDecimal.ONE.compareTo(rates.getValue(op)))
+        val ns = listOf(note(0, 2395, staked, denom = denom))
+        val lines = StakeRound.lines(ns, emptyList(), { rates[it] ?: java.math.BigDecimal.ONE }, 1)
+        assertEquals(1, lines.size)
+        assertEquals(op, lines[0].validator)
+        assertEquals(staked, lines[0].value)
+        assertEquals(staked, lines[0].joiningValue)
+        assertEquals(0L, StakeRound.lines(ns, emptyList(), { rates[it] ?: java.math.BigDecimal.ONE }, 2395)[0].joiningValue)
+    }
+
+    /** The chain now: the note locked whole into position 0 at 2541; notes alone gave 0 (the Stake tab's zero). */
+    @Test
+    fun stakeLockedInAPositionStillCounts() {
+        val rates = liveRates()
+        val ns = listOf(note(0, 2395, staked, spent = 2541, denom = denom))
+        val ps = listOf(StakeRound.Locked(op, staked, 2541))
+        assertTrue(StakeRound.lines(ns, emptyList(), { rates[it] ?: java.math.BigDecimal.ONE }, 1).isEmpty())
+        val l = StakeRound.lines(ns, ps, { rates[it] ?: java.math.BigDecimal.ONE }, 1).single()
+        assertEquals(0L, l.notes)
+        assertEquals(staked, l.locked)
+        assertEquals(staked, l.value)
+        assertEquals(staked, l.lockedValue)
+        assertEquals(staked, l.joiningValue)
+        assertEquals(0L, StakeRound.joining(ns, denom, 2400, ps))
+        val part = listOf(note(0, 2395, staked, spent = 2541, denom = denom), note(1, 2541, staked - 1_000_000, denom = denom))
+        val one = listOf(StakeRound.Locked(op, 1_000_000, 2541))
+        val p = StakeRound.lines(part, one, { java.math.BigDecimal("1.5") }, 1).single()
+        assertEquals(staked, p.derth)
+        assertEquals(staked / 2 * 3, p.value)
+        assertEquals(staked / 2 * 3, p.joiningValue)
+    }
 }

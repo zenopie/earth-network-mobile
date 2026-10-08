@@ -7,34 +7,89 @@ import network.erth.wallet.privacy.note.OwnedStakeNote
  * (x/shieldedstaking's epoch). iOS: `StakeRound.swift`.
  *
  * A delegation's ERTH is queued (the book's P) and delegated to its validator
- * when the round ends; the derth it bought is credited at once, at the live
- * rate, and shares in the rate from then on. So "joining" is about the
- * validator, not about earning: the screen says when the stake joins, and that
- * it is earning already.
+ * when the round ends. Rewards accrue only on what is delegated (the book's
+ * D; x/distribution pays nothing on P), so queued ERTH earns nothing until it
+ * joins: the screen says it is waiting to start earning, and when it joins.
+ * The derth it bought is credited at once at the live rate B/S, so once the
+ * validator holds bonded private stake that derth does share the rate's
+ * growth from that stake's rewards; on a validator whose private stake is all
+ * queued (D = 0, W = 0) nothing grows until the round ends.
+ *
+ * Private stake is the wallet's stake notes and its Groundworks positions:
+ * a lock moves derth from a note into a position at the same validator, still
+ * derth in S at the same rate, so it is still this wallet's stake there.
  */
 object StakeRound {
+    /** A Groundworks position as the Stake screen counts it: derth locked at [validator], created (locked) at [height] (0: unknown). */
+    data class Locked(val validator: String, val derth: Long, val height: Long)
+
+    /** One validator's private stake: what the Stake screen's card and total show. */
+    data class Line(
+        val validator: String,
+        /** derth in spendable stake notes, and locked in positions. */
+        val notes: Long,
+        val locked: Long,
+        /** Both, at the live rate, in uerth (floor(derth x rate), as the chain converts it). */
+        val value: Long,
+        val lockedValue: Long,
+        /** The part still waiting to join its validator, in uerth; null when unknown. */
+        val joiningValue: Long?,
+    ) {
+        val derth: Long get() = Amounts.satAdd(notes, locked)
+    }
+
+    /**
+     * A line per validator where the wallet holds stake (notes or positions),
+     * in validator order. [rate] is rate_v (1 until read); [after] is the
+     * block that ended the last round (null: unknown, so nothing is called joining).
+     */
+    fun lines(notes: List<OwnedStakeNote>, positions: List<Locked>, rate: (String) -> java.math.BigDecimal, after: Long?): List<Line> {
+        val prefix = PrivacyWallet.DERTH_PREFIX
+        val held = HashMap<String, Long>()
+        for (n in notes) if (n.spendable && n.denom.startsWith(prefix)) {
+            val v = n.denom.removePrefix(prefix)
+            held[v] = Amounts.satAdd(held[v] ?: 0L, n.amount)
+        }
+        val locked = HashMap<String, Long>()
+        for (p in positions) if (p.derth > 0) locked[p.validator] = Amounts.satAdd(locked[p.validator] ?: 0L, p.derth)
+        return (held.keys + locked.keys).toSortedSet().map { v ->
+            val r = rate(v)
+            val n = held[v] ?: 0L
+            val l = locked[v] ?: 0L
+            val waiting = after?.let { joining(notes, PrivacyWallet.derthDenom(v), it, positions) }
+            Line(
+                validator = v, notes = n, locked = l,
+                value = PrivacyWallet.derthValue(Amounts.satAdd(n, l), r),
+                lockedValue = PrivacyWallet.derthValue(l, r),
+                joiningValue = waiting?.let { PrivacyWallet.derthValue(it, r) },
+            )
+        }
+    }
+
     /**
      * The derth at [denom] this wallet's own delegations credited in blocks
      * after [height] (the block that ended the last round), at most what is
-     * held there now. From the wallet's stake notes alone, spent ones
-     * included: a block where the notes made outweigh the notes spent added
-     * value. A note with a label no spent note carried is a move arriving
-     * (bonded at once, not queued), so that block is not counted; an
-     * undelegation, a merge or a lock adds nothing.
+     * held there now (notes and positions). From the wallet's stake notes,
+     * spent ones included, and its positions: a block where what was made
+     * (notes, positions locked) outweighs the notes spent added value. A
+     * note with a label no spent note carried is a move arriving (bonded at
+     * once, not queued), so that block is not counted; an undelegation, a
+     * merge or a lock (a note spent into a position in one block) adds nothing.
      */
-    fun joining(notes: List<OwnedStakeNote>, denom: String, height: Long): Long {
+    fun joining(notes: List<OwnedStakeNote>, denom: String, height: Long, positions: List<Locked> = emptyList()): Long {
         val ns = notes.filter { it.denom == denom }
+        val ps = positions.filter { PrivacyWallet.derthDenom(it.validator) == denom }
         var credited = 0L
-        for (h in ns.map { it.height }.filter { it > height }.toSet()) {
+        for (h in (ns.map { it.height } + ps.map { it.height }).filter { it > height }.toSet()) {
             val made = ns.filter { it.height == h }
             val spent = ns.filter { it.spentHeight == h }
             val carried = spent.mapNotNull { it.label?.moveKey }.toSet()
             if (made.any { n -> n.label?.let { it.moveKey !in carried } == true }) continue
-            val m = Amounts.satSum(made) { it.amount }
+            val m = Amounts.satAdd(Amounts.satSum(made) { it.amount }, Amounts.satSum(ps.filter { it.height == h }) { it.derth })
             val s = Amounts.satSum(spent) { it.amount }
             if (m > s) credited = Amounts.satAdd(credited, m - s)
         }
-        return minOf(credited, Amounts.satSum(ns.filter { it.unspent }) { it.amount })
+        return minOf(credited, Amounts.satAdd(Amounts.satSum(ns.filter { it.unspent }) { it.amount }, Amounts.satSum(ps) { it.derth }))
     }
 
     /**
