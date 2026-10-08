@@ -130,10 +130,11 @@ struct StakeSheet: View {
 
     private var stakeNote: String {
         let name = validator.map(moniker) ?? "the validator"
-        let when = roundEnds.map { " when today's round ends at \(StakeRoundModel.clock($0))" } ?? " when today's round ends"
-        // derth is not a coin: a stake note only its owner can merge, vote,
-        // lock or unstake. Nothing can send or sell it.
-        return "It joins \(name)\(when) and earns from the moment it lands. Staked ERTH stays private and locked to this wallet: it can't be sent or traded, only unstaked or moved."
+        let when = roundEnds.map { " at \(StakeRoundModel.clock($0))" } ?? " when today's round ends"
+        // Queued ERTH earns nothing until the round's end delegates it
+        // (rewards accrue only on what is delegated). derth is not a coin: a
+        // stake note only its owner can merge, vote, lock or unstake.
+        return "It starts earning when it joins \(name)\(when). Staked ERTH stays private and locked to this wallet: it can't be sent or traded, only unstaked or moved."
     }
 
     /// Worth saying before the tap rather than after: the stake stops earning

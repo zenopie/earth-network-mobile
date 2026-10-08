@@ -853,15 +853,23 @@ public final class AppModel {
         PrivacyWallet.derthValue(derth, rate: derthRates[validator] ?? 1)
     }
 
+    /// This wallet's Groundworks positions as stake: derth locked at a validator.
+    public var stakePositions: [StakeRound.Locked] {
+        positions.map { StakeRound.Locked(validator: $0.position.validator, derth: $0.position.derth, height: $0.position.createdHeight) }
+    }
+
+    /// Private stake per validator, notes and positions, at the live rates
+    /// (`after`: the block that ended the last round, for what is still waiting
+    /// to join). What the Stake tab shows; the Portfolio's rows add up to it.
+    public func stakeLines(after: UInt64? = nil) -> [StakeRound.Line] {
+        StakeRound.lines(notes: privacy?.stakeNotes ?? [], positions: stakePositions,
+                         rate: { [derthRates] in derthRates[$0] ?? 1 }, after: after)
+    }
+
     /// Private stake in ERTH (uerth): every derth note and position at its
     /// validator's live rate.
     public var privateStakeValue: UInt64 {
-        let notes = privateStake.reduce(UInt64(0)) {
-            PrivateMsgs.saturatingAdd($0, derthValue($1.value, validator: String($1.key.dropFirst("derth/".count))))
-        }
-        return PrivateMsgs.saturatingAdd(notes, positions.reduce(0) {
-            PrivateMsgs.saturatingAdd($0, derthValue($1.position.derth, validator: $1.position.validator))
-        })
+        stakeLines().reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.value) }
     }
 
     // MARK: - privacy
