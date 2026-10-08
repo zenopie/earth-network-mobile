@@ -22,6 +22,17 @@ public enum Explorer {
         public let types: [String]
         /// The first message's fields, which is all a row needs.
         public let first: [String: Any]
+        /// What the same lookup also says, for the detail sheet: the fee and
+        /// who paid it (a fee granter, when one did), the chain's log when it
+        /// failed, the memo and the gas.
+        public var fee: [ActivityCoin] = []
+        public var feeGranter = ""
+        public var feePayer = ""
+        public var code: Int64 = 0
+        public var rawLog = ""
+        public var memo = ""
+        public var gasUsed: Int64 = 0
+        public var gasWanted: Int64 = 0
 
         public var id: String { hash }
 
@@ -260,7 +271,18 @@ public extension Explorer {
             timestamp: response.timestamp.string(default: ""),
             // "/cosmos.bank.v1beta1.MsgSend" -> "MsgSend".
             types: messages.compactMap { $0["@type"].string?.components(separatedBy: ".").last },
-            first: (messages.first?.raw as? [String: Any]) ?? [:]
+            first: (messages.first?.raw as? [String: Any]) ?? [:],
+            fee: json.tx.auth_info.fee.amount.array.compactMap { c in
+                guard let d = c.denom.string, let a = Int64(c.amount.string ?? "") else { return nil }
+                return ActivityCoin(d, a)
+            },
+            feeGranter: json.tx.auth_info.fee.granter.string ?? "",
+            feePayer: json.tx.auth_info.fee.payer.string ?? "",
+            code: response.code.int64(default: 0),
+            rawLog: response.raw_log.string ?? "",
+            memo: json.tx.body.memo.string ?? "",
+            gasUsed: response.gas_used.int64(default: 0),
+            gasWanted: response.gas_wanted.int64(default: 0)
         )
     }
 }

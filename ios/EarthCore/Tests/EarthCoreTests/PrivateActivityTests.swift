@@ -41,6 +41,9 @@ final class PrivateActivityTests: XCTestCase {
         XCTAssertEqual(.confirmed, reg.status)
         XCTAssertNotNil(reg.hash)
         XCTAssertGreaterThan(reg.fee ?? 0, 0)
+        // Its fee came out of the gas grant's note.
+        XCTAssertTrue(reg.feeFromGrant)
+        XCTAssertEqual("Earth (gas grant)", ActivityEntry(private: reg).feePayer)
         XCTAssertTrue(reg.coins.contains(ActivityCoin("uanml", 1_000_000)))
         XCTAssertTrue(reg.coins.contains { $0.denom == "uerth" && $0.amount > 0 })
         XCTAssertEqual(2, rows.count)

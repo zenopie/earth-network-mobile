@@ -193,6 +193,9 @@ public struct PrivateActivityRow: Equatable, Sendable, Identifiable {
     public let timeExact: Bool
     public let status: Status
     public var failure: String?
+    /// The fee came out of a gas grant Earth minted to this wallet: a note
+    /// the tx spent was expected as one (`ActivityLog.expected`).
+    public var feeFromGrant = false
 
     /// A stable id: the tx's hash, else what the row is built from.
     public var id: String {
@@ -316,9 +319,11 @@ public enum PrivateActivity {
             let minted = notes.filter { t.receives.contains($0.note.rho.hex) }
             let ins = sum(t.ins + ofNotes(minted))
             let status: PrivateActivityRow.Status = t.failure != nil ? .failed : (t.height != nil ? .confirmed : .pending)
+            let spent = Set(t.spent)
+            let granted = s.notes.contains { spent.contains($0.nf.hex) && expected[$0.note.rho.hex] == .gasGrant }
             rows.append(PrivateActivityRow(kind: t.kind, coins: t.outs.map { ActivityCoin($0.denom, -$0.amount) } + ins, counterparty: t.counterparty,
                                            fee: t.fee, hash: t.hash, height: t.height, time: t.time ?? t.submittedAt, timeExact: true,
-                                           status: status, failure: t.failure))
+                                           status: status, failure: t.failure, feeFromGrant: granted))
         }
 
         func unrecorded(_ nf: Fr, _ tx: String?) -> Bool { !recordedNf.contains(nf.hex) && (tx.map { !recordedTx.contains($0.uppercased()) } ?? true) }
