@@ -270,6 +270,39 @@ struct EarthButton: View {
     }
 }
 
+/// A big capsule action: the Stake screen's two headline buttons and its
+/// sheets' one confirm. Taller and bolder than `EarthButton` because on those
+/// screens the button is most of what there is.
+struct EarthPillButton: View {
+    @Environment(\.earth) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+    let title: String
+    var role: EarthButton.Role = .primary
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .frame(maxWidth: .infinity, minHeight: 56)
+                .foregroundStyle(foreground)
+                .background(background, in: .capsule)
+                .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var foreground: Color {
+        guard isEnabled else { return theme.colors.buttonDisabledFg }
+        return role == .secondary ? theme.colors.secondaryButtonFg : theme.colors.brandButtonFg
+    }
+
+    private var background: Color {
+        guard isEnabled else { return theme.colors.buttonDisabledBg }
+        return role == .secondary ? theme.colors.secondaryButtonBg : theme.colors.brandButtonBg
+    }
+}
+
 /// A circular glyph on the accent tint — the leading element of every row in
 /// the app that names a thing rather than a number.
 struct EarthGlyph: View {

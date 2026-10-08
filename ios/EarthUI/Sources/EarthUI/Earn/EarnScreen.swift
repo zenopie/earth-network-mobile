@@ -16,15 +16,19 @@ import SwiftUI
 /// one selector apart, and the deposit sheet is a single presentation from a
 /// tab like every other.
 ///
-/// The stake half is StakeOverview: private stake only, a card per
-/// validator with its standing and its actions. There is no claim: private
-/// stake compounds into its validator's rate.
+/// The stake half is StakeOverview: private stake only, one number, a row
+/// per validator, and each validator's actions in its own sheet. There is no
+/// claim: private stake compounds into its validator's rate.
 struct EarnScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     @Environment(TxController.self) private var tx
 
     @State private var staking: StakeAction?
+    /// What a validator's sheet asked for, run once that sheet is gone: one
+    /// sheet cannot present over another closing, and a confirm drawn while
+    /// it is up would sit behind it.
+    @State private var afterDismiss: (() -> Void)?
     @State private var mode = Mode.stake
     @State private var round = StakeRoundModel()
 
@@ -57,17 +61,30 @@ struct EarnScreen: View {
         }
         .background(theme.colors.bgPrimary)
         .scrollContentBackground(.hidden)
-        .sheet(item: $staking) { action in
+        .sheet(item: $staking, onDismiss: {
+            let next = afterDismiss
+            afterDismiss = nil
+            next?()
+        }) { action in
             switch action {
             case .move(let from): MoveStakeSheet(source: from).earthThemed()
-            case .stake(let v): StakeSheet(unstaking: false, validator: v, roundEnds: round.epoch?.endTime).earthThemed()
-            case .unstake(let v): StakeSheet(unstaking: true, validator: v, unbondingSeconds: round.unbondingSeconds).earthThemed()
+            case .stake(let v): StakeSheet(unstaking: false, validator: v).earthThemed()
+            case .unstake(let v): StakeSheet(unstaking: true, validator: v).earthThemed()
+            case .validator(let v):
+                ValidatorStakeSheet(validator: v, round: round, open: { next in
+                    afterDismiss = { staking = next }
+                    staking = nil
+                }, merge: { op in
+                    afterDismiss = { merge(op) }
+                    staking = nil
+                })
+                .earthThemed()
             }
         }
     }
 
     private var stakeContent: some View {
-        StakeOverview(round: round, open: { staking = $0 }, merge: merge)
+        StakeOverview(round: round, open: { staking = $0 })
     }
 
     private func moniker(_ operatorAddress: String) -> String {
