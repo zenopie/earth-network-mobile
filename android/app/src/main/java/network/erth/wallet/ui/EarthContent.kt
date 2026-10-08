@@ -281,25 +281,32 @@ internal fun EarthContent(
             onMove = { stakingFor = it; staking = StakeIntent.Move },
             canStake = privacyState != null,
             balancesVisible = balancesVisible,
-            privateStake = privacyState?.stake.orEmpty().map { h ->
-                val denom = "derth/${h.validator}"
-                val joining = earnState?.roundStartHeight?.let { e ->
-                    network.erth.wallet.privacy.StakeRound.joining(privacyState?.stakeNotes.orEmpty(), denom, e)
-                }
+            // Notes and Groundworks positions alike: a position is stake locked
+            // at its validator, earning the same (StakeRound.lines).
+            privateStake = network.erth.wallet.privacy.StakeRound.lines(
+                notes = privacyState?.stakeNotes.orEmpty(),
+                positions = privacyState?.positions.orEmpty().map {
+                    network.erth.wallet.privacy.StakeRound.Locked(it.position.validator, it.position.derth, it.position.createdHeight)
+                },
+                rate = { v -> earnState?.derthRates?.get(v) ?: java.math.BigDecimal.ONE },
+                after = earnState?.roundStartHeight,
+            ).map { line ->
+                val h = privacyState?.stake?.firstOrNull { it.validator == line.validator }
                 PrivateStakeRow(
-                    validator = h.validator,
-                    moniker = monikerOf(h.validator),
-                    derth = h.derth,
-                    valueUerth = derthValue(h.derth, h.validator),
-                    free = h.free,
-                    locked = h.locked,
-                    lockedUerth = derthValue(h.locked, h.validator),
-                    lockedUntil = h.lockedUntil,
-                    notes = h.notes,
-                    mergeable = h.mergeable,
-                    joiningUerth = joining?.let { derthValue(it, h.validator) },
-                    standing = earnState?.all?.firstOrNull { it.validator == h.validator }?.let { network.erth.wallet.privacy.StakeRound.Standing.of(it) },
-                    commission = earnState?.commissionOf(h.validator) ?: 0.0,
+                    validator = line.validator,
+                    moniker = monikerOf(line.validator),
+                    derth = line.derth,
+                    valueUerth = line.value,
+                    free = h?.free ?: 0L,
+                    locked = h?.locked ?: 0L,
+                    lockedUerth = derthValue(h?.locked ?: 0L, line.validator),
+                    lockedUntil = h?.lockedUntil,
+                    notes = h?.notes ?: 0,
+                    mergeable = h?.mergeable ?: false,
+                    groundworksUerth = line.lockedValue,
+                    joiningUerth = line.joiningValue,
+                    standing = earnState?.all?.firstOrNull { it.validator == line.validator }?.let { network.erth.wallet.privacy.StakeRound.Standing.of(it) },
+                    commission = earnState?.commissionOf(line.validator) ?: 0.0,
                 )
             },
             unstaking = state?.unstaking.orEmpty().map { u ->
@@ -1092,8 +1099,10 @@ internal fun EarthContent(
             // derth is not a coin: a stake note only its owner can merge,
             // vote, lock or unstake. Nothing can send or sell it.
             note = if (stake) {
-                val ends = earnState?.roundEndsAt?.let { " when today's round ends at ${network.erth.wallet.ui.earn.clock(it)}" } ?: " when today's round ends"
-                "It joins its validator$ends and earns from the moment it lands. Staked ERTH stays private and locked to this wallet: it can't be sent or traded, only unstaked or moved."
+                // Queued ERTH earns nothing until the round's end delegates it
+                // (rewards accrue only on what is delegated).
+                val ends = earnState?.roundEndsAt?.let { " at ${network.erth.wallet.ui.earn.clock(it)}" } ?: " when today's round ends"
+                "It starts earning when it joins its validator$ends. Staked ERTH stays private and locked to this wallet: it can't be sent or traded, only unstaked or moved."
             } else {
                 val days = earnState?.unbondingSeconds?.let { " (about ${maxOf(1, it / 86_400)} days)" } ?: ""
                 "It stops earning now and is paid to your private ERTH automatically after the unbonding period$days. Nothing more to do or pay." +

@@ -70,11 +70,13 @@ import network.erth.wallet.ui.theme.EarthTheme
  * The daily ANML claim is on the wallet screen's action row, not here:
  * claiming ANML is a one-tap action on a balance, not a position to manage.
  *
- * The stake half is private stake only: a summary (worth, earning, the daily
- * round), then a card per validator with where its stake stands and Add /
- * Move / Unstake, then what is on its way back. There is no claim: private
- * stake compounds into its validator's rate. A validator operator's public
- * self-bond is not shown, and Groundworks positions live in Govern.
+ * The stake half is private stake only: a summary (worth, earning, and only
+ * while some of it waits to join its validator, how much and when), then a
+ * card per validator with where its stake stands and Add / Move / Unstake,
+ * then what is on its way back. There is no claim: private stake compounds
+ * into its validator's rate. Stake notes and Groundworks positions both
+ * count (a position is stake locked at its validator, earning the same); a
+ * validator operator's public self-bond is not shown.
  */
 @Composable
 fun EarnScreen(
@@ -165,7 +167,7 @@ fun EarnScreen(
         Spacer(Modifier.height(dimens.space8))
         if (privateStake.isEmpty() && unstaking.isEmpty()) {
             Text(
-                text = "Nothing staked yet. Stake private ERTH with a validator: it earns from the moment it lands, and no one can see it's yours.",
+                text = "Nothing staked yet. Stake private ERTH with a validator: rewards compound into it, and no one can see it's yours.",
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
                 modifier = Modifier.padding(vertical = dimens.space16),
@@ -205,7 +207,9 @@ data class PrivateStakeRow(
     val lockedUntil: Long?,
     val notes: Int,
     val mergeable: Boolean,
-    /** The part still queued for its validator, in ERTH; null when unknown (StakeRound.joining). */
+    /** The part locked in Groundworks positions, in ERTH. */
+    val groundworksUerth: Long = 0,
+    /** The part still waiting to join its validator, in ERTH; null when unknown (StakeRound.joining). */
     val joiningUerth: Long? = null,
     /** Its validator's standing; null when the list lacks it. */
     val standing: StakeRound.Standing? = null,
@@ -231,14 +235,19 @@ private class StakeView(val state: EarnUiState?, val now: Long, val visible: Boo
         if (p.standing?.earns == false) null else state?.let { StakingApr.forValidator(it.totalBondedUerth, p.commission) }
 
     val endsText: String?
-        get() = state?.roundEndsAt?.let { "when today's round ends at ${clock(it)} (in ${StakeRound.countdown(it - now)})" }
+        get() = state?.roundEndsAt?.let { "at ${clock(it)} (in ${StakeRound.countdown(it - now)})" }
 }
+
+/** What earns now: all of it but what is waiting to join (rewards accrue only on what is delegated). */
+private val PrivateStakeRow.earningUerth: Long get() = valueUerth - minOf(valueUerth, joiningUerth ?: 0L)
 
 @Composable
 private fun StakeSummary(view: StakeView, rows: List<PrivateStakeRow>) {
     val dimens = EarthTheme.dimens
     val total = Amounts.satSum(rows) { it.valueUerth }
-    val daily = rows.sumOf { it.valueUerth.toDouble() * (view.apr(it) ?: 0.0) / 365 }
+    val daily = rows.sumOf { it.earningUerth.toDouble() * (view.apr(it) ?: 0.0) / 365 }
+    val waiting = Amounts.satSum(rows) { it.joiningUerth ?: 0L }
+    val joinsAt = view.state?.roundEndsAt?.let { clock(it) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -269,8 +278,9 @@ private fun StakeSummary(view: StakeView, rows: List<PrivateStakeRow>) {
         Spacer(Modifier.height(2.dp))
         Text(
             text = when {
-                total == 0L -> "Earns from the moment it lands. Nothing to claim."
+                total == 0L -> "Rewards compound into it. Nothing to claim."
                 daily > 0 -> "Earning about ${dailyText(daily, view.visible)} ERTH a day"
+                waiting >= total -> joinsAt?.let { "Starts earning at $it" } ?: "Starts earning when it joins its validator"
                 else -> "Not earning now: see below"
             },
             style = EarthTypography.textSm,
@@ -281,11 +291,13 @@ private fun StakeSummary(view: StakeView, rows: List<PrivateStakeRow>) {
         EarthHorizontalDivider()
         Spacer(Modifier.height(dimens.space12))
 
-        view.state?.roundEndsAt?.let { end ->
-            InfoRow(
-                "Daily round",
-                "Ends ${clock(end)} · in ${StakeRound.countdown(end - view.now)}",
-                "New stake joins its validator and unstaking starts when each round ends.",
+        if (waiting > 0) {
+            // Only while something waits: nothing about rounds otherwise.
+            val joins = if (rows.count { (it.joiningUerth ?: 0L) > 0 } > 1) "joins its validators" else "joins its validator"
+            Text(
+                text = "${view.amount(waiting)} ERTH waiting to start earning: $joins ${joinsAt?.let { "at $it" } ?: "when today's round ends"}",
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textPrimary,
             )
             Spacer(Modifier.height(dimens.space12))
         }
@@ -417,14 +429,21 @@ private fun StakeCard(
             reason != null -> StatusLine(Pill.FAILED, "Not earning", "$reason Move it to an active validator to earn again.")
             joining > 0 && joining >= p.valueUerth -> StatusLine(
                 Pill.PENDING,
-                view.state?.roundEndsAt?.let { "Joins at ${clock(it)}" } ?: "Joins soon",
-                "Staked. It joins ${p.moniker} $ends, and earns the validator's rate from now on.",
+                view.state?.roundEndsAt?.let { "Starts earning at ${clock(it)}" } ?: "Waiting to join",
+                "Waiting to start earning. It joins ${p.moniker} $ends; from then rewards compound into it, nothing to claim.",
             )
             else -> StatusLine(
                 Pill.SUCCESS,
                 "Earning",
                 "Grows with every block: rewards compound into it, nothing to claim." +
-                    (if (joining > 0) " ${view.amount(joining)} ERTH more joins $ends." else ""),
+                    (if (joining > 0) " ${view.amount(joining)} ERTH more is waiting to start earning: it joins $ends." else ""),
+            )
+        }
+        if (p.groundworksUerth > 0) {
+            StatusLine(
+                Pill.NEUTRAL,
+                "In Groundworks",
+                "${view.amount(p.groundworksUerth)} ERTH is locked in a Groundworks position: still staked here and earning the same. Unlock it in Govern to move or unstake it.",
             )
         }
         if (p.locked > 0) {
