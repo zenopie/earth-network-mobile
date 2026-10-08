@@ -213,7 +213,7 @@ struct ActivityDetailSheet: View {
             .padding(.horizontal, theme.space.gutter)
         }
         .background(theme.colors.bgPrimary)
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
 

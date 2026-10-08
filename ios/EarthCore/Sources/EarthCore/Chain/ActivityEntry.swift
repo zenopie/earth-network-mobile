@@ -120,7 +120,7 @@ public struct ActivityEntry: Identifiable, Equatable, Sendable {
         id = row.id
         kind = row.kind
         title = Self.title(row.kind, counterparty: row.counterparty)
-        typeName = row.kind.label
+        typeName = Self.typeName(row.kind)
         glyph = Self.glyph(row.kind)
         coins = row.coins
         counterparty = row.counterparty
@@ -171,6 +171,39 @@ public struct ActivityEntry: Identifiable, Equatable, Sendable {
         case .fromEarth: "From Earth"
         case .received: "Received"
         case .inferred: "Private transaction"
+        }
+    }
+
+    /// The detail sheet's Type: what it was, as a noun (the title says what happened).
+    static func typeName(_ k: PrivateActivityKind) -> String {
+        switch k {
+        case .register: "Registration"
+        case .switchIdentity: "Identity switch"
+        case .move: "Move to a new identity"
+        case .shield: "Shield"
+        case .unshield: "Unshield"
+        case .send: "Send"
+        case .merge: "Note merge"
+        case .swap: "Swap"
+        case .addLiquidity: "Add liquidity"
+        case .removeLiquidity: "Remove liquidity"
+        case .stake: "Stake"
+        case .unstake: "Unstake"
+        case .redelegate: "Redelegation"
+        case .restake: "Stake merge"
+        case .vote: "Vote"
+        case .caretaker: "Caretaker vote"
+        case .position: "Groundworks position"
+        case .claimAnml: "Daily ANML claim"
+        case .handle: "Handle"
+        case .gasGrant: "Gas grant"
+        case .unbondingPayout: "Unbonding payout"
+        case .lpPayout: "Liquidity payout"
+        case .registrationReward: "Registration reward"
+        case .referral: "Referral reward"
+        case .fromEarth: "Note from Earth"
+        case .received: "Received note"
+        case .inferred: "Private transaction (restored wallet)"
         }
     }
 

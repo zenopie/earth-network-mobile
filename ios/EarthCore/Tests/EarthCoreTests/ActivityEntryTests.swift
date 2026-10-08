@@ -21,6 +21,7 @@ final class ActivityEntryTests: XCTestCase {
         XCTAssertTrue(e.isPrivate)
         let d = e.details(calendar: utc)
         XCTAssertEqual(["Type", "Date", "You paid", "You got", "Network fee", "Fee paid by", "Block", "Privacy", "Transaction"], d.map(\.label))
+        XCTAssertEqual("Swap", d[0].value)
         XCTAssertEqual("−12.5 ERTH", d[2].value)
         XCTAssertEqual("+3.25 ANML", d[3].value)
         XCTAssertEqual("0.0025 ERTH", d[4].value)
