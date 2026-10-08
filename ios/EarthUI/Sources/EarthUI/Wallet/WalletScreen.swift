@@ -341,6 +341,8 @@ struct HomePanel: View {
     let panel: WalletScreen.Panel
     /// A coin row was tapped: its denom.
     let onCoin: (String) -> Void
+    /// The activity row whose detail sheet is open.
+    @State private var opened: ActivityEntry?
 
     var body: some View {
         ScrollView {
@@ -357,16 +359,7 @@ struct HomePanel: View {
                 if panel == .portfolio {
                     portfolio
                 } else if let activity = model.activity {
-                    if activity.isEmpty {
-                        Text("Nothing yet. Transactions appear here once they are confirmed.")
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textTertiary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 16)
-                    } else {
-                        ForEach(activity) { ActivityItem(row: $0) }
-                    }
+                    ActivityList(entries: activity) { opened = $0 }
                 } else {
                     // Placeholder rows rather than a spinner: the list keeps
                     // its shape, so nothing jumps when the real rows land.
@@ -380,6 +373,7 @@ struct HomePanel: View {
         }
         .refreshable { await model.refresh() }
         .scrollContentBackground(.hidden)
+        .sheet(item: $opened) { ActivityDetailSheet(entry: $0).earthThemed() }
     }
 
     /// Every coin, each with its private and public amount (a tap opens its
@@ -470,53 +464,12 @@ struct HomePanel: View {
     }
 }
 
-struct ActivityItem: View {
-    @Environment(\.earth) private var theme
-    let row: ActivityRow
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Text(row.kind.glyph)
-                .font(EarthType.bodySmall)
-                .foregroundStyle(row.kind == .sent ? theme.colors.textPrimary : theme.colors.accentInk)
-                .frame(width: 32, height: 32)
-                .background(
-                    row.kind == .sent ? theme.colors.bgSecondary : theme.colors.accentTint,
-                    in: .rect(cornerRadius: 12)
-                )
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    // The private/public mark the coin sheets use: lock for
-                    // what the sealed store holds, globe for a public tx.
-                    Image(systemName: row.isPrivate ? "lock.fill" : "globe")
-                        .font(.caption2)
-                        .foregroundStyle(theme.colors.textTertiary)
-                        .accessibilityLabel(row.isPrivate ? "Private" : "Public")
-                    Text(row.label + (row.failed ? " · failed" : ""))
-                        .font(EarthType.body)
-                        .foregroundStyle(row.failed ? theme.colors.textError : theme.colors.textPrimary)
-                }
-                Text([row.counterparty, row.timestamp].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(EarthType.bodySmall)
-                    .foregroundStyle(theme.colors.textTertiary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            Text(row.amount)
-                .font(EarthType.amount)
-                .foregroundStyle(theme.colors.textPrimary)
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
-    }
-}
-
 struct ActivityPlaceholder: View {
     @Environment(\.earth) private var theme
 
     var body: some View {
         HStack(spacing: 12) {
-            Circle().fill(theme.colors.bgTertiary).frame(width: 32, height: 32)
+            Circle().fill(theme.colors.bgTertiary).frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 6) {
                 RoundedRectangle(cornerRadius: 4).fill(theme.colors.bgTertiary)
                     .frame(width: 96, height: 14)

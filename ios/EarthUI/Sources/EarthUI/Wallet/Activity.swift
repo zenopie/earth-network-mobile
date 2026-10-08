@@ -1,232 +1,264 @@
 import EarthCore
-import Foundation
+import SwiftUI
 
-/// A chain transaction, resolved into a row a person can read.
-///
-/// Ports `ui/wallet/ActivityMapper.kt`. Anything unrecognised falls through
-/// to the raw message name rather than being dropped — a wallet that silently
-/// hides transactions it does not understand is worse than one that shows an
-/// unfamiliar word. The second can be searched for; the first looks like funds
-/// vanished.
-struct ActivityRow: Identifiable, Equatable {
-    let txHash: String
-    let kind: Kind
-    let counterparty: String
-    let amount: String
-    let timestamp: String
-    let failed: Bool
-    /// Built from the sealed store (lock), or a public tx looked up by hash (globe).
-    var isPrivate = false
-    /// What the row calls itself, when the kind's own word is not enough.
-    var title: String?
-    /// Unix seconds, for one list newest first (0: unknown).
-    var sortTime: Int64 = 0
-    /// The tx hash, when there is one (a received note has none).
-    var hash: String?
-    var pending = false
+/// The activity list: day headers, then one quiet row per tx (its mark, a
+/// short title, who or when, the amount). Everything else is in the row's
+/// detail sheet. The data is `AppModel.activity` (`ActivityEntry`).
+struct ActivityList: View {
+    @Environment(\.earth) private var theme
+    let entries: [ActivityEntry]
+    var limit: Int?
+    let open: (ActivityEntry) -> Void
 
-    var id: String { txHash }
-
-    var label: String { title ?? kind.label }
-
-    enum Kind: Equatable {
-        case sent, received, staked, unstaked, claimed, claimedAnml
-        case registered, swapped, allocated
-
-        var label: String {
-            switch self {
-            case .sent: "Sent"
-            case .received: "Received"
-            case .staked: "Staked"
-            case .unstaked: "Unstaked"
-            case .claimed: "Claimed rewards"
-            case .claimedAnml: "Claimed ANML"
-            case .registered: "Registered"
-            case .swapped: "Swapped"
-            case .allocated: "Allocated"
-            }
-        }
-
-        var glyph: String {
-            switch self {
-            case .sent: "↑"
-            case .received: "↓"
-            case .staked: "▲"
-            case .unstaked: "▼"
-            case .claimed, .claimedAnml: "✦"
-            case .registered: "✓"
-            case .swapped: "⇄"
-            case .allocated: "◴"
-            }
-        }
-    }
-
-    init?(tx: Explorer.Tx, self address: String) {
-        let type = tx.types.first ?? ""
-        let message = tx.first
-
-        kind = switch type {
-        case "MsgSend":
-            (message["from_address"] as? String) == address ? .sent : .received
-        case "MsgDelegate": .staked
-        case "MsgUndelegate": .unstaked
-        case "MsgBeginRedelegate": .staked
-        case "MsgWithdrawDelegatorReward": .claimed
-        case "MsgRegister": .registered
-        // Distinct from registration: you register once and claim every day,
-        // so folding them together labels the whole history "Registered".
-        case "MsgClaimAnml": .claimedAnml
-        case "MsgSwap": .swapped
-        case "MsgSetAllocations", "MsgSetAllocation": .allocated
-        default: .sent
-        }
-
-        let named: String = switch kind {
-        case .sent: message["to_address"] as? String ?? ""
-        case .received: message["from_address"] as? String ?? ""
-        case .staked, .unstaked, .claimed: message["validator_address"] as? String ?? ""
-        default: ""
-        }
-
-        txHash = tx.hash
-        counterparty = named.isEmpty
-            ? ActivityRow.readable(type.replacingOccurrences(of: "Msg", with: ""))
-            : ActivityRow.abbreviate(named)
-        amount = ActivityRow.amountLabel(message, kind: kind)
-        timestamp = ActivityRow.relative(tx.timestamp)
-        failed = !tx.success
-        sortTime = ActivityRow.unix(tx.timestamp) ?? 0
-        hash = tx.hash
-    }
-
-    /// A private row (`PrivateActivity`, built from the sealed store alone)
-    /// in the list's terms. Its time is the wallet's own when it sent the tx,
-    /// or one estimated from the block height ("~"); a received note names
-    /// its block. As Android's PrivateActivityRow.toActivityRow.
-    init(private row: PrivateActivityRow, now: Int64 = Int64(Date().timeIntervalSince1970)) {
-        kind = switch row.kind {
-        case .send, .unshield, .move, .merge, .inferred: .sent
-        case .stake, .redelegate, .restake, .position: .staked
-        case .unstake: .unstaked
-        case .claimAnml: .claimedAnml
-        case .register, .switchIdentity, .handle: .registered
-        case .swap, .addLiquidity, .removeLiquidity: .swapped
-        case .vote, .caretaker: .allocated
-        default: .received
-        }
-        txHash = row.id
-        let party = row.counterparty.split(separator: " ").map { w in
-            w.hasPrefix("earth") ? ActivityRow.abbreviate(String(w)) : String(w)
-        }.joined(separator: " ")
-        counterparty = party.isEmpty && !row.kind.sent ? (row.height.map { "block \($0.formatted())" } ?? "") : party
-        amount = ActivityRow.coinsLabel(row.coins)
-        let when = row.time.map { (row.timeExact ? "" : "~") + ActivityRow.relative(unix: $0, now: now) } ?? ""
-        timestamp = row.status == .pending ? (["pending", when].filter { !$0.isEmpty }.joined(separator: " · ")) : when
-        failed = row.status == .failed
-        isPrivate = true
-        title = row.kind.label
-        sortTime = row.time ?? 0
-        hash = row.hash
-        pending = row.status == .pending
-    }
-
-    /// "-1.5 ERTH, +2 ANML": every coin a row moved, signed.
-    static func coinsLabel(_ coins: [ActivityCoin]) -> String {
-        coins.map { c in
-            let sign = c.amount < 0 ? "-" : "+"
-            let v = c.amount == Int64.min ? Int64.max : abs(c.amount)
-            return "\(sign)\(Figures.decimal(Double(v) / 1_000_000)) \(PrivateActivity.symbol(c.denom))"
-        }.joined(separator: ", ")
-    }
-
-    /// Public rows (timestamps from the chain) and private rows (the sealed
-    /// store's), one list, newest first. A tx in both is shown once, as its
-    /// private row (the richer one).
-    static func merge(public pub: [ActivityRow], private priv: [ActivityRow]) -> [ActivityRow] {
-        let hashes = Set(priv.compactMap { $0.hash?.uppercased() })
-        return (pub.filter { !hashes.contains($0.hash?.uppercased() ?? "") } + priv).sorted { $0.sortTime > $1.sortTime }
-    }
-
-    /// "earth1jtc…aar6" — enough to recognise an address you know, short
-    /// enough for a row.
-    static func abbreviate(_ text: String) -> String {
-        text.count <= 16 ? text : "\(text.prefix(10))…\(text.suffix(4))"
-    }
-
-    /// "SetAllocations" -> "Set allocations".
-    static func readable(_ text: String) -> String {
-        var spaced = ""
-        for character in text {
-            if character.isUppercase, !spaced.isEmpty { spaced.append(" ") }
-            spaced.append(character)
-        }
-        guard let first = spaced.first else { return spaced }
-        return String(first).uppercased() + spaced.dropFirst().lowercased()
-    }
-
-    /// The signed amount, from the message's own coin field.
-    ///
-    /// The sign is which way the balance moved, not which way the transaction
-    /// went: staking and sending both leave the spendable balance, so both are
-    /// negative, while unstaking and claiming return to it. Anything that does
-    /// not move the balance in a way this message can state gets no sign at
-    /// all rather than a guessed one.
-    static func amountLabel(_ message: [String: Any], kind: Kind) -> String {
-        let coin: [String: Any]?
-        if let list = message["amount"] as? [[String: Any]] {
-            coin = list.first
+    var body: some View {
+        if entries.isEmpty {
+            Text("No activity yet")
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textTertiary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, theme.space.x32)
         } else {
-            coin = message["amount"] as? [String: Any]
+            // Re-drawn each minute so "Today" turns into "Yesterday" at midnight.
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                let shown = limit.map { Array(entries.prefix($0)) } ?? entries
+                ForEach(ActivityEntry.days(shown, now: Int64(context.date.timeIntervalSince1970)), id: \.title) { day in
+                    Text(day.title)
+                        .font(EarthType.bodySmall).fontWeight(.semibold)
+                        .foregroundStyle(theme.colors.textTertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 24)
+                        .padding(.top, theme.space.x16)
+                        .padding(.bottom, theme.space.x4)
+                    ForEach(day.entries) { e in ActivityItem(entry: e) { open(e) } }
+                }
+            }
         }
-        guard let coin,
-              let raw = coin["amount"] as? String,
-              let units = Int64(raw)
-        else { return "" }
+    }
+}
 
-        let denom = (coin["denom"] as? String ?? "")
-        let symbol = denom.hasPrefix("u") ? String(denom.dropFirst()).uppercased() : denom.uppercased()
+/// One tx: mark, title (a tiny lock when private), the counterparty or the
+/// time, and the amount. Pending and failed say so in place of the time.
+struct ActivityItem: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+    let entry: ActivityEntry
+    let action: () -> Void
 
-        let sign = switch kind {
-        case .sent, .staked: "-"
-        case .received, .unstaked, .claimed: "+"
-        default: ""
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: theme.space.x12) {
+                ActivityMark(entry: entry, size: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text(entry.title)
+                            .font(EarthType.body).fontWeight(.semibold)
+                            .foregroundStyle(theme.colors.textPrimary)
+                            .lineLimit(1)
+                        if entry.isPrivate {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(theme.colors.textTertiary)
+                                .accessibilityLabel("Private")
+                        }
+                    }
+                    second
+                }
+                .layoutPriority(1)
+                Spacer(minLength: theme.space.x8)
+                if let c = entry.primary {
+                    ActivityAmount(coin: c, status: entry.status, size: 17, visible: model.balancesVisible)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, theme.space.x12)
+            .contentShape(.rect)
         }
-        let whole = Double(units) / 1_000_000
-        return "\(sign)\(Figures.decimal(whole)) \(symbol)"
+        .buttonStyle(.plain)
     }
 
-    /// Relative for the recent past, absolute beyond a week.
-    ///
-    /// "3 days ago" is easier to place than a date while the memory is fresh,
-    /// and useless once it is not — nobody counts back 43 days.
-    static func relative(_ iso: String) -> String {
-        guard let t = unix(iso) else { return iso }
-        return relative(unix: t, now: Int64(Date().timeIntervalSince1970))
+    @ViewBuilder private var second: some View {
+        switch entry.status {
+        case .pending:
+            Text("Pending").font(EarthType.bodySmall).foregroundStyle(theme.colors.warnInk)
+        case .failed:
+            Text("Failed").font(EarthType.bodySmall).foregroundStyle(theme.colors.textError)
+        case .completed:
+            Text(entry.listParty(name: model.moniker(of:)) ?? ActivityEntry.clock(entry.time, exact: entry.timeExact))
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textTertiary)
+                .lineLimit(1)
+        }
+    }
+}
+
+/// "+3.25 ANML": the figure in weight, the symbol small. Green when it came
+/// in; grey while pending or when it failed (nothing moved).
+struct ActivityAmount: View {
+    @Environment(\.earth) private var theme
+    let coin: ActivityCoin
+    let status: ActivityEntry.Status
+    let size: CGFloat
+    let visible: Bool
+
+    var body: some View {
+        let ink = status != .completed ? theme.colors.textTertiary : (coin.amount > 0 ? theme.colors.accentInk : theme.colors.textPrimary)
+        HStack(alignment: .firstTextBaseline, spacing: size > 30 ? 6 : 3) {
+            Text(visible ? (coin.amount > 0 ? "+" : "−") + ActivityEntry.figure(coin.amount) : "••••")
+                .font(.system(size: size, weight: .semibold).monospacedDigit())
+                .foregroundStyle(ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            Text(PrivateActivity.symbol(coin.denom))
+                .font(.system(size: size > 30 ? 17 : 12, weight: .medium))
+                .foregroundStyle(theme.colors.textTertiary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The coin's logo when the row is about moving a coin, else a glyph for what was done.
+struct ActivityMark: View {
+    @Environment(\.earth) private var theme
+    let entry: ActivityEntry
+    var size: CGFloat = 44
+
+    var body: some View {
+        if entry.showsCoin, let c = entry.primary {
+            CoinMark(token: Token.named(c.denom) ?? Token.unknown(denom: c.denom), size: size)
+                .opacity(entry.status == .failed ? 0.5 : 1)
+        } else {
+            Image(systemName: symbol)
+                .font(.system(size: size * 0.36, weight: .semibold))
+                .foregroundStyle(entry.status == .failed ? theme.colors.textTertiary : theme.colors.accentInk)
+                .frame(width: size, height: size)
+                .background(entry.status == .failed ? theme.colors.bgTertiary : theme.colors.accentTint, in: .circle)
+                .accessibilityHidden(true)
+        }
     }
 
-    /// An RFC 3339 chain timestamp to unix seconds; nil when it does not parse.
-    static func unix(_ iso: String) -> Int64? {
-        let trimmed = iso.components(separatedBy: ".").first?
-            .replacingOccurrences(of: "Z", with: "") ?? iso
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        return formatter.date(from: trimmed).map { Int64($0.timeIntervalSince1970) }
+    private var symbol: String {
+        switch entry.glyph {
+        case .send: "arrow.up"
+        case .receive: "arrow.down"
+        case .swap: "arrow.left.arrow.right"
+        case .stake: "chart.line.uptrend.xyaxis"
+        case .register: "person.crop.circle.badge.checkmark"
+        case .vote: "checkmark"
+        case .handle: "at"
+        case .other: "ellipsis"
+        }
+    }
+}
+
+/// A tx in full: the big amount, the title, its status, then every detail
+/// the wallet knows as label and value. A public tx can be opened in the
+/// explorer; a private one cannot (opening it would tell the explorer which
+/// tx is this wallet's, the lookup the list never makes), but its hash can
+/// still be copied.
+struct ActivityDetailSheet: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+    @Environment(\.openURL) private var openURL
+    let entry: ActivityEntry
+    @State private var copied: String?
+
+    /// Live from the model, so a pending tx that lands while open turns completed.
+    private var live: ActivityEntry { model.activity?.first { $0.id == entry.id } ?? entry }
+
+    static let explorer = "https://explorer.erth.network/tx/"
+
+    var body: some View {
+        let e = live
+        ScrollView {
+            VStack(spacing: 0) {
+                Spacer().frame(height: theme.space.x32)
+                ActivityMark(entry: e, size: 56)
+                Spacer().frame(height: theme.space.x16)
+                if let c = e.primary {
+                    ActivityAmount(coin: c, status: e.status, size: 44, visible: model.balancesVisible)
+                    Spacer().frame(height: theme.space.x8)
+                }
+                HStack(spacing: 6) {
+                    Text(e.title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(theme.colors.textPrimary)
+                    if e.isPrivate {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(theme.colors.textTertiary)
+                            .accessibilityLabel("Private")
+                    }
+                }
+                Spacer().frame(height: theme.space.x12)
+                pill(e)
+
+                Spacer().frame(height: theme.space.x24)
+                VStack(spacing: 0) {
+                    let lines = e.details(name: model.moniker(of:))
+                    ForEach(Array(lines.enumerated()), id: \.offset) { i, d in
+                        line(d)
+                        if i < lines.count - 1 { EarthDivider().padding(.leading, theme.space.x16) }
+                    }
+                }
+                .background(theme.colors.bgSecondary, in: .rect(cornerRadius: 20))
+
+                if !e.isPrivate, let hash = e.hash {
+                    Spacer().frame(height: theme.space.x24)
+                    EarthPillButton(title: "View in explorer", role: .secondary) {
+                        URL(string: Self.explorer + hash).map { openURL($0) }
+                    }
+                }
+                Spacer().frame(height: theme.space.x32)
+            }
+            .padding(.horizontal, theme.space.gutter)
+        }
+        .background(theme.colors.bgPrimary)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 
-    static func relative(unix: Int64, now: Int64) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(unix))
-        let minutes = Int((now - unix) / 60)
-        switch minutes {
-        case ..<1: return "just now"
-        case ..<60: return "\(minutes)m ago"
-        case ..<1440: return "\(minutes / 60)h ago"
-        case ..<10080: return "\(minutes / 1440)d ago"
-        default:
-            let absolute = DateFormatter()
-            absolute.dateFormat = "d MMM yyyy"
-            return absolute.string(from: date)
+    private func pill(_ e: ActivityEntry) -> some View {
+        switch e.status {
+        case .completed: EarthStatusPill(status: .success, text: "Completed")
+        case .pending: EarthStatusPill(status: .pending, text: "Pending")
+        case .failed: EarthStatusPill(status: .failed, text: "Failed · " + (e.shortFailure ?? "Refused by the chain"))
+        }
+    }
+
+    private static let amounts: Set<String> = ["Sent", "Received", "You paid", "You got"]
+
+    @ViewBuilder
+    private func line(_ d: ActivityEntry.Detail) -> some View {
+        let value = !model.balancesVisible && Self.amounts.contains(d.label) ? "••••" : d.value
+        let row = HStack(alignment: .firstTextBaseline, spacing: theme.space.x12) {
+            Text(d.label)
+                .font(EarthType.body)
+                .foregroundStyle(theme.colors.textTertiary)
+            Spacer(minLength: theme.space.x12)
+            Text(copied == d.label ? "Copied" : value)
+                .font(d.label == "Error" ? EarthType.bodySmall : EarthType.amount)
+                .foregroundStyle(copied == d.label ? theme.colors.accentInk : theme.colors.textPrimary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(d.label == "Error" ? 4 : nil)
+            if d.copy != nil {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
+        }
+        .padding(.horizontal, theme.space.x16)
+        .padding(.vertical, 14)
+        .contentShape(.rect)
+        if let copy = d.copy {
+            Button {
+                Clipboard.copy(copy)
+                copied = d.label
+                Task { try? await Task.sleep(nanoseconds: 1_500_000_000); if copied == d.label { copied = nil } }
+            } label: { row }
+            .buttonStyle(.plain)
+            .accessibilityHint("Copies it")
+        } else {
+            row
         }
     }
 }

@@ -262,20 +262,13 @@ struct ActivityScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @State private var opened: ActivityEntry?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    if let activity = model.activity, !activity.isEmpty {
-                        ForEach(activity) { ActivityItem(row: $0) }
-                    } else {
-                        Text("Nothing yet. Transactions appear here once they are confirmed.")
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textTertiary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(theme.space.gutter)
-                    }
+                    ActivityList(entries: model.activity ?? []) { opened = $0 }
                 }
             }
             .refreshable { await model.refresh() }
@@ -284,6 +277,7 @@ struct ActivityScreen: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
+            .sheet(item: $opened) { ActivityDetailSheet(entry: $0).earthThemed() }
         }
     }
 }

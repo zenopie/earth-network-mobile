@@ -117,10 +117,10 @@ public final class AppModel {
     /// The distinction matters: a zero that is really "not loaded yet" is the
     /// one wrong answer a wallet must never give, so the list shows
     /// placeholders while this is nil rather than "nothing yet".
-    private(set) var activity: [ActivityRow]?
+    private(set) var activity: [ActivityEntry]?
     /// The public half of `activity` (txs this wallet signed, looked up by
     /// hash); the private half is read from the sealed store at every publish.
-    private var publicActivity: [ActivityRow]?
+    private var publicActivity: [ActivityEntry]?
 
     public private(set) var pools: [Dex.Pool] = []
     public private(set) var swapFeePercent = Decimal(string: "0.3")!
@@ -760,7 +760,7 @@ public final class AppModel {
         self.rewards = BigInt(await rewards) ?? 0
         self.totalBonded = BigInt(await bonded) ?? 0
         let signer = address
-        self.publicActivity = await transactions.compactMap { ActivityRow(tx: $0, self: signer) }
+        self.publicActivity = await transactions.compactMap { ActivityEntry(tx: $0, self: signer) }
         mergeActivity()
         await reachable
         await privacySync
@@ -771,8 +771,8 @@ public final class AppModel {
     /// their rows come from the sealed store and the notes sync found.
     private func mergeActivity() {
         guard let pub = publicActivity else { return }
-        let priv = privacy?.activity().map { ActivityRow(private: $0) } ?? []
-        activity = ActivityRow.merge(public: pub, private: priv)
+        let priv = privacy?.activity().map { ActivityEntry(private: $0) } ?? []
+        activity = ActivityEntry.merge(public: pub, private: priv)
     }
 
     private func probe() async {
