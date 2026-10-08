@@ -2,13 +2,10 @@ package network.erth.wallet.ui.earn
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,6 +34,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.valentinilk.shimmer.shimmer
 import kotlinx.coroutines.delay
 import network.erth.wallet.R
@@ -45,15 +43,14 @@ import network.erth.wallet.chain.math.StakingApr
 import network.erth.wallet.privacy.Amounts
 import network.erth.wallet.privacy.StakeRound
 import network.erth.wallet.ui.components.EarthSegmented
+import network.erth.wallet.ui.components.EarthSheet
 import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.ui.designsystem.component.EarthButton
 import network.erth.wallet.ui.designsystem.component.EarthButtonDefaults
-import network.erth.wallet.ui.designsystem.component.EarthHorizontalDivider
 import network.erth.wallet.ui.designsystem.component.ShimmerRectangle
 import network.erth.wallet.ui.designsystem.component.rememberEarthShimmer
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
-import network.erth.wallet.ui.designsystem.theme.dimensions.EarthDimensions
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import network.erth.wallet.ui.swap.PoolList
 import network.erth.wallet.ui.theme.EarthAccent
@@ -70,20 +67,20 @@ import network.erth.wallet.ui.theme.EarthTheme
  * The daily ANML claim is on the wallet screen's action row, not here:
  * claiming ANML is a one-tap action on a balance, not a position to manage.
  *
- * The stake half is private stake only: a summary (worth, earning, and only
- * while some of it waits to join its validator, how much and when), then a
- * card per validator with where its stake stands and Add / Move / Unstake,
- * then what is on its way back. There is no claim: private stake compounds
- * into its validator's rate. Stake notes and Groundworks positions both
- * count (a position is stake locked at its validator, earning the same); a
- * validator operator's public self-bond is not shown.
+ * The stake half is private stake only: one big number, Stake and Unstake,
+ * a row per validator (its Add / Move / Unstake in its own sheet), then what
+ * is on its way back. There is no claim: private stake compounds into its
+ * validator's rate. Stake notes and Groundworks positions both count (a
+ * position is stake locked at its validator, earning the same); a validator
+ * operator's public self-bond is not shown.
  */
 @Composable
 fun EarnScreen(
     state: EarnUiState?,
     /** Open the stake sheet, for one validator or the picker. */
     onStake: (validator: String?) -> Unit,
-    onUnstake: (validator: String) -> Unit,
+    /** Open the unstake sheet, for one validator or (null) the picker. */
+    onUnstake: (validator: String?) -> Unit,
     modifier: Modifier = Modifier,
     /** This wallet's private stake per validator (one note each, as a rule). */
     privateStake: List<PrivateStakeRow> = emptyList(),
@@ -107,7 +104,9 @@ fun EarnScreen(
 ) {
     val dimens = EarthTheme.dimens
     var showPools by rememberSaveable { mutableStateOf(false) }
-    // Re-drawn each minute so the countdowns move.
+    /** The validator whose sheet is open. */
+    var opened by rememberSaveable { mutableStateOf<String?>(null) }
+    // Re-drawn each minute so a payout date that passes updates.
     val now by produceState(System.currentTimeMillis() / 1000) {
         while (true) {
             delay(60_000)
@@ -115,6 +114,7 @@ fun EarnScreen(
         }
     }
 
+    val view = StakeView(state, now, balancesVisible)
     Column(
         modifier
             .fillMaxSize()
@@ -145,50 +145,40 @@ fun EarnScreen(
             return@Column
         }
 
-        val view = StakeView(state, now, balancesVisible)
-        StakeSummary(view, privateStake)
+        val empty = privateStake.isEmpty() && unstaking.isEmpty()
+        StakeHero(view, privateStake, empty)
 
-        Spacer(Modifier.height(dimens.space16))
-        EarthButton(
-            text = "Stake",
-            onClick = { onStake(null) },
-            enabled = state != null && canStake,
-            modifier = Modifier.fillMaxWidth(),
-            colors = brandButtonColors(),
-        )
+        Spacer(Modifier.height(dimens.space32))
+        Row(horizontalArrangement = Arrangement.spacedBy(dimens.space12)) {
+            PillButton("Stake", enabled = state != null && canStake, modifier = Modifier.weight(1f)) { onStake(null) }
+            if (!empty) {
+                // One validator: straight to it. Several: pick first.
+                val leaving = privateStake.filter { it.free > 0 }
+                PillButton("Unstake", enabled = leaving.isNotEmpty(), primary = false, modifier = Modifier.weight(1f)) {
+                    onUnstake(leaving.singleOrNull()?.validator)
+                }
+            }
+        }
 
         Spacer(Modifier.height(dimens.space24))
-        Text(
-            text = "Your stake",
-            style = EarthTypography.textSm,
-            fontWeight = FontWeight.SemiBold,
-            color = EarthColors.Text.textSecondary,
-        )
-        Spacer(Modifier.height(dimens.space8))
-        if (privateStake.isEmpty() && unstaking.isEmpty()) {
-            Text(
-                text = "Nothing staked yet. Stake private ERTH with a validator: rewards compound into it, and no one can see it's yours.",
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textTertiary,
-                modifier = Modifier.padding(vertical = dimens.space16),
-            )
-        }
         privateStake.forEach { p ->
-            StakeCard(
-                p, view,
-                canAdd = canStake && state?.validators?.any { it.validatorOperator == p.validator } == true,
-                onAdd = { onStake(p.validator) },
-                onMove = { onMove(p.validator) },
-                onUnstake = { onUnstake(p.validator) },
-                onMerge = { onMerge(p.validator) },
-            )
-            Spacer(Modifier.height(dimens.space12))
+            StakeListRow(p, view) { opened = p.validator }
         }
-        unstaking.forEach { u ->
-            UnstakingCard(u, view)
-            Spacer(Modifier.height(dimens.space12))
-        }
+        unstaking.forEach { u -> UnstakingListRow(u, view) }
         Spacer(Modifier.height(dimens.space32))
+    }
+
+    privateStake.firstOrNull { it.validator == opened }?.let { p ->
+        ValidatorStakeSheet(
+            p = p,
+            view = view,
+            canAdd = canStake && state?.validators?.any { it.validatorOperator == p.validator } == true,
+            onAdd = { opened = null; onStake(p.validator) },
+            onMove = { opened = null; onMove(p.validator) },
+            onUnstake = { opened = null; onUnstake(p.validator) },
+            onMerge = { opened = null; onMerge(p.validator) },
+            onDismiss = { opened = null },
+        )
     }
 }
 
@@ -234,100 +224,110 @@ private class StakeView(val state: EarnUiState?, val now: Long, val visible: Boo
     fun apr(p: PrivateStakeRow): Double? =
         if (p.standing?.earns == false) null else state?.let { StakingApr.forValidator(it.totalBondedUerth, p.commission) }
 
-    val endsText: String?
-        get() = state?.roundEndsAt?.let { "at ${clock(it)} (in ${StakeRound.countdown(it - now)})" }
+    /** "6:00 AM" when the round's end is known. */
+    val startsAt: String get() = state?.roundEndsAt?.let { clock(it) } ?: "soon"
 }
 
 /** What earns now: all of it but what is waiting to join (rewards accrue only on what is delegated). */
 private val PrivateStakeRow.earningUerth: Long get() = valueUerth - minOf(valueUerth, joiningUerth ?: 0L)
 
+private enum class StakeStatus { EARNING, WAITING, IDLE }
+
+/** The row's dot. Waiting only when all of it waits: a top-up still queued does not stop the rest earning. */
+private val PrivateStakeRow.status: StakeStatus
+    get() = when {
+        standing?.earns == false -> StakeStatus.IDLE
+        (joiningUerth ?: 0L) > 0 && (joiningUerth ?: 0L) >= valueUerth -> StakeStatus.WAITING
+        else -> StakeStatus.EARNING
+    }
+
+/** The big number, "ERTH" under it, and at most one short line. */
 @Composable
-private fun StakeSummary(view: StakeView, rows: List<PrivateStakeRow>) {
-    val dimens = EarthTheme.dimens
+private fun StakeHero(view: StakeView, rows: List<PrivateStakeRow>, empty: Boolean) {
     val total = Amounts.satSum(rows) { it.valueUerth }
-    val daily = rows.sumOf { it.earningUerth.toDouble() * (view.apr(it) ?: 0.0) / 365 }
+    Column(Modifier.fillMaxWidth().padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        when {
+            view.state == null -> Box(Modifier.shimmer(rememberEarthShimmer())) { ShimmerRectangle(width = 160.dp, height = 48.dp) }
+            !view.visible -> Text("-----", style = EarthTypography.header2.copy(fontWeight = FontWeight.SemiBold), color = EarthColors.Text.textPrimary)
+            else -> BigAmount(formatUerth(total))
+        }
+        Text("ERTH", style = EarthTypography.textMd, color = EarthColors.Text.textTertiary)
+        heroLine(view, rows, total, empty)?.let { (text, color) ->
+            Spacer(Modifier.height(12.dp))
+            Text(text, style = EarthTypography.textMd.copy(fontSize = 15.sp), fontWeight = FontWeight.SemiBold, color = color)
+        }
+    }
+}
+
+/** What it earns a day, or, only while stake waits, when it starts. */
+@Composable
+private fun heroLine(view: StakeView, rows: List<PrivateStakeRow>, total: Long, empty: Boolean): Pair<String, Color>? {
+    if (total == 0L) return if (empty) "Earn by staking ERTH" to EarthColors.Text.textTertiary else null
     val waiting = Amounts.satSum(rows) { it.joiningUerth ?: 0L }
-    val joinsAt = view.state?.roundEndsAt?.let { clock(it) }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(EarthAccent.tint, RoundedCornerShape(EarthDimensions.Radius.radius3xl))
-            .padding(dimens.space16),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                painter = painterResource(R.drawable.ic_lock),
-                contentDescription = null,
-                modifier = Modifier.size(12.dp),
-                colorFilter = ColorFilter.tint(EarthAccent.ink),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text("Private stake", style = EarthTypography.textSm, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textSecondary)
-        }
-        Spacer(Modifier.height(dimens.space4))
-        if (view.state == null) {
-            Column(Modifier.shimmer(rememberEarthShimmer())) { ShimmerRectangle(width = 140.dp, height = 28.dp) }
-        } else {
-            Text(
-                text = "${if (view.visible) formatUerth(total).let(::trimTo2) else "••••"} ERTH",
-                style = EarthTypography.header5,
-                color = EarthColors.Text.textPrimary,
-                maxLines = 1,
-            )
-        }
-        Spacer(Modifier.height(2.dp))
+    if (waiting > 0) {
+        val who = if (waiting >= total) "Starts" else "${if (view.visible) stakeAmount(waiting) else "••••"} starts"
+        return "$who earning ${view.startsAt}" to EarthAccent.warnInk
+    }
+    val daily = rows.sumOf { it.earningUerth.toDouble() * (view.apr(it) ?: 0.0) / 365 }
+    if (daily <= 0) return "Not earning" to EarthColors.Text.textTertiary
+    if (!view.visible) return null
+    return "+${dailyText(daily)} ERTH / day" to EarthAccent.ink
+}
+
+/** The whole in display size, the fraction one step down: the wallet's balance. */
+@Composable
+private fun BigAmount(amount: String) {
+    Row {
         Text(
-            text = when {
-                total == 0L -> "Rewards compound into it. Nothing to claim."
-                daily > 0 -> "Earning about ${dailyText(daily, view.visible)} ERTH a day"
-                waiting >= total -> joinsAt?.let { "Starts earning at $it" } ?: "Starts earning when it joins its validator"
-                else -> "Not earning now: see below"
-            },
-            style = EarthTypography.textSm,
-            color = if (total > 0 && daily > 0) EarthAccent.ink else EarthColors.Text.textSecondary,
+            text = amount.substringBefore('.'),
+            style = EarthTypography.header2.copy(fontWeight = FontWeight.SemiBold),
+            color = EarthColors.Text.textPrimary,
+            maxLines = 1,
         )
-
-        Spacer(Modifier.height(dimens.space12))
-        EarthHorizontalDivider()
-        Spacer(Modifier.height(dimens.space12))
-
-        if (waiting > 0) {
-            // Only while something waits: nothing about rounds otherwise.
-            val joins = if (rows.count { (it.joiningUerth ?: 0L) > 0 } > 1) "joins its validators" else "joins its validator"
+        val frac = amount.substringAfter('.', "")
+        if (frac.isNotEmpty()) {
             Text(
-                text = "${view.amount(waiting)} ERTH waiting to start earning: $joins ${joinsAt?.let { "at $it" } ?: "when today's round ends"}",
-                style = EarthTypography.textSm,
+                text = ".$frac",
+                style = EarthTypography.textXs.copy(fontWeight = FontWeight.SemiBold),
                 color = EarthColors.Text.textPrimary,
-            )
-            Spacer(Modifier.height(dimens.space12))
-        }
-        val rate = view.state?.let { StakingApr.base(it.totalBondedUerth) }
-        if (rate != null) {
-            // Not a policy the chain aims at: a fixed stream divided by
-            // however much stake is competing for it.
-            InfoRow(
-                "Network rate",
-                rate.asRate() + " a year",
-                "1 ERTH a second shared across ${formatUerth(view.state.totalBondedUerth / 1_000_000 * 1_000_000)} ERTH staked, before commission.",
+                modifier = Modifier.padding(top = 8.dp),
             )
         }
     }
 }
 
+/** A big capsule action: the screen's two headline buttons and the sheets' one confirm. */
 @Composable
-private fun InfoRow(title: String, value: String, detail: String) {
-    Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = EarthTypography.textSm, color = EarthColors.Text.textSecondary, modifier = Modifier.weight(1f))
-            Text(value, style = EarthTypography.textSm, fontWeight = FontWeight.SemiBold, color = EarthAccent.ink, maxLines = 1)
-        }
-        Text(detail, style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
-    }
+internal fun PillButton(text: String, enabled: Boolean = true, primary: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    EarthButton(
+        text = text,
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.fillMaxWidth().heightIn(min = 56.dp),
+        shape = RoundedCornerShape(50),
+        style = EarthTypography.textMd.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+        colors = if (primary) brandButtonColors() else EarthButtonDefaults.secondaryColors(borderColor = Color.Unspecified),
+    )
+}
+
+/** Green earning, amber waiting to start, grey not earning. */
+@Composable
+private fun StatusDot(status: StakeStatus, size: Dp = 8.dp) {
+    Box(
+        Modifier.size(size).background(
+            when (status) {
+                StakeStatus.EARNING -> Color(0xFF00C244)
+                StakeStatus.WAITING -> Color(0xFFFEC84B)
+                StakeStatus.IDLE -> Color(0xFFAAB4A5)
+            },
+            CircleShape,
+        ),
+    )
 }
 
 /** A validator's initial on the accent: validators have no logos. */
 @Composable
-internal fun ValidatorMark(moniker: String, muted: Boolean = false, size: Dp = 40.dp) {
+internal fun ValidatorMark(moniker: String, muted: Boolean = false, size: Dp = 44.dp) {
     Box(
         Modifier
             .size(size)
@@ -336,80 +336,65 @@ internal fun ValidatorMark(moniker: String, muted: Boolean = false, size: Dp = 4
     ) {
         Text(
             text = moniker.take(1).uppercase(),
-            style = EarthTypography.textMd,
-            fontWeight = FontWeight.SemiBold,
+            style = EarthTypography.textMd.copy(fontSize = (size.value * 0.4f).sp),
+            fontWeight = FontWeight.Bold,
             color = if (muted) EarthColors.Text.textTertiary else EarthAccent.ink,
         )
     }
 }
 
+/** A validator you are staked with: initial, name and dot, amount. Tapping opens its sheet. */
 @Composable
-private fun CardHeader(moniker: String, subtitle: String, value: String, muted: Boolean = false) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        ValidatorMark(moniker, muted)
+private fun StakeListRow(p: PrivateStakeRow, view: StakeView, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ValidatorMark(p.moniker, muted = p.status == StakeStatus.IDLE)
         Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(moniker, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary, maxLines = 1)
-            Text(subtitle, style = EarthTypography.textXs, color = EarthColors.Text.textTertiary, maxLines = 1)
+        Text(p.moniker, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary, maxLines = 1,
+            modifier = Modifier.weight(1f, fill = false))
+        Spacer(Modifier.width(6.dp))
+        StatusDot(p.status)
+        Spacer(Modifier.weight(1f).width(8.dp))
+        Text(view.amount(p.valueUerth), style = EarthTypography.textMd.copy(fontSize = 17.sp), fontWeight = FontWeight.SemiBold,
+            color = EarthColors.Text.textPrimary, maxLines = 1)
+    }
+}
+
+/** "Unstaking · Oct 28" and the amount: the chain pays it, nothing to do. */
+@Composable
+private fun UnstakingListRow(u: UnstakingRow, view: StakeView) {
+    val unbonding = view.state?.unbondingSeconds
+    val whenText = when {
+        u.dueBy != null -> if (u.dueBy > view.now) shortDay(u.dueBy) else "Soon"
+        unbonding != null -> "~${maxOf(1, unbonding / 86_400)} days"
+        else -> "Soon"
+    }
+    Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(44.dp).background(EarthColors.Surfaces.bgTertiary, CircleShape), contentAlignment = Alignment.Center) {
+            Image(
+                painter = painterResource(R.drawable.ic_clock),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                colorFilter = ColorFilter.tint(EarthColors.Text.textTertiary),
+            )
         }
-        Spacer(Modifier.width(8.dp))
-        Column(horizontalAlignment = Alignment.End) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(value, style = EarthTypography.textMd, color = EarthColors.Text.textPrimary, maxLines = 1)
-                Spacer(Modifier.width(5.dp))
-                Image(
-                    painter = painterResource(R.drawable.ic_lock),
-                    contentDescription = "Private",
-                    modifier = Modifier.size(11.dp),
-                    colorFilter = ColorFilter.tint(EarthAccent.ink),
-                )
-            }
-            Text("ERTH", style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
-        }
+        Spacer(Modifier.width(12.dp))
+        Text("Unstaking · $whenText", style = EarthTypography.textMd, fontWeight = FontWeight.Medium,
+            color = EarthColors.Text.textSecondary, maxLines = 1, modifier = Modifier.weight(1f))
+        Text(view.amount(u.valueUerth), style = EarthTypography.textMd.copy(fontSize = 17.sp), fontWeight = FontWeight.SemiBold,
+            color = EarthColors.Text.textTertiary, maxLines = 1)
     }
 }
 
-private enum class Pill { SUCCESS, PENDING, FAILED, NEUTRAL }
-
-/** A state as colour and word: the colour alone says nothing to a third of men. */
+/**
+ * One validator: the big amount and Add / Move / Unstake. A Groundworks part,
+ * a window still closed, or notes to merge get one short line each, and only
+ * when they apply.
+ */
 @Composable
-private fun StatusLine(pill: Pill, label: String, text: String) {
-    val (bg, fg) = when (pill) {
-        Pill.SUCCESS -> EarthAccent.tint to EarthAccent.ink
-        Pill.PENDING -> EarthAccent.warnTint to EarthAccent.warnInk
-        Pill.FAILED -> Color(0xFFFDECEA) to Color(0xFFB4231A)
-        Pill.NEUTRAL -> EarthColors.Surfaces.bgTertiary to EarthColors.Text.textTertiary
-    }
-    Column {
-        Text(
-            text = label,
-            style = EarthTypography.textSm,
-            color = fg,
-            modifier = Modifier
-                .background(bg, RoundedCornerShape(50))
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(text, style = EarthTypography.textSm, color = EarthColors.Text.textSecondary)
-    }
-}
-
-@Composable
-private fun CardFrame(content: @Composable ColumnScope.() -> Unit) {
-    val shape = RoundedCornerShape(EarthDimensions.Radius.radius2xl)
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(EarthColors.Surfaces.bgPrimary, shape)
-            .border(1.dp, EarthColors.Surfaces.strokePrimary, shape)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        content = content,
-    )
-}
-
-@Composable
-private fun StakeCard(
+private fun ValidatorStakeSheet(
     p: PrivateStakeRow,
     view: StakeView,
     canAdd: Boolean,
@@ -417,79 +402,62 @@ private fun StakeCard(
     onMove: () -> Unit,
     onUnstake: () -> Unit,
     onMerge: () -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    val commission = "${"%.0f".format(p.commission * 100)}% commission"
-    val subtitle = view.apr(p)?.let { "$commission · ${it.asRate()} APR" } ?: commission
-    val ends = view.endsText ?: "when today's round ends"
-    CardFrame {
-        CardHeader(p.moniker, subtitle, view.amount(p.valueUerth))
-        val reason = p.standing?.takeIf { !it.earns }?.reason
-        val joining = p.joiningUerth ?: 0L
-        when {
-            reason != null -> StatusLine(Pill.FAILED, "Not earning", "$reason Move it to an active validator to earn again.")
-            joining > 0 && joining >= p.valueUerth -> StatusLine(
-                Pill.PENDING,
-                view.state?.roundEndsAt?.let { "Starts earning at ${clock(it)}" } ?: "Waiting to join",
-                "Waiting to start earning. It joins ${p.moniker} $ends; from then rewards compound into it, nothing to claim.",
-            )
-            else -> StatusLine(
-                Pill.SUCCESS,
-                "Earning",
-                "Grows with every block: rewards compound into it, nothing to claim." +
-                    (if (joining > 0) " ${view.amount(joining)} ERTH more is waiting to start earning: it joins $ends." else ""),
-            )
-        }
-        if (p.groundworksUerth > 0) {
-            StatusLine(
-                Pill.NEUTRAL,
-                "In Groundworks",
-                "${view.amount(p.groundworksUerth)} ERTH is locked in a Groundworks position: still staked here and earning the same. Unlock it in Govern to move or unstake it.",
-            )
-        }
-        if (p.locked > 0) {
-            val until = p.lockedUntil?.let { "after ${day(it)}" } ?: "once its window closes"
-            StatusLine(Pill.NEUTRAL, "Moving", "${view.amount(p.lockedUerth)} ERTH moved here. It earns here now, and can move or unstake $until.")
-        }
-        if (p.notes > 1) {
-            Text(
-                text = if (p.mergeable) "Held as ${p.notes} notes · merge them" else "Held as ${p.notes} notes",
-                style = EarthTypography.textXs,
-                color = if (p.mergeable) EarthAccent.ink else EarthColors.Text.textTertiary,
-                modifier = if (p.mergeable) Modifier.clickable(onClick = onMerge) else Modifier,
-            )
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CardButton("Add", canAdd, onAdd, Modifier.weight(1f))
-            CardButton("Move", p.free > 0, onMove, Modifier.weight(1f))
-            CardButton("Unstake", p.free > 0, onUnstake, Modifier.weight(1f))
+    EarthSheet(onDismiss = onDismiss) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Spacer(Modifier.height(8.dp))
+            ValidatorMark(p.moniker, muted = p.status == StakeStatus.IDLE, size = 56.dp)
+            Spacer(Modifier.height(12.dp))
+            Text(p.moniker, style = EarthTypography.textMd.copy(fontSize = 17.sp), fontWeight = FontWeight.SemiBold,
+                color = EarthColors.Text.textPrimary, maxLines = 1)
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StatusDot(p.status)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = when (p.status) {
+                        StakeStatus.EARNING -> "Earning"
+                        StakeStatus.WAITING -> "Starts ${view.startsAt}"
+                        StakeStatus.IDLE -> p.standing?.label ?: "Not earning"
+                    },
+                    style = EarthTypography.textSm,
+                    color = EarthColors.Text.textTertiary,
+                )
+            }
+            Spacer(Modifier.height(24.dp))
+            if (view.visible) BigAmount(formatUerth(p.valueUerth))
+            else Text("-----", style = EarthTypography.header2.copy(fontWeight = FontWeight.SemiBold), color = EarthColors.Text.textPrimary)
+            Text("ERTH", style = EarthTypography.textMd, color = EarthColors.Text.textTertiary)
+            Spacer(Modifier.height(12.dp))
+            if (p.groundworksUerth > 0) {
+                ShortLine("${if (view.visible) "%,d".format(p.groundworksUerth / 1_000_000) else "••••"} in Groundworks")
+            }
+            if (p.locked > 0 && p.free == 0L) {
+                ShortLine(p.lockedUntil?.let { "Can move ${day(it)}" } ?: "Recently moved here")
+            }
+            if (p.notes > 1 && p.mergeable) {
+                Text(
+                    text = "Merge ${p.notes} notes",
+                    style = EarthTypography.textSm,
+                    fontWeight = FontWeight.SemiBold,
+                    color = EarthAccent.ink,
+                    modifier = Modifier.clickable(onClick = onMerge).padding(4.dp),
+                )
+            }
+            Spacer(Modifier.height(32.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PillButton("Add", enabled = canAdd, modifier = Modifier.weight(1f), onClick = onAdd)
+                PillButton("Move", enabled = p.free > 0, primary = false, modifier = Modifier.weight(1f), onClick = onMove)
+                PillButton("Unstake", enabled = p.free > 0, primary = false, modifier = Modifier.weight(1f), onClick = onUnstake)
+            }
         }
     }
 }
 
 @Composable
-private fun CardButton(text: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier) {
-    EarthButton(
-        text = text,
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier.heightIn(min = 40.dp),
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-        colors = EarthButtonDefaults.secondaryColors(),
-    )
-}
-
-@Composable
-private fun UnstakingCard(u: UnstakingRow, view: StakeView) {
-    val unbonding = view.state?.unbondingSeconds
-    val whenText = when {
-        u.dueBy != null -> if (u.dueBy > view.now) "around ${day(u.dueBy)}" else "any time now"
-        unbonding != null -> "about ${maxOf(1, unbonding / 86_400)} days after the round it was asked in ends"
-        else -> "once the unbonding period ends"
-    }
-    CardFrame {
-        CardHeader(u.moniker, "Unstaked", view.amount(u.valueUerth), muted = true)
-        StatusLine(Pill.PENDING, "Unstaking", "Not earning. It's paid to your private ERTH automatically $whenText. Nothing to claim.")
-    }
+private fun ShortLine(text: String) {
+    Text(text, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary, modifier = Modifier.padding(vertical = 2.dp))
 }
 
 /** ERTH to at most three decimals, as the cards show it. */
@@ -499,17 +467,11 @@ internal fun stakeAmount(uerth: Long): String {
     return if (frac.isEmpty()) "%,d".format(whole) else "%,d.%s".format(whole, frac)
 }
 
-private fun trimTo2(s: String): String {
-    val dot = s.indexOf('.')
-    return if (dot < 0) s else s.substring(0, minOf(s.length, dot + 3)).trimEnd('0').trimEnd('.')
-}
-
-private fun dailyText(uerth: Double, visible: Boolean): String {
-    if (!visible) return "••••"
+private fun dailyText(uerth: Double): String {
     val erth = uerth / 1_000_000
     return when {
-        erth >= 100 -> "%.0f".format(erth)
-        erth >= 1 -> "%.2f".format(erth)
+        erth >= 100 -> "%,.0f".format(erth)
+        erth >= 1 -> "%.1f".format(erth)
         erth >= 0.001 -> "%.3f".format(erth)
         else -> "<0.001"
     }
@@ -537,20 +499,8 @@ internal fun day(unix: Long): String {
     return java.text.SimpleDateFormat(pattern, java.util.Locale.getDefault()).format(java.util.Date(unix * 1000))
 }
 
-/**
- * A rate at whatever magnitude it lands.
- *
- * On a young chain with little bonded this runs to millions of percent, which
- * is arithmetically right and worth showing rather than capping — a capped
- * number invites the reader to believe the cap.
- */
-internal fun Double.asRate(): String {
-    val pct = this * 100
-    return when {
-        pct == 0.0 -> "0%"
-        pct < 0.01 -> "<0.01%"
-        pct < 1 -> "%.2f%%".format(pct)
-        pct < 1_000 -> "%.1f%%".format(pct)
-        else -> "%,.0f%%".format(pct)
-    }
+/** A payout date: "Oct 28". */
+internal fun shortDay(unix: Long): String {
+    val pattern = android.text.format.DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "MMMd")
+    return java.text.SimpleDateFormat(pattern, java.util.Locale.getDefault()).format(java.util.Date(unix * 1000))
 }
