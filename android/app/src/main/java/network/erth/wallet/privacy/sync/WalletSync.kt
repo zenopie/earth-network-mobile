@@ -343,35 +343,6 @@ class WalletSync(
             return RegMemo(dsc, country, builtAt, g)
         }
 
-        /** Unlock memo: "EU", version 1 (PRIVACY_FORMATS.md §6). */
-        val UNLOCK_MAGIC = byteArrayOf(0x45, 0x55, 0x01)
-
-        private fun unlockTag(nk: Fr, counter: Int): ByteArray =
-            Privacy.h(Privacy.TAG_UNLOCKTAG, nk, Privacy.u64(counter.toLong() and 0xffffffffL)).toBytes().copyOf(REG_TAG_BYTES)
-
-        /**
-         * The memo of an unlock's record note (a value-0 pool note to itself in
-         * the unlock's fee bundle; the stake note it merges into carries no
-         * memo): the owner-tag counter of the position it
-         * closed, so a wallet restored from the mnemonic knows the tags of
-         * closed positions too and never locks under one again. Tagged
-         * like the record (only nk makes one): a note carrying a huge counter
-         * cannot stretch the owner-tag scan.
-         */
-        fun unlockMemo(nk: Fr, counter: Int): ByteArray =
-            java.nio.ByteBuffer.allocate(NoteCipher.MEMO_BYTES).put(UNLOCK_MAGIC).putInt(counter).put(unlockTag(nk, counter)).array()
-
-        /** The closed counter if [memo] is this wallet's unlock memo. */
-        fun parseUnlockMemo(nk: Fr, memo: ByteArray): Int? {
-            val m = memo.copyOf(NoteCipher.MEMO_BYTES)
-            if (!m.copyOf(3).contentEquals(UNLOCK_MAGIC)) return null
-            val counter = java.nio.ByteBuffer.wrap(m, 3, 4).int
-            if (counter < 0) return null
-            if (m.copyOfRange(7 + REG_TAG_BYTES, m.size).any { it.toInt() != 0 }) return null
-            if (!java.security.MessageDigest.isEqual(m.copyOfRange(7, 7 + REG_TAG_BYTES), unlockTag(nk, counter))) return null
-            return counter
-        }
-
         /**
          * State records (PRIVACY_FORMATS.md §6): value-0 notes
          * whose memo says what this identity holds in a scope, so a wallet
@@ -1074,8 +1045,6 @@ class WalletSync(
                 if (s.unmatchedRecordFrom < 0 || r.position < s.unmatchedRecordFrom) s.unmatchedRecordFrom = r.position
                 s.unmatchedRecordWindow = if (s.unmatchedRecordWindow <= 0) gens else minOf(s.unmatchedRecordWindow, gens)
             }
-            // An unlock's record: the owner-tag counter of the position it closed.
-            parseUnlockMemo(keys.nk, note.memo)?.let { c -> if (c > s.closedOtagMax) s.closedOtagMax = c }
             return null
         }
         return OwnedNote(r.position, r.height, note, r.cm, Privacy.nf(keys.nk, note.rho, r.position), origin = origin)

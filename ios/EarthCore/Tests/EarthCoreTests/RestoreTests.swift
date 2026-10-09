@@ -89,16 +89,10 @@ final class RestoreTests: PrivacyTestCase {
         chain.matureWithdrawals()
         _ = try await a.delegate(validator: validator, amount: 1_500_000)
         try await a.sync()
-        // Forty locks proved and refused: owner-tag counters 0..39 burnt.
-        chain.rejectNext = 40
-        for _ in 0 ..< 40 {
-            await assertThrowsAsync({ try await a.lockPosition(validator: self.validator, amount: 100_000, splits: [2: 100]) }) { $0 is UnsignedTx.TxRejected }
-        }
-        try await a.sync()
-        _ = try await a.lockPosition(validator: validator, amount: 100_000, splits: [2: 100])
-        try await a.sync()
-        let mine = try await a.positions()
-        XCTAssertEqual([40], mine.map(\.counter))
+        chain.minGroundworksVote = 100_000
+        _ = try await a.castGroundworks(split: [2: 100])
+        let mine = try await a.groundworksVotes()
+        XCTAssertEqual(1, mine.count)
         _ = try await a.undelegate(validator: validator, amount: 200_000)
         try await a.sync()
         XCTAssertTrue(Set(a.balances().keys).isSuperset(of: ["uerth", "uanml", "dexlp/1", PrivacyWallet.derthDenom(validator)]))
@@ -108,9 +102,12 @@ final class RestoreTests: PrivacyTestCase {
         let restored = try wallet(chain)
         try await restored.sync()
         XCTAssertEqual(a.balances(), restored.balances())
-        let ap = try await a.positions().map { [$0.position.id, UInt64($0.counter)] }
-        let rp = try await restored.positions().map { [$0.position.id, UInt64($0.counter)] }
-        XCTAssertEqual(ap, rp)
+        // Its Groundworks vote, found by its notes' tags, and the split adopted from it.
+        let av = try await a.groundworksVotes()
+        let rv = try await restored.groundworksVotes()
+        XCTAssertEqual(1, rv.count)
+        XCTAssertEqual(av.map(\.derth), rv.map(\.derth))
+        XCTAssertEqual([2: 100], restored.groundworksSplit)
         // The registration, from its record note and the identity stream alone.
         XCTAssertEqual(.live, restored.identityStatus())
         let id = try XCTUnwrap(a.snapshot.identity)
@@ -126,43 +123,37 @@ final class RestoreTests: PrivacyTestCase {
         _ = try await restored.claimAnml()
         try await restored.sync()
         XCTAssertEqual(bal(a, "uanml") + 1_000_000, bal(restored, "uanml"))
-        // A next lock takes a fresh tag past every one in use.
-        _ = try await restored.lockPosition(validator: validator, amount: 100_000, splits: [3: 100])
+        // Its next stake tx keeps voting with the adopted split.
+        _ = try await restored.delegate(validator: validator, amount: 1_000_000)
         try await restored.sync()
-        let after = try await restored.positions()
-        XCTAssertEqual([40, 41], after.map(\.counter))
+        let after = try await restored.groundworksVotes()
+        XCTAssertEqual(1, after.count)
+        XCTAssertEqual([2: 100], after[0].split)
         dump(chain, "restore")
     }
 
-    /// Positions closed before a restore are known from their unlock
-    /// memos, so the restored wallet's next lock never reuses a tag the chain
-    /// has already seen.
-    func testRestoredWalletNeverReusesAClosedTag() async throws {
+    /// A wallet that stopped voting never adopts a split back off the chain;
+    /// a restored one whose stake no longer votes has nothing to adopt.
+    func testAStoppedSplitStaysStopped() async throws {
         let chain = FakeChain()
+        chain.minGroundworksVote = 100_000
         let a = try wallet(chain)
         try funded(chain, a, 5_000_000)
         try await a.sync()
         _ = try await a.delegate(validator: validator, amount: 3_000_000)
         try await a.sync()
-        for _ in 0 ..< 3 { _ = try await a.lockPosition(validator: validator, amount: 100_000, splits: [2: 100]); try await a.sync() }
-        let used = Set(chain.positions.values.map(\.ownerTag))
-        XCTAssertEqual(3, used.count)
-        for p in try await a.positions() where p.counter >= 1 { _ = try await a.unlockPosition(p.position, counter: p.counter); try await a.sync() }
-        let left = try await a.positions().map(\.counter)
-        XCTAssertEqual([0], left)
-        XCTAssertEqual(2, a.store.state.closedOtagMax)
+        _ = try await a.castGroundworks(split: [2: 100])
+        _ = try await a.castGroundworks(split: [:])
+        XCTAssertTrue(chain.gwVotes.isEmpty)
+        _ = try await a.delegate(validator: validator, amount: 1_000_000)
+        try await a.sync()
+        XCTAssertTrue(chain.gwVotes.isEmpty)
+        XCTAssertTrue(a.groundworksSplit.isEmpty)
         let restored = try wallet(chain)
         try await restored.sync()
-        XCTAssertEqual(2, restored.store.state.closedOtagMax)
-        let found = try await restored.positions().map(\.counter)
-        XCTAssertEqual([0], found)
-        _ = try await restored.lockPosition(validator: validator, amount: 100_000, splits: [3: 100])
-        try await restored.sync()
-        let fresh = try XCTUnwrap(chain.positionOrder.last.flatMap { chain.positions[$0] }).ownerTag
-        XCTAssertFalse(used.contains(fresh))
-        let after = try await restored.positions().map(\.counter)
-        XCTAssertEqual([0, 3], after)
-        XCTAssertNil(WalletSync.parseUnlockMemo(nk: a.keys.nk, WalletSync.unlockMemo(nk: Fr(UInt64(9)), counter: 1_000_000)))
+        let none = try await restored.groundworksVotes()
+        XCTAssertTrue(none.isEmpty)
+        XCTAssertTrue(restored.groundworksSplit.isEmpty)
     }
 
     /// The registration record memo (version 2) round-trips with its tag, and only its own format parses.

@@ -2,14 +2,15 @@
 
 The current byte-level and behavioural spec of the Earth Wallet's private
 side (Android, iOS; the web app must match the formats). It describes what
-is true now, against chain privacy/orchard **20a91c6** (genesis 34fe7441). How it got here is in AUDIT_HISTORY.md.
+is true now, against chain privacy/orchard **20a91c6** (genesis 34fe7441) with the
+chain's v1.2.0 upgrade (Groundworks votes by stake note, delegations bonded at once). How it got here is in AUDIT_HISTORY.md.
 
 **Who defines what.** The chain (x/shielded, x/personhood, x/assembly,
 x/shieldedstaking, x/dex; `zk/privacy`, `zk/orchard`, `zk/indexed`,
 `zk/debt`; ORCHARD_DESIGN.md) pins every hash, tag, commitment, nullifier,
 sighash, bundle and proof layout and the public ciphertext lengths; the
 clients reproduce those byte for byte. What the chain never sees (keys,
-note plaintexts, memo records, owner-tag salts, the stake ciphertext's
+note plaintexts, memo records, the stake ciphertext's
 contents, the vote weight rule) is defined by the wallet, here. Every
 section is marked **[chain]**, **[wallet]** or **[shared]** (a canonical
 format the chain and the web app also implement).
@@ -34,7 +35,7 @@ Wallet-defined formats are pinned by golden tests on both platforms
 4. Pool notes
 5. Note ciphertexts
 6. Memo records (value-0 pool notes)
-7. Stake notes, labels, positions
+7. Stake notes, labels, Groundworks tags
 8. Trees
 9. Circuits: public-input order and witnesses
 10. Bundles
@@ -100,7 +101,8 @@ else, as the chain's `FieldFromBytes` does).
 | TAG_STAKE | `earth.stake` | stake note commitment |
 | TAG_SPC | `earth.spc` | stake note owner commitment |
 | TAG_SNF | `earth.snf` | stake note nullifier |
-| TAG_OTAG | `earth.otag` | position owner tag |
+| TAG_OTAG | `earth.otag` | retired (positions' owner tag, chain v1.2.0); never reuse |
+| TAG_GW | `earth.gw` | stake note Groundworks tag (§7) |
 | TAG_SNFL | `earth.snfl` | stake nullifier tree leaf |
 | TAG_VNF | `earth.vnf` | stake vote nullifier |
 | TAG_VPAD | `earth.vpad` | padding vote nullifier of an unused vote slot |
@@ -115,15 +117,15 @@ Wallet tags and labels (**[wallet]**):
 
 | string | kind | use |
 | --- | --- | --- |
-| `earth.privacy.v1` | HMAC-SHA512 key | key derivation, owner-tag salts (§2, §7) |
+| `earth.privacy.v1` | HMAC-SHA512 key | key derivation (§2) |
 | `id_secret`, `nk`, `ek` | HMAC labels | key derivation (§2) |
-| `otag-salt` | HMAC label | owner-tag salt (§7) |
+| `otag-salt` | HMAC label | retired (positions' owner-tag salt); never reuse |
 | `earth.note.v1` | HKDF salt | v1 note ciphertext (§5) |
 | `earth.note.v2` | HKDF salt | v2 blind ciphertext (§5) **[shared]** |
 | `earth.stake.v2` | HKDF salt | wallet stake ciphertext (§5) |
 | `earth.rectag` | field tag | registration record tag (§6) |
 | `earth.statetag` | field tag | state record tag (§6) |
-| `earth.unlocktag` | field tag | unlock record tag (§6) |
+| `earth.unlocktag` | field tag | retired (position unlock record, §6); never reuse |
 | `earth-gas-pow/v1` | ASCII prefix | gas grant proof of work (§13) |
 
 ## 2. Keys
@@ -154,15 +156,15 @@ identity child's private key above (m/2026'/118'/0'/0'):
     id_secret_g = HMAC-SHA512("earth.privacy.v1", "id_secret" || k || u32 BE g)  mod p   (g >= 1)
     idc_g       = H(TAG_ID, id_secret_g)
 
-g is at most 10,000. nk and ek (notes, the shielded address, owner tags)
+g is at most 10,000. nk and ek (notes, the shielded address, Groundworks tags)
 are the same for every generation: only the identity changes, so funds and
 stake never move. A compromised phrase exposes every generation (a new
 wallet is the remedy); a generation's secret alone does not expose the
 others (HMAC under k). Which generation a wallet acts as and which it
 registers next: §13; how a restore finds them: §19.
 
-Nothing else is derived from the mnemonic by a counter except owner-tag
-salts (§7) and identity generations (above; the registration records name
+Nothing else is derived from the mnemonic by a counter except identity
+generations (above; the registration records name
 theirs, §6): every note the chain mints to the wallet and every stake note
 uses fresh random rho and rcm and is found by trial decryption (§19), so a
 failed or abandoned attempt never leaves a gap a restore cannot cross.
@@ -409,26 +411,23 @@ wallet, from an earlier generation to the current one (§14), writes both
 records to the same address, each tagged with its own generation. How sync
 applies them: §19.
 
-**Unlock record.** MsgUnlockPosition's fee bundle carries a value-0 record
-naming the owner-tag counter it closed (§7):
+**Unlock record (retired).** MsgUnlockPosition's fee bundle carried a
+value-0 record `"EU" (0x45 0x55) || 0x01 || counter (u32 BE) || tag`, tag
+from `Tag("earth.unlocktag")`, naming the owner-tag counter it closed.
+Positions are gone (chain v1.2.0): nothing writes the record and sync no
+longer reads it. The magic and tag are not reused.
 
-    memo = "EU" (0x45 0x55) || 0x01 || counter (u32 BE)
-           || first 16 bytes of BE32( H(Tag("earth.unlocktag"), nk, U64(counter)) ) || zero padding
-
-An unlock memo whose tag recomputes raises `closed_otag_max` (a gift with
-someone else's memo is ignored, so it cannot stretch the owner-tag scan).
-
-## 7. Stake notes, labels, positions
+## 7. Stake notes, labels, Groundworks tags
 
 **[chain]** Delegated stake (`derth/<valoper>`) lives in its own
-append-only tree, owner-locked: it can be merged, undelegated, redelegated,
-voted or locked by its owner, never sent.
+append-only tree, owner-locked: it can be merged, undelegated, redelegated
+or voted by its owner, never sent.
 
     spc   = H(TAG_SPC, owner_pk, rho, rcm)
     cm    = H(TAG_STAKE, AssetID(derth/<valoper>), amount, spc, label)
     label = H(Tag("earth.slabel"), move_key, move_time, exposed)    (0: unlabelled)
     nf    = H(TAG_SNF, nk, rho, position)                            position a u32
-    otag  = H(TAG_OTAG, owner_pk, salt)
+    gw    = H(Tag("earth.gw"), nk, rho)                              Groundworks tag
 
 The chain mints no stake note: every one is a stake proof's output. A label
 marks derth that arrived by a move (§15): `exposed` of it (the move's
@@ -438,34 +437,28 @@ Query/DebtTree) after move_time has passed; a slash of the source in that
 window owes through the move's debt row (§8). A note holds at most one
 label. Vectors: `derive.stake_label`, `stake_cm`, `stake_cm_labelled`.
 
-**One note per validator [wallet].** Every delegation, unlock and credit
+**One note per validator [wallet].** Every delegation and credit
 merges into the wallet's note at the validator, so a wallet holds one note
 per validator; a second appears only beside a labelled note (a move into a
 validator where ours is labelled) or from another device, and merges by
 MsgRestake on the user's tap (at most one of the two labelled).
 
-**Owner tags [wallet].** A Groundworks position stores `otag`; its owner
-proves it again to update, unlock or vote it. Positions carry no
-ciphertext. For counter c (a u32):
+**Groundworks tags [chain].** A note's Groundworks vote is stored by the
+chain under its tag `gw` (no tree position needed: the tag exists before the
+note is appended). Every stake proof publishes each input's tag (a padding
+input its own, from its padding rho) and the chain cancels the vote stored
+under it; an output that votes publishes its own tag and its unexposed
+amount (§9, §15). A note's tag is public once it votes or is spent; a
+non-voter's tags appear only at its spends and link nothing. Vectors
+`derive.stake_gw` (the derive section's nk and rho), `stake_gw_1_2` (nk 1, rho 2), `tags.gw`.
 
-    salt_c = HMAC-SHA512("earth.privacy.v1", "otag-salt" || nk (32 BE) || c (u32 BE)) mod p
-    otag_c = H(TAG_OTAG, owner_pk, salt_c)
+Positions (a Groundworks record of locked derth under an owner tag
+`H(TAG_OTAG, owner_pk, salt)`, salts from `otag-salt` counters) are retired
+with chain v1.2.0. Wallets drop the owner-tag counters, the closed-counter
+scan and the per-position lease records.
 
-A lock takes counter max(next_otag_counter, highest owned counter found + 1,
-closed_otag_max + 1) and advances next_otag_counter; update, vote and unlock
-reuse the position's salt. Every other stake proof (delegate, undelegate,
-restake, redelegate) uses a fresh random salt. Sync
-matches the public positions against counters 0 … max(next, closed + 1) +
-1024, extended past every match (OTAG_GAP = 1024: a closed position
-disappears from the chain, so the window must cross a run of closed
-positions and failed locks). Closed counters are never reused: a position
-disappears only by unlock, and the unlock record (§6) lets a restored wallet
-start past every closed tag. Residual: a lock that failed in its block
-published its tag without creating a position, and a restored wallet may
-reuse that counter.
-
-A position's weight is shown as derth × its validator's current rate (0
-without a live split).
+A vote's weight is shown as derth × its validator's epoch rate (0 when a
+Groundworks reset made it stale), as the chain fills `weight` in.
 
 ## 8. Trees
 
@@ -522,7 +515,7 @@ checked against the chain's root.
 SRS (circuit sizes 2^13 to 2^15) and compiled with nargo 1.0.0-beta.22; `bb write_vk` of
 every bundled circuit equals the chain genesis's verifying key. Every proof
 is exactly 14,656 bytes. Prover kinds split these public-input counts:
-action 6, stake 16, membership 8, vote 9, move 5.
+action 6, stake 22, membership 8, vote 9, move 5.
 
 **action** (one spend and one output of a bundle):
 
@@ -540,14 +533,14 @@ o_pc). cv = s_value·G(s_asset) − o_value·G(o_asset) + rcv·R (§10).
              in_move_key[2], in_move_time[2], in_exposed[2],
              out_amount, out_rho, out_rcm, clear,
              debt_low_key, debt_low_next_key, debt_low_next_index, debt_low_retained, debt_low_index, debt_low_path[32],
-             cr_in_amount, cr_in_rho, cr_in_rcm, cr_in_pos, cr_in_path[32], cr_out_rho, cr_out_rcm,
-             tag_salt
+             cr_in_amount, cr_in_rho, cr_in_rcm, cr_in_pos, cr_in_path[32], cr_out_rho, cr_out_rcm
     public:  anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root,
-             cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash
+             cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time,
+             gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out, sighash
 
 Two lanes under `anchor`. Lane A (`asset`) spends up to two notes, at most
-one labelled, and creates one; v_in is credited (delegation, unlock), v_out
-leaves (undelegation, lock, a move's source). It either keeps the label
+one labelled, and creates one; v_in is credited (delegation), v_out
+leaves (undelegation, a move's source). It either keeps the label
 (the output carries the same label, and in_0 + in_1 − exposed + v_in = out
 − exposed + v_out) or clears it once `move_time < clear_before`, reading the
 move's row in the debt tree at `debt_root` (in_0 + in_1 − exposed +
@@ -556,19 +549,29 @@ credit lane) merges `cr_v_in` credited by a move into at most one
 unlabelled note: cr_in + cr_v_in = cr_out, the output labelled (move_key =
 cr_nf, move_time = cr_move_time, exposed = cr_v_in). Padding: an input of
 amount 0 publishes 0 or its own would-be nullifier; an output of amount 0
-publishes 0 or a zero note's commitment. Vectors `public_inputs.delegate`,
-`undelegate`, `redelegate`.
+publishes 0 or a zero note's commitment.
 
-**Stake padding [chain, ORCHARD_DESIGN 8.3].** A msg that moves notes
-(Delegate, Undelegate, Redelegate, Restake, Lock, Unlock) spends in both
-lane-A slots: nf_0 and nf_1 are both non-zero, else the chain refuses the
-proof's shape. A slot holding none of the wallet's notes is a padding
+Groundworks lanes (chain v1.2.0; the stake circuit's key changed, the vote
+circuit's did not): each input publishes its tag `gw = H(TAG_GW, nk, rho)`
+(gw_0, gw_1 for lane A, cr_gw for lane B; a padding input 0 or its own).
+Each output either votes, publishing its own tag and its unexposed amount
+(gw_out = H(TAG_GW, nk, out_rho), w_out = out − exposed;
+cr_gw_out = H(TAG_GW, nk, cr_out_rho), cr_w_out = cr_in when the credit is
+labelled, else cr_out), or publishes 0 and 0. An output of amount 0 cannot
+vote. So derth credited by a move does not vote until a later proof
+clears its label. Vectors `public_inputs.delegate`, `undelegate`,
+`redelegate`, `redelegate_vote`.
+
+**Stake padding [chain, ORCHARD_DESIGN 8.3].** Every stake msg
+(Delegate, Undelegate, Redelegate, Restake) spends in both lane-A slots:
+nf_0 and nf_1 are both non-zero, and so are gw_0 and gw_1 (a padding slot
+publishes its own tag), else the chain refuses the proof's shape. A
+redelegation's lane B publishes cr_nf and cr_gw likewise. A slot holding none of the wallet's notes is a padding
 input (amount 0, a fresh random rho and rcm, pos 0, path zero) publishing
 its own would-be nullifier H(TAG_SNF, nk, rho, 0), so a merge of two notes
 looks like a spend of one (a zero nf_1 used to show a single spend, and a
 second note at a validator mostly sits beside a labelled redelegation
-credit). Position updates and votes still use neither slot (nf_0 = nf_1 =
-0). The circuit is unchanged.
+credit).
 
 **vote** (MAX_NOTES = 2 stake notes of one validator on one proposal,
 nothing spent; ORCHARD_DESIGN 4.2, 8.5):
@@ -793,11 +796,16 @@ one MsgSend to self).
   builders (javalite, SwiftProtobuf), which produce exactly this.
 - **Ciphertext slots.** Every action's output ciphertext is exactly 217
   bytes, dummies included. A StakeProof carries exactly two lane-A
-  nullifiers; anchor, owner_tag, commitment, credit_nullifier,
-  credit_commitment and debt_root are each 32 bytes; `ciphertext` is
+  nullifiers and exactly two lane-A groundworks_tags; anchor, commitment,
+  credit_nullifier, credit_commitment, debt_root, credit_groundworks_tag,
+  vote_tag and credit_vote_tag are each 32 bytes; `ciphertext` is
   exactly 201 bytes iff `commitment` is non-zero (else empty), likewise
   `credit_ciphertext` and `credit_commitment`; debt_root is zero exactly
-  when clear_before is 0. Both apps check all of this before broadcast.
+  when clear_before is 0; a vote tag is non-zero exactly with a positive
+  vote weight (each lane), and the msg's groundworks_split is non-empty
+  exactly when an output votes. Both apps check the counts, lengths,
+  ciphertexts and debt_root rule before broadcast; the chain refuses the
+  rest.
 - **One use per binding.** A registration's binding is refused once a
   registration with it has landed (§13).
 - **gas_limit** at most 5× what the tx uses.
@@ -836,7 +844,7 @@ ERTH note for its fee.
    2 × the wallet's own estimate), the estimate pricing (at the node's gas
    price, at least min_fee) the gas of the tx's shape at the chain's
    default schedule: 100,000 + 10 per tx byte + per bundle 100,000 +
-   2,300,000 per action; + 3,150,000 for a stake proof (+ 750,000 for a
+   2,300,000 per action; + 3,450,000 for a stake proof (+ 750,000 for a
    credit lane and 1,024 × 5,000 + 128 × 20,000 for MsgRedelegate's
    x/staking record at its worst); + 2,150,000 for a membership or a move
    proof (+ 3 × 150,000 for MsgMoveHandle, + 5 × 150,000 for
@@ -906,7 +914,9 @@ digests (each msg's Go `SighashFields`), and the membership scope / stake
 proof it carries. `StakeFields` (every stake-proof msg, first):
 
     StakeFields = anchor, nf_0, nf_1, cm, Bytes(ciphertext), credit_nf, credit_cm, Bytes(credit_ciphertext),
-                  owner_tag, U64(clear_before), debt_root          (absent field: 0; absent bytes: Bytes of nothing)
+                  U64(clear_before), debt_root, gw_0, gw_1, credit_gw,
+                  vote_tag, U64(vote_weight), credit_vote_tag, U64(credit_vote_weight)
+                  (absent field: 0; absent bytes: Bytes of nothing)
 
 | msg | sighash fields after the digests |
 | --- | --- |
@@ -920,14 +930,10 @@ proof it carries. `StakeFields` (every stake-proof msg, first):
 | `/earth.assembly.v1.MsgVoteProposal` | U64(proposal_id), U64(option) |
 | `/earth.assembly.v1.MsgProposeRemoval` | U64(option_id) |
 | `/earth.assembly.v1.MsgVoteRemoval` | U64(option_id), U64(option) |
-| `/earth.shieldedstaking.v1.MsgDelegate` | StakeFields, Bytes(validator), U64(amount), U64(derth) |
-| `/earth.shieldedstaking.v1.MsgRestake` | StakeFields, Bytes(validator) |
-| `/earth.shieldedstaking.v1.MsgUndelegate` | StakeFields, Bytes(validator), U64(amount), pc, Bytes(ciphertext) |
-| `/earth.shieldedstaking.v1.MsgRedelegate` | StakeFields, Bytes(src_validator), Bytes(dst_validator), U64(amount), U64(dst_derth), U64(move_time) |
-| `/earth.shieldedstaking.v1.MsgLockPosition` | StakeFields, Bytes(validator), U64(amount), Bytes(SplitsBytes) |
-| `/earth.shieldedstaking.v1.MsgUpdatePosition` | StakeFields, U64(position_id), Bytes(SplitsBytes) |
-| `/earth.shieldedstaking.v1.MsgUnlockPosition` | StakeFields, U64(position_id) |
-| `/earth.shieldedstaking.v1.MsgPositionVote` | StakeFields, U64(position_id), U64(proposal_id), Bytes(OptionsBytes) |
+| `/earth.shieldedstaking.v1.MsgDelegate` | StakeFields, Bytes(validator), U64(amount), U64(derth), Bytes(SplitsBytes(groundworks_split)) |
+| `/earth.shieldedstaking.v1.MsgRestake` | StakeFields, Bytes(validator), Bytes(SplitsBytes(groundworks_split)) |
+| `/earth.shieldedstaking.v1.MsgUndelegate` | StakeFields, Bytes(validator), U64(amount), pc, Bytes(ciphertext), Bytes(SplitsBytes(groundworks_split)) |
+| `/earth.shieldedstaking.v1.MsgRedelegate` | StakeFields, Bytes(src_validator), Bytes(dst_validator), U64(amount), U64(dst_derth), U64(move_time), Bytes(SplitsBytes(groundworks_split)) |
 | `/earth.shieldedstaking.v1.MsgStakeVote` | U64(proposal_id), Bytes(validator), Bytes(OptionsBytes), U64(weight), vnf_0, vnf_1, debt_root (no StakeFields) |
 | `/earth.dex.v1.MsgNoteSwap` | Bytes(denom_in), U64(amount_in), Bytes(denom_out), U64(min_amount_out), pc, Bytes(ct) |
 | `/earth.dex.v1.MsgAddLiquidityShielded` | U64(pool_id), Bytes(min_shares), share_pc, Bytes(share_ct), refund_pc, Bytes(refund_ct), U64(erth_amount) |
@@ -937,10 +943,11 @@ Strings (validator, denom, handle, min_shares, signature_algorithm) are
 Bytes of their bytes. Public signals are canonical decimals below p.
 
 - **SplitsBytes** = per entry, option_id (u64 BE) || percent (u64 BE)
-  (vectors `splits_bytes`). Splits are sent sorted by option_id.
+  (vectors `splits_bytes`); an empty split is no bytes, so a stake msg that
+  does not vote binds Bytes(""). Splits are sent sorted by option_id.
 - **OptionsBytes** = per option, option (u64 BE) || len (u32 BE) || the
   weight's LegacyDec string (vectors `options_bytes`). Every option weight
-  in MsgStakeVote / MsgPositionVote is the canonical LegacyDec string, 18
+  in MsgStakeVote is the canonical LegacyDec string, 18
   decimals ("1.000000000000000000", "0.500000000000000000"; vectors
   `legacy_dec`); the wallet canonicalizes before laying the msg out and
   refuses a weight outside (0, 1].
@@ -966,17 +973,19 @@ reserved numbers are never written):
     MsgVoteProposal          fee 1, membership 2, proposal_id 3, option 4   (YES 1, NO 2)
     MsgProposeRemoval        fee 1, membership 2, option_id 3
     MsgVoteRemoval           fee 1, membership 2, option_id 3, option 4
-    StakeProof               proof 1, anchor 2, nullifiers 3 (two), owner_tag 7, commitment 9, ciphertext 10,
+    StakeProof               proof 1, anchor 2, nullifiers 3 (two), commitment 9, ciphertext 10,
                              credit_nullifier 11, credit_commitment 12, credit_ciphertext 13,
-                             clear_before 14, debt_root 15; reserved 4, 5, 6, 8
-    MsgDelegate              bundle 1, validator 2, stake 4, amount 5, derth 6; reserved 3
-    MsgRestake               bundle 1, validator 2, stake 4; reserved 3
-    MsgUndelegate            bundle 1, validator 2, amount 3, stake 5, pc 6, ciphertext 7; reserved 4
-    MsgRedelegate            bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7
-    MsgLockPosition          bundle 1, validator 2, amount 3, splits 4, stake 6; reserved 5
-    MsgUpdatePosition        bundle 1, position_id 2, splits 3, stake 5; reserved 4
-    MsgUnlockPosition        bundle 1, position_id 2, stake 4; reserved 3
-    MsgPositionVote          bundle 1, position_id 2, proposal_id 3, options 4, stake 6; reserved 5
+                             clear_before 14, debt_root 15, groundworks_tags 16 (two),
+                             credit_groundworks_tag 17, vote_tag 18, vote_weight 19,
+                             credit_vote_tag 20, credit_vote_weight 21; reserved 4, 5, 6, 7 (owner_tag), 8
+    AllocationWeight         option_id 1, percent 2   (groundworks_split entries)
+    MsgDelegate              bundle 1, validator 2, stake 4, amount 5, derth 6, groundworks_split 7; reserved 3
+    MsgRestake               bundle 1, validator 2, stake 4, groundworks_split 5; reserved 3
+    MsgUndelegate            bundle 1, validator 2, amount 3, stake 5, pc 6, ciphertext 7, groundworks_split 8;
+                             reserved 4
+    MsgRedelegate            bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7,
+                             groundworks_split 8
+    (MsgLockPosition, MsgUpdatePosition, MsgUnlockPosition and MsgPositionVote are retired, chain v1.2.0)
     MsgStakeVote             bundle 1, proposal_id 2, validator 3, options 4, weight 5, proof 8,
                              vote_nullifiers 10 (exactly two), debt_root 11; reserved 6, 7, 9
     MsgNoteSwap              bundle 1, denom_out 2, min_amount_out 3, pc 4, ciphertext 5, denom_in 8, amount_in 9;
@@ -1390,8 +1399,7 @@ records `*_moved_out` and never casts or claims again.
 ## 15. Staking
 
 All staking msgs carry a fee bundle; every stake proof (Delegate, Restake,
-Undelegate, Redelegate, LockPosition, UpdatePosition, UnlockPosition,
-PositionVote) names Query/DebtTree's current `clear_before` and `root`
+Undelegate, Redelegate) names Query/DebtTree's current `clear_before` and `root`
 (read when the action starts), whether or not it clears a label (a proof
 naming them only to clear would be linkable to the
 public redelegation into that validator). **[chain]** The chain takes
@@ -1406,14 +1414,15 @@ msg's denom (at most one labelled) and creates exactly one note back (the
 merged note, the change, or a zero note on a full exit: amount 0, a real
 commitment). With nothing of ours to spend (a first delegation) slot 0 is a
 padding input: amount 0, fresh rho and rcm, nullifier H(TAG_SNF, nk, rho,
-0), so nf_0 is never zero on a note-moving msg. A position's msg (update,
-vote) moves nothing: lane A all zero, asset 0. Anchor: the wallet's
+0), so nf_0 is never zero; slot 1 pads likewise when one note is spent.
+Each slot also publishes its Groundworks tag H(TAG_GW, nk, rho) (a padding
+slot's from its padding rho). Anchor: the wallet's
 chain-verified stake root (the empty tree's root before the first note).
 
 **Clearing.** A labelled input whose `move_time < clear_before` clears at
 amount − exposed + retained (retained = the debt row's, or all of exposed
 when absent), the output unlabelled. While the window is open the labelled
-part cannot leave: undelegate, lock and move take only amount − exposed, and
+part cannot leave: undelegate and move take only amount − exposed, and
 the wallet refuses more up front with "moved stake can move again after
 <date>" (date = move_time + window, UTC). Once clearable, the haircut
 (exposed − retained) is shown on the confirm sheet and sent as shown (a
@@ -1455,7 +1464,8 @@ that ties the asking IP to the intent.
 
 **Delegate.** MsgDelegate merges `amount` uerth (released by the bundle)
 into the validator's note (v_in = derth) and names `derth`, the derth the
-chain credits:
+chain credits (from chain v1.2.0 the chain bonds the amount in the same
+block):
 
     derth = floor(value × S / B) − ceil(floor(value × S / B) × 10 / 1e6)     (S = 0: value, B = 0 required)
 
@@ -1467,7 +1477,8 @@ refused in the ante (1103, no cost).
 
 **Restake.** MsgRestake merges two notes of a validator into one, only on
 the user's tap (Earn "N notes · tap to merge"; offered when at most one of
-the two is labelled).
+the two is labelled). It is also the Groundworks vote tx (below): the
+validator's notes respent onto one note with the split.
 
 **Undelegate.** The confirm sheet shows the value floor(amount × B / S)
 from the list, read when the user reviews. The stake proof spends `amount`
@@ -1522,36 +1533,52 @@ the window and any haircut. The `shieldedstaking_redelegate` event carries
 credited, move_key, move_time; the wallet never queries a move
 (Query/Redelegation and Query/Move are never asked).
 
-**Positions (Groundworks).** MsgLockPosition: lane A releases `amount` with
-a new owner-tag counter's salt (§7), refused up front (before a counter is
-taken) when open-window stake would have to leave. MsgUpdatePosition and
-MsgPositionVote: lane A all zero, the position's salt. MsgUnlockPosition:
-lane A merges the position's derth (v_in) into the wallet's note at its
-validator (or pads), the position's salt, and the fee bundle carries the
-unlock record (§6). The chain weighs positions per validator. Positions are
-read from `/earth/shieldedstaking/v1/positions`, the whole listing paged by
-its own key (never `Query/Position` for an id: that would tell the node
-which positions are whose); the wallet picks its own by owner tag. One votes
-on a proposal only if created before the snapshot's block.
+**Groundworks votes [wallet].** The wallet keeps one split
+(`groundworks_split`, option → percent; Android state.json
+`groundworks_split`, `groundworks_chosen`, `groundworks_expires_at`; iOS
+`groundworksSplit`, `groundworksChosen`, `groundworksExpiresAt`). With a
+split, every stake msg it builds (Delegate, Restake, Undelegate,
+Redelegate) carries it as `groundworks_split`, and each output votes:
+vote_tag = H(TAG_GW, nk, out_rho), vote_weight = the output's unexposed
+amount (lane B: credit_vote_tag / credit_vote_weight, the unexposed part,
+so a labelled credit's derth is not counted until a later proof clears
+it). An output votes only if that weight × its validator's `epoch_rate`
+(the validator list) is at least `min_position`; with no voting output the
+msg carries no split. Without a split nothing votes, and every proof still
+cancels whatever votes its inputs carried.
 
-**Split leases (Groundworks).** A position's split counts until
-`split_expires_at` (Position field 11, unix seconds): cast or renewed
-(MsgLockPosition, MsgUpdatePosition) + x/allocation
-`groundworks_lease_seconds` (0 = 365 days). MsgUpdatePosition with the same
-split renews it. At the lease end the chain clears the split (`splits`
-empty, `split_expires_at` 0; a `shieldedstaking_position` event with action
-`split_lapsed`) and the position directs nothing until a split is cast
-again. The wallet reads `split_expires_at` from that same whole listing and
-keeps, per position of its own, the last split and lease end it saw
-(Android state.json `position_leases`: `[{id, expires_at, split}]`; iOS
-`positionLeases`), clamped to now + 10 years, kept through a same-chain
-reset, dropped when the position is gone. A position is **lapsed** when its
-split is cleared, or held past its lease end (the chain clears it in the
-next block); the card then reads "Lapsed — choose a split again" and the
-split sheet opens on the last split seen, removed options left out. From 30
-days before the lease end the card offers **Renew**: MsgUpdatePosition with
-the held split, on the user's confirmation; a split naming an option the
-fund no longer has is not offered for renewal (the chain would refuse it).
+- **Vote, change, renew** (Govern tab, Groundworks: "Vote", "Change vote",
+  "Renew"): the split is saved as chosen, then one MsgRestake per
+  validator with stake, each respending (and merging up to two of) that
+  validator's notes onto one note that votes; while more notes remain
+  mergeable the restake repeats (at most 8 a validator). Each restake is
+  its own tx on the one confirmation; the wallet syncs through each
+  before the next, so each pays its fee from what the last left.
+- **Stop voting**: the same restakes with an empty split; the votes are
+  cancelled and none cast.
+- **Reading votes.** `/earth/shieldedstaking/v1/groundworks_votes`, the
+  whole listing paged (never `/groundworks_votes/{id}`, and nothing asks
+  about one tag); the wallet picks its own by its spendable notes' tags.
+- **Restore.** With no split chosen on this device, the wallet adopts the
+  split of its latest vote on chain (highest id among votes under its
+  tags), so its next stake tx carries the vote forward instead of
+  cancelling it. A split chosen here (cast, changed or stopped) is never
+  replaced by the chain's.
+- **Leases.** A vote counts until `split_expires_at` (unix seconds): cast +
+  x/allocation `groundworks_lease_seconds` (0 = 365 days); any stake msg
+  carrying the split re-casts and so renews it. At the lease end the chain
+  deletes the vote (event `shieldedstaking_groundworks_vote`, action
+  `lapsed`). The wallet remembers the earliest lease end among its own
+  votes (`groundworks_expires_at`): the vote is **lapsed** once that time
+  has passed or none of its votes is left on chain while a split is
+  chosen. From 30 days before the lease end the Govern card
+  offers **Renew** (the held split, on the user's confirmation; not
+  offered when the split names an option the fund no longer has) and a
+  reminder is shown, until 30 days after a lapse. Nothing renews on its
+  own.
+
+The privacy cost (§7): while it votes, a wallet's stake txs at a validator
+link to one another through the tags each publishes and casts.
 
 **Stake votes (MsgStakeVote, no stake proof).** One msg votes up to two
 eligible derth notes of one validator with one weight; nothing is spent or
@@ -1634,7 +1661,7 @@ re-minted, so a note votes on every concurrently open proposal.
     votes.
 
 **Casting [wallet].** The proposal screen shows one confirm sheet per
-validator and per position, in order, the next raised only after the last
+validator, in order, the next raised only after the last
 tx went through and each sent only on its own tap. A validator with more
 eligible notes than one vote holds first asks: "Vote in parts" (one sheet
 per part; each part publishes its own weight and the parts can be linked by
@@ -1973,18 +2000,19 @@ text alone does not.
   confirmed one (a stake that needs merging first is refused; a merge is
   its own sheet). Sync, the reminders and the payout bookkeeping send
   nothing. A chain of sheets (a switch's handle and caretaker moves, a
-  stake vote's validators and positions) raises the next sheet only after
-  the last tx went through, and each is sent only on its own tap.
+  stake vote's validators) raises the next sheet only after the last tx
+  went through, and each is sent only on its own tap. One exception: a
+  Groundworks vote, change, renewal or stop is one confirmation that sends
+  one restake per validator in turn (§15); its sheet says how many.
 - **Reminders** (Home banners and the Handle screen): "ANML ready to claim"
   when today's claim is open and not made; the caretaker vote from 30 days
   before its expires_at until 30 days after; the handle from 30 days before
   expires_at through its renewal period; a handle naming this wallet's
-  address that it does not hold; each Groundworks position's split from 30
-  days before its lease end until 30 days after (§15), whether or not the
+  address that it does not hold; the Groundworks vote from 30 days before
+  its earliest lease end until 30 days after (§15), whether or not the
   identity is live, and never while the lease end is unknown (a lapse the
   wallet never saw). The caretaker and Groundworks banners open their Govern
-  screen (Groundworks on Positions); Renew there is one tap and its confirm
-  sheet. All reminder arithmetic saturates.
+  screen; Renew there is one tap and its confirm sheet. All reminder arithmetic saturates.
 - **Saved state.** state.json is written to a temp file, fsynced and renamed
   over (iOS: atomic write); a failed save is an error, never silent. An
   unreadable state.json is an error shown to the user, never replaced by an
@@ -2023,7 +2051,8 @@ text alone does not.
     took it (CheckTx code 0), at most 200 (settled ones dropped first):
     hash, kind (REGISTER, SWITCH, MOVE, UNSHIELD, SEND, MERGE, SWAP,
     ADD_LIQUIDITY, REMOVE_LIQUIDITY, STAKE, UNSTAKE, REDELEGATE, RESTAKE,
-    VOTE, CARETAKER, POSITION, CLAIM_ANML, HANDLE), identity generation,
+    VOTE, CARETAKER, POSITION (records from before chain v1.2.0),
+    CLAIM_ANML, HANDLE), identity generation,
     counterparty where the wallet knows it (a handle, its new identity, a
     validator, a proposal), fee, submitted_at (wallet clock), outs and ins
     (per denom: the notes and stake notes it spends less its outputs back to

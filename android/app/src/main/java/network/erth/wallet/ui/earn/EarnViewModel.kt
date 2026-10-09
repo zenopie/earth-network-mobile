@@ -50,7 +50,7 @@ data class EarnUiState(
     val totalBondedUerth: Long,
     /**
      * Live rate_v (ERTH per derth) of every validator with a book: what
-     * private stake (derth/<validator> notes, positions) is worth. From the
+     * private stake (derth/<validator> notes) is worth. From the
      * validator list, read whole, so no read names which ones this wallet
      * holds.
      */
@@ -59,10 +59,6 @@ data class EarnUiState(
     val names: Map<String, Pair<String, Double>> = emptyMap(),
     /** Every validator the chain lists (Query/Validators, whole), for the picker and each card's standing. */
     val all: List<network.erth.wallet.privacy.PrivacyChainReads.ValidatorQuote> = emptyList(),
-    /** The daily round (x/shieldedstaking's epoch): when it ends, unix seconds; null until read. */
-    val roundEndsAt: Long? = null,
-    /** The block that ended the last round (StakeRound.firstHeight); null when the node could not say. */
-    val roundStartHeight: Long? = null,
     /** x/staking's unbonding_time, in seconds; null until read. */
     val unbondingSeconds: Long? = null,
 ) {
@@ -157,27 +153,12 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
 
-                // The round, its first block (found once per round: every
-                // probe is chain-wide, nothing about this wallet) and the
-                // unbonding period.
-                val epoch = runCatching { PrivacyQueries.epoch() }.getOrNull()
-                val startHeight = epoch?.let { e ->
-                    val key = "${network.erth.wallet.chain.NodeConfig.current.lcd}#${e.number}@${e.startTime}"
-                    roundHeights[key] ?: run {
-                        val tip = network.erth.wallet.privacy.chain.LcdChainRoots.latestBlock()
-                        tip?.time?.let { t ->
-                            network.erth.wallet.privacy.StakeRound.firstHeight(e.startTime, tip.height, t) {
-                                network.erth.wallet.privacy.chain.LcdChainRoots.blockTime(it)
-                            }
-                        }?.also { roundHeights[key] = it }
-                    }
-                }
+                // The unbonding period (chain-wide). A delegation bonds in its
+                // own block, so there is no round to wait for.
                 val timing = runCatching { PrivacyQueries.stakingTiming() }.getOrNull()
 
                 EarnUiState(
                     all = entries,
-                    roundEndsAt = epoch?.endTime,
-                    roundStartHeight = startHeight,
                     unbondingSeconds = timing?.unbondingSeconds,
                     derthRates = entries.associate { it.validator to it.rate },
                     names = entries.associate { it.validator to (it.moniker to it.commission) },
@@ -213,11 +194,6 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
      * belongs to a different address is a worse answer than no balance at all,
      * because nothing about it looks wrong.
      */
-    private companion object {
-        /** Per node and round, for the process: found once, never re-asked. */
-        val roundHeights = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    }
-
     fun clear() {
         _state.value = null
     }

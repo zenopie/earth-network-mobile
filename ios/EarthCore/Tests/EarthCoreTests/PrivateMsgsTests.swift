@@ -35,14 +35,24 @@ final class PrivateMsgsTests: XCTestCase {
     /// A deterministic 201-byte stand-in for a wallet stake ciphertext (main.go sct).
     func sct(_ seed: Int) -> Data { Data((0 ..< 201).map { UInt8(truncatingIfNeeded: seed ^ $0) }) }
 
-    /// main.go stakeProof: lane A nullifiers, its output, the credit lane, a clear_before and debt root.
+    /// main.go stakeProof: lane A nullifiers and tags, its output, the credit lane, a clear_before and debt root.
     func stake(_ seed: UInt64, _ spends: Int, _ creates: Bool, credits: Bool = false, clears: Bool = true) -> StakeProof {
         StakeProof(proof: Data([0x5e, UInt8(truncatingIfNeeded: seed)]), anchor: fb(seed),
-                   nullifiers: (0 ..< 2).map { $0 < spends ? fb(seed + 1 + UInt64($0)) : zero32 }, ownerTag: fb(seed + 8),
+                   nullifiers: (0 ..< 2).map { $0 < spends ? fb(seed + 1 + UInt64($0)) : zero32 },
                    commitment: creates ? fb(seed + 3) : zero32, ciphertext: creates ? sct(Int(seed)) : Data(),
                    creditNullifier: credits ? fb(seed + 4) : zero32, creditCommitment: credits ? fb(seed + 5) : zero32,
                    creditCiphertext: credits ? sct(Int(seed) + 1) : Data(),
-                   clearBefore: clears ? 1_790_000_000 + seed : 0, debtRoot: clears ? fb(seed + 6) : zero32)
+                   clearBefore: clears ? 1_790_000_000 + seed : 0, debtRoot: clears ? fb(seed + 6) : zero32,
+                   groundworksTags: [fb(seed + 8), fb(seed + 9)], creditGroundworksTag: credits ? fb(seed + 10) : zero32,
+                   voteTag: zero32, voteWeight: 0, creditVoteTag: zero32, creditVoteWeight: 0)
+    }
+
+    /// main.go voting: lane A's output votes (tag seed+11, weight w), and the credit lane's (seed+12, cw) when cw > 0.
+    func voting(_ p: StakeProof, _ seed: UInt64, _ w: UInt64, _ cw: UInt64 = 0) -> StakeProof {
+        var p = p
+        p.voteTag = fb(seed + 11); p.voteWeight = w
+        if cw > 0 { p.creditVoteTag = fb(seed + 12); p.creditVoteWeight = cw }
+        return p
     }
 
     func membership(_ seed: UInt64) -> Membership {
@@ -101,10 +111,16 @@ final class PrivateMsgsTests: XCTestCase {
                                    proof: Data([0x70, 0x7e]), voteNullifiers: [fb(121), fb(122)], debtRoot: DebtTree.emptyRoot.bytes),
         "stake_vote_two": MsgStakeVote(bundle: fee(127, 2000), proposalID: 6, validator: validator, options: opts, weight: 999,
                                        proof: Data([0x70, 0x7e]), voteNullifiers: [fb(128), fb(129)], debtRoot: fb(130)),
-        "lock_position": MsgLockPosition(bundle: fee(140, 2000), validator: validator, amount: 400_000, splits: [w(2, 100)], stake: stake(140, 1, true)),
-        "update_position": MsgUpdatePosition(bundle: fee(150, 2000), positionID: 9, splits: [w(2, 100)], stake: stake(150, 0, false)),
-        "unlock_position": MsgUnlockPosition(bundle: fee(160, 2000), positionID: 9, stake: stake(160, 1, true)),
-        "position_vote": MsgPositionVote(bundle: fee(170, 2000), positionID: 9, proposalID: 5, options: opts, stake: stake(170, 0, false)),
+        "delegate_vote": MsgShieldedDelegate(bundle: fee(140, 502_000), validator: validator, amount: 500_000, derth: 449_995,
+                                             stake: voting(stake(140, 1, true), 140, 849_995), groundworksSplit: [w(2, 100)]),
+        "restake_vote": MsgRestake(bundle: fee(150, 2000), validator: validator, stake: voting(stake(150, 2, true), 150, 1_200_000),
+                                   groundworksSplit: [w(2, 100)]),
+        "undelegate_vote": MsgShieldedUndelegate(bundle: fee(160, 2000), validator: validator, amount: 400_000,
+                                                 stake: voting(stake(160, 1, true), 160, 600_000), pc: fb(161), ciphertext: bct(161),
+                                                 groundworksSplit: [w(2, 100)]),
+        "redelegate_vote": MsgRedelegate(bundle: fee(170, 2000), srcValidator: validator, dstValidator: Vectors.json["validator2"] as! String,
+                                         amount: 400_000, stake: voting(stake(170, 1, true, credits: true), 170, 500_000, 380_000),
+                                         dstDerth: 380_000, moveTime: 1_790_000_123, groundworksSplit: [w(2, 100)]),
         "redelegate": MsgRedelegate(bundle: fee(175, 2000), srcValidator: validator, dstValidator: Vectors.json["validator2"] as! String,
                                     amount: 400_000, stake: stake(175, 1, true, credits: true), dstDerth: 380_000, moveTime: 1_790_000_123),
         "note_swap": MsgNoteSwap(bundle: bundle(180, ("uanml", 300_000), ("uerth", 2000)), denomIn: "uanml", amountIn: 300_000, denomOut: "uerth",
@@ -147,18 +163,18 @@ final class PrivateMsgsTests: XCTestCase {
 
     func testStakeFieldsMatchTheChain() throws {
         let want = Vectors.json["stake_fields_redelegate"] as! [String]
-        let got = try PrivateMsgs.stakeFields(stake(175, 1, true, credits: true))
+        let got = try PrivateMsgs.stakeFields(voting(stake(175, 1, true, credits: true), 175, 500_000, 380_000))
         XCTAssertEqual(want, got.map(\.hex))
     }
 
     /// The stake and vote circuits' public inputs, as the chain lays them out per msg (FakeChain checks every witness against this layout).
     func testPublicInputLayoutsMatchTheChain() throws {
         let want = Vectors.obj("public_inputs")
-        for name in ["delegate", "undelegate", "redelegate"] {
+        for name in ["delegate", "undelegate", "redelegate", "redelegate_vote"] {
             let m = msgs[name] as! any PrivateMsg
             let got = try ChainLayout.stakePublicInputs(m.stakeProof!, ChainLayout.lanes(m), Vectors.fe(77))
             XCTAssertEqual(want[name] as? [String], got.map(\.hex), name)
-            XCTAssertEqual(16, got.count)
+            XCTAssertEqual(22, got.count)
         }
         let vote = msgs["stake_vote_two"] as! MsgStakeVote
         let got = try ChainLayout.votePublicInputs(vote, noteRoot: Vectors.fe(131), nfRoot: Vectors.fe(132), sighash: Vectors.fe(77))

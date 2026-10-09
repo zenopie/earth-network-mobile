@@ -12,8 +12,8 @@ import org.json.JSONObject
  *
  *   CARETAKER   — the Caretaker Fund. One human, one vote; requires a live
  *                 proof-of-personhood registration (see [Personhood]).
- *   GROUNDWORKS — the Deflation Fund. Weighted by private stake positions
- *                 (privacy/PrivacyWallet lockPosition / updatePosition).
+ *   GROUNDWORKS — the Deflation Fund. Weighted by private stake: each stake
+ *                 note votes the wallet's split (privacy/PrivacyWallet castGroundworks).
  */
 object Allocation {
 
@@ -32,6 +32,8 @@ object Allocation {
          * does not silently detach the APR from its source.
          */
         val handler: String = "",
+        /** Struck by the assembly (x/allocation Option.removed): kept until pruned, but no split may name it. */
+        val removed: Boolean = false,
     )
 
     /**
@@ -57,16 +59,28 @@ object Allocation {
      */
     data class Stream(val options: List<OptionInfo>, val totalWeight: String)
 
+    /** Every page (the chain serves at most 100 options a page); a page repeated is a failed read. */
     fun stream(streamId: StreamId): Stream {
-        val (code, body) = EarthRest.get(
-            "/earth/allocation/v1/options/${path(streamId)}"
-        )
-        if (code !in 200..299) return Stream(emptyList(), "0")
-        val json = JSONObject(body)
-        return Stream(
-            options = parseOptions(json),
-            totalWeight = json.optString("total_weight", "0"),
-        )
+        val options = ArrayList<OptionInfo>()
+        var total = "0"
+        var key: String? = null
+        val keys = HashSet<String>()
+        val seen = HashSet<Long>()
+        do {
+            // Capped: a node serving new keys forever is not followed.
+            if (keys.size >= 100) return Stream(emptyList(), "0")
+            val (code, body) = EarthRest.get(
+                "/earth/allocation/v1/options/${path(streamId)}" +
+                    (key?.let { "?pagination.key=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: "")
+            )
+            if (code !in 200..299) return Stream(emptyList(), "0")
+            val json = JSONObject(body)
+            if (key == null) total = json.optString("total_weight", "0")
+            options += parseOptions(json).filter { seen.add(it.id) }
+            key = json.optJSONObject("pagination")?.optString("next_key")?.takeIf { it.isNotEmpty() && it != "null" }
+            if (key != null && !keys.add(key)) return Stream(emptyList(), "0")
+        } while (key != null)
+        return Stream(options = options, totalWeight = total)
     }
 
     private fun parseOptions(json: JSONObject): List<OptionInfo> {
@@ -81,6 +95,7 @@ object Allocation {
                     kind = o.optString("kind", ""),
                     amountAllocated = o.optString("amount_allocated", "0"),
                     handler = o.optString("handler", ""),
+                    removed = o.optBoolean("removed", false),
                 )
             )
         }
@@ -88,8 +103,8 @@ object Allocation {
     }
 
     // No messages. The Caretaker split is cast privately
-    // (PrivacyWallet.setCaretaker) and Groundworks is directed by positions
-    // (PrivacyWallet.lockPosition / updatePosition). MsgSetAllocations
+    // (PrivacyWallet.setCaretaker) and Groundworks by the split stake notes
+    // vote with (PrivacyWallet.castGroundworks). MsgSetAllocations
     // remains only for a validator operator's self-bond, which this wallet
     // does not manage.
 }

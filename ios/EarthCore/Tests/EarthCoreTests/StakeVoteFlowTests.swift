@@ -78,7 +78,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         }
         func epochNumber() async throws -> UInt64 { try await inner.epochNumber() }
         func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot { snap }
-        func positions() async throws -> [PrivacyReads.Position] { try await inner.positions() }
+        func groundworksVotes() async throws -> [PrivacyReads.GroundworksVote] { try await inner.groundworksVotes() }
         func debtTree(start: UInt64, limit: Int) async throws -> PrivacyReads.DebtTreePage { try await inner.debtTree(start: start, limit: limit) }
         func validators() async throws -> PrivacyReads.ValidatorList { try await inner.validators() }
         func minDelegation() async throws -> UInt64 { try await inner.minDelegation() }
@@ -87,14 +87,13 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         }
     }
 
-    /// Two validators' derth and a position, all before proposal 12's snapshot.
-    func stakedAtTwoValidatorsWithAPosition(_ chain: FakeChain) async throws -> PrivacyWallet {
+    /// Two validators' derth, before proposal 12's snapshot.
+    func stakedAtTwoValidators(_ chain: FakeChain) async throws -> PrivacyWallet {
         let a = try wallet(chain)
         for _ in 0 ..< 4 { try funded(chain, a, 2_000_000) }
         try await a.sync()
         _ = try await a.delegate(validator: validator, amount: 1_000_000); try await a.sync()
         _ = try await a.delegate(validator: validator2, amount: 1_000_000); try await a.sync()
-        _ = try await a.lockPosition(validator: validator, amount: 100_000, splits: [2: 100]); try await a.sync()
         chain.openProposal(12)
         return a
     }
@@ -253,15 +252,14 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         dump(chain, "stakeVoteTwoValidators")
     }
 
-    /// One vote per validator and one per position, each its own tx the user confirms; nothing is cast in
+    /// One vote per validator, each its own tx the user confirms; nothing is cast in
     /// the background. A validator voted once is not voted again.
-    func testStakeVotesAreOneTxPerValidatorAndPosition() async throws {
+    func testStakeVotesAreOneTxPerValidator() async throws {
         let chain = FakeChain()
-        let a = try await stakedAtTwoValidatorsWithAPosition(chain)
+        let a = try await stakedAtTwoValidators(chain)
         try await a.sync()
         let items = try await a.stakeVoteItems(proposalID: 12)
-        XCTAssertEqual(3, items.count)
-        XCTAssertEqual(2, items.filter { if case .validator = $0 { return true } else { return false } }.count)
+        XCTAssertEqual(2, items.count)
         let before = chain.height
         for item in items {
             let r = try await a.castStakeVote(proposalID: 12, item: item, options: yes)
@@ -269,8 +267,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
             try await a.sync()
         }
         XCTAssertEqual(2, chain.stakeVotes.count)
-        XCTAssertEqual(1, chain.positionVotes.count)
-        XCTAssertEqual(before + 3, chain.height)
+        XCTAssertEqual(before + 2, chain.height)
         // Final: the validators' notes have voted.
         let again = try await a.castStakeVote(proposalID: 12, item: items[0], options: yes)
         XCTAssertNil(again)
@@ -607,24 +604,4 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         XCTAssertTrue(v.chain.misaligned.isEmpty, "\(v.chain.misaligned)")
     }
 
-    /// A position's vote is reported (and persisted by the controller) when the node takes it.
-    func testAPositionVoteReportsAcceptanceBeforeItsBlock() async throws {
-        let chain = FakeChain()
-        let a = try wallet(chain)
-        for _ in 0 ..< 4 { try funded(chain, a, 2_000_000) }
-        _ = try await a.sync()
-        _ = try await a.delegate(validator: validator, amount: 1_000_000); _ = try await a.sync()
-        _ = try await a.lockPosition(validator: validator, amount: 100_000, splits: [2: 100]); _ = try await a.sync()
-        chain.openProposal(12)
-        _ = try await a.sync()
-        let pos = try await a.stakeVoteItems(proposalID: 12).first { if case .position = $0 { return true } else { return false } }!
-        guard case let .position(id, counter) = pos else { return XCTFail("no position") }
-        let p = try await a.positions().first { $0.position.id == id }!.position
-        let got = Box<String>()
-        chain.unconfirmedNext = 1
-        await assertThrowsAsync({ try await a.positionVote(p, counter: counter, proposalID: 12, options: self.yes) { got.v = $0 } })
-        XCTAssertNotNil(got.v)
-        XCTAssertNotNil(chain.txs[got.v!])
-        XCTAssertEqual(1, chain.positionVotes.count)
-    }
 }

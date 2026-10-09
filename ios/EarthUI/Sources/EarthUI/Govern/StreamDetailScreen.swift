@@ -21,19 +21,15 @@ struct StreamDetailScreen: View {
     /// Non-nil when this wallet cannot vote here, and why.
     let eligibility: String?
     let onChanged: () -> Void
-    /// Opens on Positions (a lease reminder's tap on Home).
-    var openPositions = false
 
     /// Which split the chart is showing.
     enum Lens: String, CaseIterable { case actual = "Actual", preferred = "Preferred" }
 
     @State private var lens = Lens.actual
     @State private var editing = false
-    @State private var path: [String] = []
-    @State private var openedPositions = false
 
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     Spacer().frame(height: theme.space.x8)
@@ -67,20 +63,12 @@ struct StreamDetailScreen: View {
                     // tally — a vote button there would sit under a chart it
                     // cannot change, and read as editing everyone's split
                     // rather than your own.
-                    if stream == .groundworks {
-                        // Groundworks is directed by positions, not by a
-                        // per-account split: locked private stake under an
-                        // owner tag, its split public, its owner not.
+                    if stream == .groundworks, eligibility == nil {
+                        // Your stake votes: every stake tx carries the split
+                        // onto the note it makes. Shown under both lenses:
+                        // the lease and its renewal are not a chart's.
                         Spacer().frame(height: theme.space.x24)
-                        NavigationLink(value: "positions") {
-                            Text(model.positions.isEmpty ? "Lock stake in a position" : "Your positions")
-                                .font(EarthType.body).fontWeight(.semibold)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, theme.space.x12)
-                                .foregroundStyle(theme.colors.brandButtonFg)
-                                .background(theme.colors.brandButtonBg, in: .capsule)
-                        }
-                        .buttonStyle(.plain)
+                        GroundworksVoteControls(state: state, onChanged: onChanged) { editing = true }
                     } else if lens == .preferred, eligibility == nil {
                         Spacer().frame(height: theme.space.x24)
                         EarthButton(title: state.slices.isEmpty ? "Allocate" : "Change allocation") {
@@ -93,13 +81,6 @@ struct StreamDetailScreen: View {
             }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: String.self) { _ in
-                PositionsView(groundworks: state, onChanged: onChanged)
-            }
-            .onAppear {
-                // Once: back from Positions stays here.
-                if openPositions, !openedPositions { openedPositions = true; path = ["positions"] }
-            }
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
@@ -154,6 +135,101 @@ struct StreamDetailScreen: View {
     }
 }
 
+/// The Groundworks vote: Vote / Change, when it counts until, Renew when
+/// due, Stop. Each is one confirmation; nothing renews on its own.
+struct GroundworksVoteControls: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+    @Environment(TxController.self) private var tx
+
+    let state: StreamsModel.State
+    let onChanged: () -> Void
+    let edit: () -> Void
+
+    var body: some View {
+        let split = model.groundworksSplit
+        let lease = model.groundworksLease
+        let now = Int64(Date().timeIntervalSince1970)
+        VStack(spacing: theme.space.x12) {
+            EarthButton(title: split.isEmpty ? "Vote" : "Change vote") { edit() }
+            if !split.isEmpty, removedOption(split) {
+                Text("An option you chose was removed. Vote again to keep counting.")
+                    .font(EarthType.bodySmall).fontWeight(.semibold)
+                    .foregroundStyle(theme.colors.warnInk)
+                    .multilineTextAlignment(.center)
+            } else if !split.isEmpty, model.balancesVisible {
+                Text("Voting \(Figures.whole(BigInt(voting))) of \(Figures.whole(BigInt(model.privateStakeValue))) ERTH")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
+            if let lease {
+                if lease.lapsed(now) {
+                    Text("Your vote has lapsed")
+                        .font(EarthType.bodySmall).fontWeight(.semibold)
+                        .foregroundStyle(theme.colors.warnInk)
+                } else if lease.expiresAt > 0 {
+                    Text("Counts until \(Date(timeIntervalSince1970: TimeInterval(lease.expiresAt)).formatted(date: .abbreviated, time: .omitted))")
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textTertiary)
+                }
+                if (lease.lapsed(now) || lease.renewalDue(now)) && !removedOption(lease.split) {
+                    EarthButton(title: "Renew", role: .secondary) {
+                        Self.cast(lease.split, rows: rows(lease.split), action: "Renew Groundworks vote", tx: tx, model: model, onChanged: onChanged)
+                    }
+                }
+            }
+            if !split.isEmpty {
+                Button("Stop voting") {
+                    Self.cast([:], rows: [], action: "Stop Groundworks vote", tx: tx, model: model, onChanged: onChanged)
+                }
+                .font(EarthType.bodySmall).fontWeight(.semibold)
+                .foregroundStyle(theme.colors.textTertiary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// What this wallet's live votes weigh, in ERTH at the live rates.
+    /// Only votes that count (weight > 0: not stale since a stream reset) on the split chosen now.
+    private var voting: UInt64 {
+        let split = model.groundworksSplit
+        return model.groundworksVotes.filter { $0.weight > 0 && $0.split == split }
+            .reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, model.derthValue($1.derth, validator: $1.validator)) }
+    }
+
+    private func rows(_ split: [UInt64: UInt64]) -> [(String, String)] {
+        split.sorted { $0.value > $1.value }.map { id, pct in
+            let d = state.stream.options.first { $0.id == id }?.description ?? ""
+            return (d.isEmpty ? "Option \(id)" : d, "\(pct)%")
+        }
+    }
+
+    /// The split names an option the fund no longer has: the chain refuses it as it is.
+    /// Struck (still listed, removed) or pruned (gone).
+    private func removedOption(_ split: [UInt64: UInt64]) -> Bool {
+        let options = state.stream.options
+        return !options.isEmpty && split.keys.contains { id in !options.contains { $0.id == id && !$0.removed } }
+    }
+
+    /// Votes all of this wallet's stake with `split` (empty: stops): one
+    /// restake per validator, sent one after the other on this one confirmation.
+    @MainActor
+    static func cast(_ split: [UInt64: UInt64], rows: [(String, String)], action: String = "Vote in Groundworks",
+                     tx: TxController, model: AppModel, onChanged: @escaping () -> Void) {
+        let validators = model.privateStake.filter { $0.value > 0 }.count
+        let sends = validators == 1 ? "At least 1 transaction" : "At least \(validators) transactions, one per validator"
+        tx.requestPrivate(.private(action: action, rows: rows + [("Sends", sends)]), host: .allocation, onSuccess: {
+            await model.refreshGroundworks()
+            onChanged()
+        }) { w in
+            guard let last = try await w.castGroundworks(split: split).last else {
+                throw PrivacyError("Stake ERTH first: your stake is what votes.")
+            }
+            return last
+        }
+    }
+}
+
 /// Set the split. Percentages, and they must total 100.
 struct AllocationEditSheet: View {
     @Environment(\.earth) private var theme
@@ -164,8 +240,8 @@ struct AllocationEditSheet: View {
     let stream: Msg.StreamID
     let state: StreamsModel.State
     let onChanged: () -> Void
-    /// A position's split instead of the caretaker vote: the sheet hands the
-    /// weights back rather than raising the transaction itself.
+    /// A split to start from, and a handler that takes the weights instead of
+    /// the sheet raising the transaction itself.
     var initial: [UInt64: UInt64]? = nil
     var title = "Your allocation"
     var onSubmit: (([UInt64: UInt64]) -> Void)? = nil
@@ -180,7 +256,7 @@ struct AllocationEditSheet: View {
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
 
-                    ForEach(state.stream.options) { option in
+                    ForEach(state.stream.options.filter { !$0.removed }) { option in
                         VStack(alignment: .leading, spacing: theme.space.x4) {
                             HStack {
                                 Text(option.description.isEmpty ? "Option \(option.id)" : option.description)
@@ -222,10 +298,12 @@ struct AllocationEditSheet: View {
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
             .task {
+                // A struck or pruned option is not offered, nor kept in the total.
+                let live = Set(state.stream.options.filter { !$0.removed }.map(\.id))
                 if let initial {
-                    for (k, v) in initial { weights[k] = Double(v) }
+                    for (k, v) in initial where live.contains(k) { weights[k] = Double(v) }
                 } else {
-                    for weight in state.mine { weights[weight.optionID] = Double(weight.percent) }
+                    for weight in state.mine where live.contains(weight.optionID) { weights[weight.optionID] = Double(weight.percent) }
                 }
             }
         }
@@ -241,6 +319,12 @@ struct AllocationEditSheet: View {
         if let onSubmit {
             dismiss()
             onSubmit(split)
+            return
+        }
+        if stream == .groundworks {
+            GroundworksVoteControls.cast(split, rows: split.sorted { $0.key < $1.key }.map { (label($0.key), "\($0.value)%") },
+                                         tx: tx, model: model, onChanged: onChanged)
+            dismiss()
             return
         }
         // The caretaker split is private: a membership proof in the
@@ -499,7 +583,7 @@ struct ProposalDetailScreen: View {
 
     private func loadWeight() async {
         guard proposal.isLive, let w = model.privacy else { return }
-        weight = try? await w.stakeVoteWeight(proposalID: proposal.id, positions: model.positions.map(\.position))
+        weight = try? await w.stakeVoteWeight(proposalID: proposal.id)
     }
 
     /// The stake weight as the confirmation shows it: ERTH at the snapshot's
@@ -508,7 +592,6 @@ struct ProposalDetailScreen: View {
         guard let weight else { return "Private stake from before voting opened" }
         var parts: [String] = []
         if weight.notes > 0 { parts.append(Figures.count(weight.notes, "note")) }
-        if !weight.positionIDs.isEmpty { parts.append(Figures.count(weight.positionIDs.count, "position")) }
         let made = parts.isEmpty ? "" : " (" + parts.joined(separator: ", ") + ")"
         return "\(Figures.balance(BigInt(weight.uerth))) ERTH" + made
     }
@@ -575,7 +658,7 @@ struct ProposalDetailScreen: View {
                 }
             } else {
                 if weight != nil { EarthDetailRow(label: "Your weight", value: weightText) }
-                Text("Your stake at each validator votes once, as one vote (up to two notes) you confirm yourself, and each of your positions votes too. Nothing is spent. A stake vote is final.")
+                Text("Your stake at each validator votes once, as one vote (up to two notes) you confirm yourself. Nothing is spent. A stake vote is final.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }
@@ -655,7 +738,7 @@ struct ProposalDetailScreen: View {
 
     /// Stake votes without spending: one vote per validator,
     /// up to two of its notes with one weight (their sum rounded down to
-    /// three significant figures), and one per position. Each is its own
+    /// three significant figures). Each is its own
     /// confirm sheet and tx, raised one after the other and sent only on its
     /// own tap; nothing is cast in the background. A validator with more than
     /// two notes is asked about first: vote in parts, or merge.
@@ -704,7 +787,6 @@ struct ProposalDetailScreen: View {
             let whereText: String
             switch item {
             case let .validator(valoper, _): whereText = "at \(name(valoper))"
-            case let .position(id, _): whereText = "with position #\(id)"
             }
             var rows: [(String, String)] = [
                 ("Proposal", "#\(proposalID) \(title)"),

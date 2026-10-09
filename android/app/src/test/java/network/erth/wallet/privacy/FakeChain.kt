@@ -21,14 +21,10 @@ import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.Bundle
 import network.erth.earth.proto.shielded.MsgSend
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
-import network.erth.earth.proto.shieldedstaking.MsgLockPosition
-import network.erth.earth.proto.shieldedstaking.MsgPositionVote
 import network.erth.earth.proto.shieldedstaking.MsgRedelegate
 import network.erth.earth.proto.shieldedstaking.MsgRestake
 import network.erth.earth.proto.shieldedstaking.MsgStakeVote
 import network.erth.earth.proto.shieldedstaking.MsgUndelegate
-import network.erth.earth.proto.shieldedstaking.MsgUnlockPosition
-import network.erth.earth.proto.shieldedstaking.MsgUpdatePosition
 import network.erth.earth.proto.shieldedstaking.StakeProof
 import network.erth.wallet.chain.math.SwapMath
 import network.erth.wallet.privacy.prove.ActionWitness
@@ -144,18 +140,24 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     data class Withdrawal(val shares: BigInteger, val erthPc: Fr, val erthCt: ByteArray, val tokenPc: Fr, val tokenCt: ByteArray)
     val withdrawals = ArrayList<Withdrawal>()
 
-    // x/shieldedstaking positions, x/personhood handles and caretaker splits, x/assembly removal ballots.
-    data class Pos(val id: Long, val validator: String, val derth: Long, val ownerTag: Fr, var splits: Map<Long, Long>, val createdHeight: Long, var splitExpiresAt: Long = 0)
-    /** x/allocation groundworks_lease_seconds: a split counts this long after it was cast or renewed. */
+    // x/shieldedstaking Groundworks votes, x/personhood handles and caretaker splits, x/assembly removal ballots.
+    /** A Groundworks vote: a stake note's, stored under its tag (x/shieldedstaking GroundworksVote). */
+    data class GwVote(val id: Long, val validator: String, val derth: Long, val tag: Fr, val splits: Map<Long, Long>, val splitExpiresAt: Long)
+    /** x/allocation groundworks_lease_seconds: a vote counts this long after it was cast. */
     var groundworksLease = 365L * 86_400
+    /** min_position: a vote's least weight (derth x epoch rate). */
+    var minGroundworksVote = 1_000_000L
+    /** The Groundworks options a split may name (null: any); a removed one leaves it. */
+    var gwOptions: Set<Long>? = null
+    /** Makes the reads' minGroundworksVote fail (an unreachable node). */
+    var failMinVoteRead = false
 
-    /** The chain's lapse at [now]: every split whose lease has ended is cleared (splits empty, split_expires_at 0). */
+    /** The chain's lapse at [now]: every vote whose lease has ended is deleted. */
     fun lapseSplits() {
-        for (p in positions.values) if (p.splits.isNotEmpty() && p.splitExpiresAt in 1..now) { p.splits = emptyMap(); p.splitExpiresAt = 0 }
+        gwVotes.values.removeAll { it.splitExpiresAt <= now }
     }
-    val positions = LinkedHashMap<Long, Pos>()
-    var nextPositionId = 1L
-    val positionVotes = ArrayList<Pair<Long, Long>>()
+    val gwVotes = LinkedHashMap<Fr, GwVote>()
+    var nextVoteId = 1L
     val removalBallots = HashMap<Long, Long>()
     val removalVotes = ArrayList<Triple<Long, Fr, Int>>()
     val caretakerVotes = HashMap<Fr, Map<Long, Long>>()
@@ -564,10 +566,6 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             PrivateMsgs.NOTE_SWAP -> MsgNoteSwap.parseFrom(any.value)
             PrivateMsgs.ADD_LIQUIDITY_SHIELDED -> MsgAddLiquidityShielded.parseFrom(any.value)
             PrivateMsgs.REMOVE_LIQUIDITY_SHIELDED -> MsgRemoveLiquidityShielded.parseFrom(any.value)
-            PrivateMsgs.LOCK_POSITION -> MsgLockPosition.parseFrom(any.value)
-            PrivateMsgs.UPDATE_POSITION -> MsgUpdatePosition.parseFrom(any.value)
-            PrivateMsgs.UNLOCK_POSITION -> MsgUnlockPosition.parseFrom(any.value)
-            PrivateMsgs.POSITION_VOTE -> MsgPositionVote.parseFrom(any.value)
             PrivateMsgs.REDELEGATE -> MsgRedelegate.parseFrom(any.value)
             PrivateMsgs.BIND_HANDLE -> MsgBindHandle.parseFrom(any.value)
             PrivateMsgs.MOVE_HANDLE -> MsgMoveHandle.parseFrom(any.value)
@@ -658,23 +656,62 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         require(p.oldNullifier != p.newNullifier) { "old and new nullifier are the same" }
     }
 
-    private fun lanes(m: MessageLite): ChainLayout.Lanes = ChainLayout.lanes(m) { id -> positions.getValue(id).let { it.validator to it.derth } }
+    private fun lanes(m: MessageLite): ChainLayout.Lanes = ChainLayout.lanes(m)
+
+    /** The msg's Groundworks split and lane A's and the credit lane's validators. */
+    private fun groundworks(m: MessageLite): Triple<List<network.erth.earth.proto.allocation.AllocationWeight>, String, String> = when (m) {
+        is MsgDelegate -> Triple(m.groundworksSplitList, m.validator, "")
+        is MsgRestake -> Triple(m.groundworksSplitList, m.validator, "")
+        is MsgUndelegate -> Triple(m.groundworksSplitList, m.validator, "")
+        is MsgRedelegate -> Triple(m.groundworksSplitList, m.srcValidator, m.dstValidator)
+        else -> Triple(emptyList(), "", "")
+    }
+
+    private fun inputTags(p: StakeProof) = (p.groundworksTagsList + listOf(p.creditGroundworksTag)).map(::f).filter { !it.isZero }
+
+    /**
+     * The chain's checkGroundworks: a split only with a vote, each vote weighing
+     * at least min_position, under a tag no live vote holds unless this proof cancels it.
+     */
+    private fun checkGroundworks(m: MessageLite, p: StakeProof) {
+        val (split, a, credit) = groundworks(m)
+        val outs = listOf(Triple(f(p.voteTag), p.voteWeight, a), Triple(f(p.creditVoteTag), p.creditVoteWeight, credit))
+        val voting = outs.any { it.second > 0 }
+        require(voting == split.isNotEmpty()) { "a groundworks_split exactly when an output votes" }
+        for ((tag, w, _) in outs) require((w == 0L) == tag.isZero) { "a vote tag exactly with a vote weight" }
+        if (!voting) return
+        require(split.sumOf { it.percent } == 100L) { "a split sums to 100" }
+        gwOptions?.let { o -> require(split.all { it.optionId in o }) { "option removed (ValidateSplit)" } }
+        val cancelled = inputTags(p).toSet()
+        for ((tag, w, v) in outs) if (w > 0) {
+            require(PrivacyWallet.derthValue(w, quoteOf(v).epochRate) >= minGroundworksVote) { "a vote weighs at least $minGroundworksVote (code 1108)" }
+            require(tag !in gwVotes || tag in cancelled) { "a vote is already stored under this tag (code 1108)" }
+        }
+    }
+
+    private fun applyGroundworks(m: MessageLite, p: StakeProof) {
+        inputTags(p).forEach { gwVotes.remove(it) }
+        val (split, a, credit) = groundworks(m)
+        val splits = split.associate { it.optionId to it.percent }
+        for ((tag, w, v) in listOf(Triple(f(p.voteTag), p.voteWeight, a), Triple(f(p.creditVoteTag), p.creditVoteWeight, credit))) if (w > 0) {
+            gwVotes[tag] = GwVote(nextVoteId++, v, w, tag, splits, now + groundworksLease)
+        }
+    }
 
 
     private fun spent(p: StakeProof) = (p.nullifiersList + listOf(p.creditNullifier)).map(::f).filter { !it.isZero }
 
-    /** The chain's shape rule: a note-moving msg spends (or pads) in both slots and creates; a crediting one uses its credit lane; the rest are zero. */
+    /** The chain's shape rule: every stake msg spends (or pads) in both slots and creates; a crediting one uses its credit lane, the rest leave it zero. */
     private fun stakeShape(m: MessageLite, p: StakeProof) {
-        val notes = m !is MsgUpdatePosition && m !is MsgPositionVote
         val credit = m is MsgRedelegate
-        if (notes) {
-            require(!f(p.getNullifiers(0)).isZero && !f(p.getNullifiers(1)).isZero) { "the stake proof spends a note (or pads with its own nullifier) in both slots" }
-            require(!f(p.commitment).isZero) { "the stake proof creates a note (the merged note, the change or a zero note)" }
-        } else {
-            require(f(p.getNullifiers(0)).isZero && f(p.getNullifiers(1)).isZero && f(p.commitment).isZero) { "the stake proof spends and creates nothing for this msg" }
-        }
+        require(!f(p.getNullifiers(0)).isZero && !f(p.getNullifiers(1)).isZero) { "the stake proof spends a note (or pads with its own nullifier) in both slots" }
+        require(!f(p.commitment).isZero) { "the stake proof creates a note (the merged note, the change or a zero note)" }
+        require(p.groundworksTagsList.none { f(it).isZero }) { "every lane A input publishes its Groundworks tag" }
         if (credit) require(!f(p.creditNullifier).isZero && !f(p.creditCommitment).isZero) { "the credit lane spends (or pads) and creates" }
-        else require(f(p.creditNullifier).isZero && f(p.creditCommitment).isZero) { "this msg credits no second asset" }
+        else require(
+            f(p.creditNullifier).isZero && f(p.creditCommitment).isZero && f(p.creditGroundworksTag).isZero &&
+                f(p.creditVoteTag).isZero && p.creditVoteWeight == 0L,
+        ) { "this msg credits no second asset" }
     }
 
     /** A ballot's max_predecessor (x/assembly: opened - 86400; the fake opens ballots as it is asked). */
@@ -833,12 +870,6 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 val arrived = if (queueFirst && u <= src.pendingDelegation + src.rewards) u else (u - BigInteger.valueOf(1001)).max(BigInteger.ZERO)
                 checkCredit(m.dstValidator, arrived, m.dstDerth)
             }
-            is MsgUpdatePosition -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
-            is MsgUnlockPosition -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
-            is MsgPositionVote -> {
-                require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
-                require(m.optionsList.all { it.weight == PrivateMsgs.legacyDec(it.weight) }) { "a vote weight is not canonical" }
-            }
             is MsgVoteRemoval -> require(m.optionId in removalBallots) { "no open ballot" }
             is MsgProposeRemoval -> require(m.optionId !in removalBallots) { "ballot already open" }
             // Option weights only in their canonical LegacyDec form.
@@ -911,8 +942,12 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         for (b in PrivateMsgs.bundles(m)) for (a in b.actionsList) require(a.ciphertext.size() == NoteCipher.CIPHERTEXT_BYTES) { "action ciphertext ${a.ciphertext.size()} bytes" }
         // Stake proofs: every field 32 bytes, a 201-byte ciphertext exactly for a non-zero commitment.
         PrivateMsgs.stake(m)?.let { p ->
-            require(p.nullifiersCount == 2) { "a stake proof carries exactly two nullifiers" }
-            for (b in p.nullifiersList + listOf(p.anchor, p.ownerTag, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot)) require(b.size() == 32) { "a stake field of ${b.size()} bytes" }
+            require(p.nullifiersCount == 2 && p.groundworksTagsCount == 2) { "a stake proof carries exactly two nullifiers and two tags" }
+            for (
+                b in p.nullifiersList + p.groundworksTagsList + listOf(
+                    p.anchor, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot, p.creditGroundworksTag, p.voteTag, p.creditVoteTag,
+                )
+            ) require(b.size() == 32) { "a stake field of ${b.size()} bytes" }
             for ((cm, ct) in listOf(p.commitment to p.ciphertext, p.creditCommitment to p.creditCiphertext)) {
                 require(if (f(cm).isZero) ct.isEmpty else ct.size() == NoteCipher.STAKE_CIPHERTEXT_BYTES) { "stake ciphertext: ${ct.size()} bytes" }
             }
@@ -947,6 +982,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         if (stake != null) {
             require(stake.proof.size() == PROOF_BYTES) { "a stake proof is exactly $PROOF_BYTES bytes" }
             stakeShape(m, stake)
+            checkGroundworks(m, stake)
             val nfs = spent(stake)
             require(nfs.none { it in stakeNullifiers }) { "stake nullifier spent" }
             require(nfs.toSet().size == nfs.size) { "duplicate stake nullifier" }
@@ -1018,6 +1054,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 stakeRows.add(StakeNoteRow(pos, height, c, ct.toByteArray()))
                 stakePositions.add(pos)
             }
+            applyGroundworks(m, stake)
         }
         val events = ArrayList<Pair<String, Map<String, String>>>()
         when (m) {
@@ -1113,17 +1150,6 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgRemoveLiquidityShielded -> withdrawals.add(
                 Withdrawal(BigInteger.valueOf(rem.getValue("dexlp/1")), f(m.erthPc), m.erthCiphertext.toByteArray(), f(m.tokenPc), m.tokenCiphertext.toByteArray()),
             )
-            is MsgLockPosition -> {
-                val id = nextPositionId++
-                positions[id] = Pos(id, m.validator, m.amount, f(m.stake.ownerTag), m.splitsList.associate { it.optionId to it.percent }, height,
-                    if (m.splitsCount > 0) now + groundworksLease else 0)
-            }
-            is MsgUpdatePosition -> positions.getValue(m.positionId).let { p ->
-                p.splits = m.splitsList.associate { it.optionId to it.percent }
-                p.splitExpiresAt = if (m.splitsCount > 0) now + groundworksLease else 0
-            }
-            is MsgUnlockPosition -> positions.remove(m.positionId)!!
-            is MsgPositionVote -> positionVotes.add(m.positionId to m.proposalId)
             is MsgSetCaretaker -> {
                 val n = f(m.membership.nullifier)
                 if (m.percentagesCount == 0) { caretakerVotes.remove(n); caretakerExpiry.remove(n) }
@@ -1365,8 +1391,13 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** The app's directory over this chain: the indexer's stream first, the chain's pages to check against. */
     fun handleDirectory() = network.erth.wallet.privacy.handles.HandleDirectory(::handlesPage, { f, l -> handles(f, l) }, now = { now })
 
-    fun positionReads(): List<PrivacyChainReads.Position> =
-        positions.values.map { PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight, it.splitExpiresAt) }
+    /** Query/GroundworksVotes: every live vote, by id, its weight at the epoch rate. */
+    fun gwVoteReads(): List<PrivacyChainReads.GroundworksVote> =
+        gwVotes.values.sortedBy { it.id }.map {
+            PrivacyChainReads.GroundworksVote(
+                it.id, it.validator, it.derth, PrivacyWallet.derthValue(it.derth, quoteOf(it.validator).epochRate), it.tag, it.splits, it.splitExpiresAt,
+            )
+        }
 
     fun unshieldedTo(receiver: String, denom: String = "uerth"): Long = unshielded[receiver]?.get(denom) ?: 0
 }
@@ -1381,13 +1412,10 @@ object ChainLayout {
     /** What the chain supplies a stake proof: lane A's denom, v_in, v_out; the credit lane's denom, cr_v_in, cr_move_time. */
     data class Lanes(val denom: String?, val vIn: Long, val vOut: Long, val crDenom: String? = null, val crVIn: Long = 0, val crMoveTime: Long = 0)
 
-    /** [position] names an unlocked position's validator and derth (the keeper fills an unlock's lanes in). */
-    fun lanes(m: MessageLite, position: (Long) -> Pair<String, Long> = { error("no position") }): Lanes = when (m) {
+    fun lanes(m: MessageLite): Lanes = when (m) {
         is MsgDelegate -> Lanes(PrivacyWallet.derthDenom(m.validator), m.derth, 0)
         is MsgRestake -> Lanes(PrivacyWallet.derthDenom(m.validator), 0, 0)
         is MsgUndelegate -> Lanes(PrivacyWallet.derthDenom(m.validator), 0, m.amount)
-        is MsgLockPosition -> Lanes(PrivacyWallet.derthDenom(m.validator), 0, m.amount)
-        is MsgUnlockPosition -> position(m.positionId).let { (v, d) -> Lanes(PrivacyWallet.derthDenom(v), d, 0) }
         is MsgRedelegate -> Lanes(PrivacyWallet.derthDenom(m.srcValidator), 0, m.amount, PrivacyWallet.derthDenom(m.dstValidator), m.dstDerth, m.moveTime)
         else -> Lanes(null, 0, 0)
     }
@@ -1398,7 +1426,8 @@ object ChainLayout {
         f(p.anchor), l.denom?.let(Privacy::assetId) ?: Fr.ZERO, f(p.getNullifiers(0)), f(p.getNullifiers(1)),
         f(p.commitment), Privacy.u64(l.vIn), Privacy.u64(l.vOut), Privacy.u64(p.clearBefore), f(p.debtRoot),
         l.crDenom?.let(Privacy::assetId) ?: Fr.ZERO, f(p.creditNullifier), f(p.creditCommitment), Privacy.u64(l.crVIn),
-        Privacy.u64(l.crMoveTime), f(p.ownerTag), sighash,
+        Privacy.u64(l.crMoveTime), f(p.getGroundworksTags(0)), f(p.getGroundworksTags(1)), f(p.creditGroundworksTag),
+        f(p.voteTag), Privacy.u64(p.voteWeight), f(p.creditVoteTag), Privacy.u64(p.creditVoteWeight), sighash,
     )
 
     fun votePublicInputs(m: MsgStakeVote, noteRoot: Fr, nfRoot: Fr, sighash: Fr): List<Fr> =

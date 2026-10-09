@@ -29,7 +29,7 @@ final class HandlesTests: PrivacyTestCase {
         }
         func epochNumber() async throws -> UInt64 { try await inner.epochNumber() }
         func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot { try await inner.snapshot(proposalID: proposalID) }
-        func positions() async throws -> [PrivacyReads.Position] { try await inner.positions() }
+        func groundworksVotes() async throws -> [PrivacyReads.GroundworksVote] { try await inner.groundworksVotes() }
         func debtTree(start: UInt64, limit: Int) async throws -> PrivacyReads.DebtTreePage { try await inner.debtTree(start: start, limit: limit) }
         func validators() async throws -> PrivacyReads.ValidatorList { try await inner.validators() }
         func minDelegation() async throws -> UInt64 { try await inner.minDelegation() }

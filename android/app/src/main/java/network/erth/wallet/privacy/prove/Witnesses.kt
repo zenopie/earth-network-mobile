@@ -120,10 +120,16 @@ data class StakeIn(
  * credits no second asset.
  *
  * An amount-0 output publishes 0 or, with [padOut], the zero note's
- * commitment (a full exit looks like a partial one). Public inputs, in the
- * chain's order (StakeProof.PublicInputs): anchor, asset, nf_0, nf_1,
- * cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm,
- * cr_v_in, cr_move_time, otag, sighash.
+ * commitment (a full exit looks like a partial one).
+ *
+ * Groundworks: every input publishes its tag H(TAG_GW, nk, rho) (as it
+ * publishes its nullifier: a padding input its own, no input 0); an output
+ * that votes ([vote], [crVote]) publishes its own tag and its unexposed
+ * amount as the weight. Public inputs, in the chain's order
+ * (StakeProof.PublicInputs): anchor, asset, nf_0, nf_1, cm_out, v_in,
+ * v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in,
+ * cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out,
+ * sighash.
  */
 data class StakeWitness(
     val nk: Fr,
@@ -137,7 +143,8 @@ data class StakeWitness(
     val crIn: StakeIn,
     val crOutRho: Fr,
     val crOutRcm: Fr,
-    val tagSalt: Fr,
+    val vote: Boolean = false,
+    val crVote: Boolean = false,
     val anchor: Fr,
     val asset: Fr,
     val vIn: Long,
@@ -155,6 +162,8 @@ data class StakeWitness(
         require(debt.lowPath.size == Merkle.DEPTH)
         require(debt.lowIndex in 0..0xffffffffL && debt.lowNextIndex in 0..0xffffffffL) { "a u32" }
         require(outAmount >= 0) { "a stake amount is at most 2^63-1" }
+        require(!vote || outAmount != 0L) { "a padding output cannot vote" }
+        require(!crVote || crIn.amount != 0L || crVIn != 0L) { "a padding output cannot vote" }
     }
 
     private val opk: Fr by lazy { Privacy.ownerPk(nk) }
@@ -162,6 +171,12 @@ data class StakeWitness(
     private fun nfOf(i: StakeIn): Fr = if (i.amount != 0L || i.pad) Privacy.stakeNf(nk, i.rho, i.pos) else Fr.ZERO
 
     val nullifiers: List<Fr> by lazy { ins.map(::nfOf) }
+
+    private fun gwOf(i: StakeIn): Fr = if (i.amount != 0L || i.pad) Privacy.stakeGw(nk, i.rho) else Fr.ZERO
+
+    /** The inputs' Groundworks tags (lane A's two, the credit lane's). */
+    val gw: List<Fr> by lazy { ins.map(::gwOf) }
+    val crGw: Fr by lazy { gwOf(crIn) }
 
     /** The labelled input, if any (the circuit takes at most one). */
     private val labelled: StakeLabel? get() = ins.firstNotNullOfOrNull { it.label }
@@ -187,7 +202,13 @@ data class StakeWitness(
         else Privacy.stakeCm(crAsset, crOutAmount, Privacy.stakePc(opk, crOutRho, crOutRcm), StakeLabel.hash(crLabel))
     }
 
-    val otag: Fr by lazy { Privacy.ownerTag(opk, tagSalt) }
+    /** The outputs' votes: tag and weight, zero and 0 when not voting. */
+    val gwOut: Fr by lazy { if (vote) Privacy.stakeGw(nk, outRho) else Fr.ZERO }
+    val wOut: Long get() = if (vote) outAmount - (outLabel?.exposed ?: 0L) else 0L
+    val crGwOut: Fr by lazy { if (crVote) Privacy.stakeGw(nk, crOutRho) else Fr.ZERO }
+
+    /** A moved-in credit votes only its unexposed part (its input); the exposure votes once its window closes. */
+    val crWOut: Long get() = if (!crVote) 0L else if (crMoveTime != 0L) crIn.amount else crOutAmount
 
     /** What the circuit asserts, checked before spending a second on a proof that cannot verify. */
     fun check() {
@@ -219,7 +240,8 @@ data class StakeWitness(
 
     fun publicInputs(): List<Fr> = listOf(
         anchor, asset, nullifiers[0], nullifiers[1], commitment, Privacy.u64(vIn), Privacy.u64(vOut),
-        Privacy.u64(clearBefore), debtRoot, crAsset, crNf, crCm, Privacy.u64(crVIn), Privacy.u64(crMoveTime), otag, sighash,
+        Privacy.u64(clearBefore), debtRoot, crAsset, crNf, crCm, Privacy.u64(crVIn), Privacy.u64(crMoveTime),
+        gw[0], gw[1], crGw, gwOut, Privacy.u64(wOut), crGwOut, Privacy.u64(crWOut), sighash,
     )
 
     fun noirInputs(): Map<String, Any> = mapOf(
@@ -250,7 +272,6 @@ data class StakeWitness(
         "cr_in_path" to crIn.path.map { it.toNoir() },
         "cr_out_rho" to crOutRho.toNoir(),
         "cr_out_rcm" to crOutRcm.toNoir(),
-        "tag_salt" to tagSalt.toNoir(),
         "anchor" to anchor.toNoir(),
         "asset" to asset.toNoir(),
         "nf_0" to nullifiers[0].toNoir(),
@@ -265,7 +286,13 @@ data class StakeWitness(
         "cr_cm" to crCm.toNoir(),
         "cr_v_in" to hex(crVIn),
         "cr_move_time" to hex(crMoveTime),
-        "otag" to otag.toNoir(),
+        "gw_0" to gw[0].toNoir(),
+        "gw_1" to gw[1].toNoir(),
+        "cr_gw" to crGw.toNoir(),
+        "gw_out" to gwOut.toNoir(),
+        "w_out" to hex(wOut),
+        "cr_gw_out" to crGwOut.toNoir(),
+        "cr_w_out" to hex(crWOut),
         "sighash" to sighash.toNoir(),
     )
 

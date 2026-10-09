@@ -17,7 +17,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import network.erth.wallet.chain.Allocation
-import network.erth.wallet.privacy.Reminders
 import network.erth.wallet.privacy.chain.PrivacyQueries
 import network.erth.wallet.ui.components.EarthDetailRow
 import network.erth.wallet.ui.components.EarthLabel
@@ -71,123 +70,6 @@ private fun optionName(options: List<Allocation.OptionInfo>, id: Long) =
     options.firstOrNull { it.id == id }?.description?.ifBlank { null } ?: "Option $id"
 
 internal fun date(unix: Long): String = SimpleDateFormat("d MMM yyyy, HH:mm", Locale.getDefault()).format(Date(unix * 1000))
-
-/**
- * Groundworks positions: the private way to direct the Groundworks Fund.
- *
- * A position locks staked ERTH (derth) at a validator under an owner tag
- * (a commitment to this wallet the stake proof opens again to update,
- * vote or unlock it); its split is public and weighted by the stake, its
- * owner is not. The stake keeps earning while locked.
- *
- * A split counts for a lease (a year by default) from when it was cast or
- * last renewed, then lapses and the position directs nothing until a split
- * is chosen again. The card shows the lease end; from a month before it a
- * reminder and a Renew (the same split, cast again) appear. Renewing costs a
- * fee, so it is only ever the owner's tap and confirmation.
- */
-@Composable
-fun PositionsScreen(
-    state: PrivacyActionsState?,
-    /** derth/<valoper> balances this wallet can lock. */
-    lockable: Map<String, Long>,
-    onLock: () -> Unit,
-    onEditSplit: (PositionRow) -> Unit,
-    onUnlock: (PositionRow) -> Unit,
-    /** Casts the position's split again as it is (MsgUpdatePosition), after the owner confirms. */
-    onRenew: (PositionRow) -> Unit,
-    now: Long,
-    modifier: Modifier = Modifier,
-    /** derth at a validator, in uerth at its live rate. */
-    valueOf: (derth: Long, validator: String) -> Long = { d, _ -> d },
-) = Page(modifier) {
-    val dimens = EarthTheme.dimens
-    Note(
-        "Lock staked ERTH in a position to direct the Groundworks Fund. The split and the " +
-            "amount are public; nothing links the position to you. Locked stake keeps earning, " +
-            "and unlocking returns it as staked ERTH. A split counts for a year from when it was " +
-            "chosen or renewed and never renews on its own; the app reminds you before it lapses.",
-    )
-    Spacer(Modifier.height(dimens.space16))
-    if (state == null) {
-        Note("Loading…")
-        return@Page
-    }
-    EarthLabel("Your positions")
-    Spacer(Modifier.height(dimens.space8))
-    if (state.positions.isEmpty()) Note("No positions yet.")
-    state.positions.forEach { row ->
-        val p = row.position
-        Card {
-            Text(
-                text = "${formatUerth(valueOf(p.derth, p.validator))} ERTH",
-                style = EarthTypography.textMd,
-                fontWeight = FontWeight.SemiBold,
-                color = EarthColors.Text.textPrimary,
-            )
-            Text(text = "${formatUerth(p.derth)} derth · ${p.validator}", style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
-            Spacer(Modifier.height(dimens.space8))
-            p.splits.entries.sortedByDescending { it.value }.forEach { (id, pct) ->
-                EarthDetailRow(optionName(state.groundworksOptions, id), "$pct%")
-            }
-            val lease = row.lease
-            val lapsed = lease?.lapsed(now) == true
-            if (lapsed) {
-                Text(
-                    text = "Lapsed — choose a split again",
-                    style = EarthTypography.textSm,
-                    fontWeight = FontWeight.SemiBold,
-                    color = EarthColors.Text.textPrimary,
-                )
-                Note(
-                    (if (lease!!.expiresAt > 0) "Its split stopped counting on ${date(lease.expiresAt)}. " else "Its split no longer counts. ") +
-                        "The stake keeps earning; choosing a split counts it again for another year.",
-                )
-            } else if (lease != null && lease.expiresAt > 0) {
-                EarthDetailRow("Split counts until", date(lease.expiresAt))
-            }
-            // A split naming an option the fund has since removed cannot be
-            // cast again as it is: the banner and Renew open the split instead.
-            val removed = state.groundworksOptions.isNotEmpty() &&
-                (lease?.split ?: p.splits).keys.any { id -> state.groundworksOptions.none { it.id == id } }
-            // The reminder, as on Home, and the renewal it asks for: the same
-            // split cast again, sent only on the owner's confirmation.
-            Reminders.groundworks(lease ?: Reminders.GroundworksLease(p.id, 0, true, p.splits), now)?.let { r ->
-                Spacer(Modifier.height(dimens.space8))
-                ReminderBanner(Reminders.text(r, now), onClick = { if (r.lapsed || removed) onEditSplit(row) else onRenew(row) })
-            }
-            if (lease != null && lease.renewalDue(now)) {
-                Spacer(Modifier.height(dimens.space8))
-                if (removed) {
-                    Note("An option in this split has been removed from the fund, so it cannot be renewed as it is. Change the split to keep it counted.")
-                } else {
-                    EarthButton(text = "Renew", onClick = { onRenew(row) }, modifier = Modifier.fillMaxWidth(), colors = brandButtonColors())
-                }
-            }
-            Spacer(Modifier.height(dimens.space8))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(dimens.space8)) {
-                EarthButton(
-                    text = if (lapsed) "Choose split" else "Change split",
-                    onClick = { onEditSplit(row) },
-                    modifier = Modifier.weight(1f),
-                    colors = EarthButtonDefaults.secondaryColors(),
-                )
-                EarthButton(
-                    text = "Unlock",
-                    onClick = { onUnlock(row) },
-                    modifier = Modifier.weight(1f),
-                    colors = destructiveButtonColors(),
-                )
-            }
-        }
-    }
-    Spacer(Modifier.height(dimens.space16))
-    if (lockable.values.sum() > 0) {
-        EarthButton(text = "Lock stake in a position", onClick = onLock, modifier = Modifier.fillMaxWidth(), colors = brandButtonColors())
-    } else {
-        Note("Stake ERTH privately (Earn) to lock it in a position.")
-    }
-}
 
 /**
  * Removal ballots: the human chamber's say over Groundworks options. Any

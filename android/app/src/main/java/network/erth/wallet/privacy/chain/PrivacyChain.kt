@@ -17,7 +17,7 @@ import java.util.TimeZone
 
 /**
  * The chain's public, per-nothing state the private msgs are built from:
- * params, ballot inputs, epochs, snapshots, positions. Nothing here takes a
+ * params, ballot inputs, epochs, snapshots, Groundworks votes. Nothing here takes a
  * note, a nullifier or an identity of this wallet.
  */
 object PrivacyQueries {
@@ -286,38 +286,61 @@ object PrivacyQueries {
         return v.toLong()
     }
 
-    data class Position(
+    data class GroundworksVote(
         val id: Long,
         val validator: String,
         val derth: Long,
-        val ownerTag: Fr,
+        /** derth x the validator's epoch rate (0 when a reset made it stale). */
+        val weight: Long,
+        val tag: Fr,
         val splits: Map<Long, Long>,
-        val createdHeight: Long,
-        /** When the split stops counting (unix seconds; 0 without a split, or on a node before leases). */
-        val splitExpiresAt: Long = 0,
+        /** When the vote stops counting (unix seconds). */
+        val splitExpiresAt: Long,
     )
 
-    /** Every Groundworks position (public); the wallet finds its own by owner tag. */
-    fun positions(): List<Position> {
+    /** x/shieldedstaking params.min_position (uerth): the least weight a Groundworks vote carries. */
+    fun minGroundworksVote(): Long =
+        get("/earth/shieldedstaking/v1/params").getJSONObject("params").let { if (it.has("min_position")) it.long("min_position") else 1_000_000 }
+
+    /** The Groundworks fund's options a split may name now: every option not removed. */
+    fun groundworksOptions(): Set<Long> {
+        val out = HashSet<Long>()
+        val keys = HashSet<String>()
+        var key: String? = null
+        do {
+            // Capped: a node serving new keys forever is not followed.
+            if (keys.size >= 10_000) throw IOException("the node's listing does not end")
+            val j = get("/earth/allocation/v1/options/STREAM_ID_GROUNDWORKS" + (key?.let { "?pagination.key=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: ""))
+            val a = j.optJSONArray("options")
+            for (i in 0 until (a?.length() ?: 0)) a!!.getJSONObject(i).let { if (!it.optBoolean("removed")) out.add(it.long("id")) }
+            key = j.optJSONObject("pagination")?.optString("next_key")?.takeIf { it.isNotEmpty() && it != "null" }
+            if (key != null && !keys.add(key)) throw IOException("the node's options listing repeats a page")
+        } while (key != null)
+        return out
+    }
+
+    /** Every Groundworks vote (public); the wallet finds its own by its notes' tags. */
+    fun groundworksVotes(): List<GroundworksVote> {
         // Each id once (the first served): a page repeated by a proxy or a
-        // node must not count a position twice.
-        val out = ArrayList<Position>()
+        // node must not count a vote twice.
+        val out = ArrayList<GroundworksVote>()
         val seen = HashSet<Long>()
         val keys = HashSet<String>()
         var key: String? = null
         do {
-            val j = get("/earth/shieldedstaking/v1/positions" + (key?.let { "?pagination.key=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: ""))
-            val a = j.optJSONArray("positions")
+            // Capped: a node serving new keys forever is not followed.
+            if (keys.size >= 10_000) throw IOException("the node's listing does not end")
+            val j = get("/earth/shieldedstaking/v1/groundworks_votes" + (key?.let { "?pagination.key=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: ""))
+            val a = j.optJSONArray("votes")
             if (a != null) for (i in 0 until a.length()) {
-                val p = a.getJSONObject(i)
-                if (!seen.add(p.long("id"))) continue
-                val splits = p.optJSONArray("splits")
+                val v = a.getJSONObject(i)
+                if (!seen.add(v.long("id"))) continue
+                val splits = v.optJSONArray("splits")
                 out.add(
-                    Position(
-                        id = p.long("id"), validator = p.optString("validator"), derth = p.long("derth"),
-                        ownerTag = field(p.optString("owner_tag")),
-                        createdHeight = p.long("created_height"),
-                        splitExpiresAt = p.long("split_expires_at"),
+                    GroundworksVote(
+                        id = v.long("id"), validator = v.optString("validator"), derth = v.long("derth"), weight = v.long("weight"),
+                        tag = field(v.optString("tag")),
+                        splitExpiresAt = v.long("split_expires_at").coerceAtLeast(0),
                         splits = (0 until (splits?.length() ?: 0)).associate { s ->
                             splits!!.getJSONObject(s).let { it.long("option_id") to it.long("percent") }
                         },
@@ -325,7 +348,7 @@ object PrivacyQueries {
                 )
             }
             key = j.optJSONObject("pagination")?.optString("next_key")?.takeIf { it.isNotEmpty() && it != "null" }
-            if (key != null && !keys.add(key)) throw IOException("the node's positions listing repeats a page")
+            if (key != null && !keys.add(key)) throw IOException("the node's groundworks votes listing repeats a page")
         } while (key != null)
         return out
     }

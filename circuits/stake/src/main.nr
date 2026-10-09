@@ -11,18 +11,17 @@
 //!   cm     = H(TAG_STAKE, asset, amount, spc, label)
 //!   label  = 0, or H(TAG_SLABEL, move_key, move_time, exposed)
 //!   nf     = H(TAG_SNF, nk, rho, position)
-//!   otag   = H(TAG_OTAG, owner_pk, salt)
+//!   gw     = H(TAG_GW, nk, rho)
 //!
 //! One stake note per (owner, asset): the chain never mints a stake note.
-//! Value the chain credits (a delegation's derth, an unlocked position's, a
-//! redelegation's arrival) is a public amount merged into the owner's
+//! Value the chain credits (a delegation's derth, a redelegation's arrival) is a public amount merged into the owner's
 //! existing note by this proof.
 //!
 //! Two lanes, all under `anchor`:
 //!
 //!   lane A (`asset`): spends up to two notes, creates one;
-//!                     v_in credited (delegation, unlock), v_out leaving
-//!                     (undelegation, lock, redelegation's source)
+//!                     v_in credited (delegation), v_out leaving
+//!                     (undelegation, redelegation's source)
 //!   lane B (`cr_asset`, the credit lane): merges `cr_v_in` credited by a
 //!                     redelegation into at most one existing unlabeled note
 //!
@@ -50,6 +49,13 @@
 //! 0 or a zero note's commitment (a full exit looks like a partial one). A
 //! padding nullifier is still derived from nk.
 //!
+//! Groundworks votes. A note's vote is stored by the chain under its tag gw,
+//! which needs no tree position. Every input publishes its gw (a padding
+//! input: 0 or its own, as for nullifiers), so any spend of a voting note
+//! cancels its vote. Each output may vote: gw_out (cr_gw_out) is its tag and
+//! w_out (cr_w_out) its unexposed amount, the vote's weight; both 0 when it
+//! does not. An output of amount 0 cannot vote.
+//!
 //! Every note amount is at most 2^63 - 1 (stake_cm); v_in, v_out, cr_v_in are
 //! public u64 amounts. Binding: the msg's sighash. The chain fixes, per msg,
 //! the assets, v_in, v_out, cr_v_in, cr_move_time, debt_root and which of the
@@ -57,15 +63,16 @@
 //!
 //! Public input order:
 //!   anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root,
-//!   cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash
+//!   cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time,
+//!   gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out, sighash
 
-use privacy_core::{bind, debt_retained, DEPTH, merkle_root, owner_pk, owner_tag};
-use privacy_core::{stake_cm, stake_label, stake_nf, stake_pc};
+use privacy_core::{bind, debt_retained, DEPTH, merkle_root, owner_pk};
+use privacy_core::{stake_cm, stake_gw, stake_label, stake_nf, stake_pc};
 use privacy_core::{debt_leaf, h5, TAG_STAKE};
 
 /// One input of `asset` with commitment label `label`: a real note under
-/// anchor (amount != 0) with its nullifier, or a padding input (amount 0)
-/// publishing 0 or its own would-be nullifier.
+/// anchor (amount != 0) with its nullifier and Groundworks tag, or a padding
+/// input (amount 0) publishing 0 or its own would-be nullifier and tag.
 fn spend(
     nk: Field,
     opk: Field,
@@ -78,6 +85,7 @@ fn spend(
     path: [Field; DEPTH],
     label: Field,
     nf: Field,
+    gw: Field,
 ) {
     let real = (amount != 0) as Field;
     let cm = stake_cm(asset, amount, stake_pc(opk, rho, rcm), label);
@@ -86,6 +94,20 @@ fn spend(
     // real: nf == want. padding: nf == want or nf == 0.
     let want = stake_nf(nk, rho, pos);
     assert((nf - want) * (real + (1 - real) * nf) == 0, "bad nullifier");
+    let want_gw = stake_gw(nk, rho);
+    assert((gw - want_gw) * (real + (1 - real) * gw) == 0, "bad groundworks tag");
+}
+
+/// An output's Groundworks vote: none (gw == 0, w == 0), or the note's own
+/// tag with its unexposed amount as the weight. A padding output cannot vote.
+fn vote(nk: Field, amount: u64, unexposed: u64, rho: Field, gw: Field, w: u64) {
+    if gw == 0 {
+        assert(w == 0, "a weight without a vote");
+    } else {
+        assert(amount != 0, "a padding output cannot vote");
+        assert(gw == stake_gw(nk, rho), "bad vote tag");
+        assert(w == unexposed, "the vote's weight is the unexposed amount");
+    }
 }
 
 /// One output of `asset` to the prover: cm of the note (amount != 0), or, for
@@ -123,7 +145,6 @@ fn main(
     cr_in_path: [Field; DEPTH],
     cr_out_rho: Field,
     cr_out_rcm: Field,
-    tag_salt: Field,
     anchor: pub Field,
     asset: pub Field,
     nf_0: pub Field,
@@ -138,11 +159,18 @@ fn main(
     cr_cm: pub Field,
     cr_v_in: pub u64,
     cr_move_time: pub u64,
-    otag: pub Field,
+    gw_0: pub Field,
+    gw_1: pub Field,
+    cr_gw: pub Field,
+    gw_out: pub Field,
+    w_out: pub u64,
+    cr_gw_out: pub Field,
+    cr_w_out: pub u64,
     sighash: pub Field,
 ) {
     let opk = owner_pk(nk);
     let nf = [nf_0, nf_1];
+    let gw = [gw_0, gw_1];
 
     // ---- lane A: at most one labelled input.
     let mut total: Field = 0;
@@ -163,7 +191,7 @@ fn main(
             mt = in_move_time[i];
             ex = in_exposed[i];
         }
-        spend(nk, opk, asset, anchor, in_amount[i], in_rho[i], in_rcm[i], in_pos[i], in_path[i], label, nf[i]);
+        spend(nk, opk, asset, anchor, in_amount[i], in_rho[i], in_rcm[i], in_pos[i], in_path[i], label, nf[i], gw[i]);
         total += in_amount[i] as Field;
     }
     // The exposure is kept as it is, or cleared at what the debt tree says.
@@ -192,6 +220,7 @@ fn main(
     }
     assert(out_amount >= out_ex, "the exposure stays in the note");
     create(opk, asset, out_amount, out_rho, out_rcm, out_label, cm_out);
+    vote(nk, out_amount, out_amount - out_ex, out_rho, gw_out, w_out);
     // Unexposed value in == unexposed value out. Each side is at most
     // 2 * (2^63 - 1) + 2 * (2^64 - 1): no wrap in the field.
     let unexposed_in = total - ex as Field + retained;
@@ -199,7 +228,7 @@ fn main(
     assert(unexposed_in + v_in as Field == unexposed_out + v_out as Field, "amounts do not balance");
 
     // ---- lane B: an unlabelled input, the credit merged, the label applied.
-    spend(nk, opk, cr_asset, anchor, cr_in_amount, cr_in_rho, cr_in_rcm, cr_in_pos, cr_in_path, 0, cr_nf);
+    spend(nk, opk, cr_asset, anchor, cr_in_amount, cr_in_rho, cr_in_rcm, cr_in_pos, cr_in_path, 0, cr_nf, cr_gw);
     let cr_out_amount = cr_in_amount + cr_v_in;
     let mut cr_label: Field = 0;
     if cr_move_time != 0 {
@@ -207,8 +236,10 @@ fn main(
         cr_label = stake_label(cr_nf, cr_move_time, cr_v_in);
     }
     create(opk, cr_asset, cr_out_amount, cr_out_rho, cr_out_rcm, cr_label, cr_cm);
+    // The credit's exposure is cr_v_in when labelled; the rest is the input's.
+    let cr_unexposed = if cr_move_time != 0 { cr_in_amount } else { cr_out_amount };
+    vote(nk, cr_out_amount, cr_unexposed, cr_out_rho, cr_gw_out, cr_w_out);
 
-    assert(otag == owner_tag(opk, tag_salt), "bad owner tag");
     bind(sighash);
 }
 
@@ -262,7 +293,6 @@ struct St {
     debt: Debt,
     cr_in: In,
     cr_out: Out,
-    salt: Field,
     anchor: Field,
     asset: Field,
     nf: [Field; 2],
@@ -275,7 +305,12 @@ struct St {
     cr_cm: Field,
     cr_v_in: u64,
     cr_move_time: u64,
-    otag: Field,
+    gw: [Field; 2],
+    cr_gw: Field,
+    gw_out: Field,
+    w_out: u64,
+    cr_gw_out: Field,
+    cr_w_out: u64,
 }
 
 fn none_in() -> In {
@@ -380,6 +415,14 @@ fn nf_of(nk: Field, i: In, pad: bool) -> Field {
     }
 }
 
+fn gw_of(nk: Field, i: In, pad: bool) -> Field {
+    if (i.amount != 0) | pad {
+        stake_gw(nk, i.rho)
+    } else {
+        0
+    }
+}
+
 /// Lane A only, nothing cleared, the output unlabelled unless keep: every
 /// public value as an honest prover fills it.
 fn honest(ins: [In; 2], o: Out, anchor: Field, v_in: u64, v_out: u64) -> St {
@@ -402,7 +445,6 @@ fn honest(ins: [In; 2], o: Out, anchor: Field, v_in: u64, v_out: u64) -> St {
         debt: no_debt(),
         cr_in: none_in(),
         cr_out: none_out(),
-        salt: 0x5a17,
         anchor,
         asset: ASSET,
         nf: [nf_of(NK, ins[0], false), nf_of(NK, ins[1], false)],
@@ -415,7 +457,12 @@ fn honest(ins: [In; 2], o: Out, anchor: Field, v_in: u64, v_out: u64) -> St {
         cr_cm: 0,
         cr_v_in: 0,
         cr_move_time: 0,
-        otag: owner_tag(owner_pk(NK), 0x5a17),
+        gw: [gw_of(NK, ins[0], false), gw_of(NK, ins[1], false)],
+        cr_gw: 0,
+        gw_out: 0,
+        w_out: 0,
+        cr_gw_out: 0,
+        cr_w_out: 0,
     }
 }
 
@@ -441,6 +488,7 @@ fn with_credit(s: St, cr_in: In, cr_out: Out, cr_v_in: u64, move_time: u64) -> S
     t.cr_out = cr_out;
     t.cr_asset = CR_ASSET;
     t.cr_nf = nf_of(NK, cr_in, true);
+    t.cr_gw = gw_of(NK, cr_in, true);
     t.cr_v_in = cr_v_in;
     t.cr_move_time = move_time;
     t.cr_cm = cm_of(NK, CR_ASSET, cr_out.amount, cr_out.rho, cr_out.rcm, label_of(t.cr_nf, move_time, cr_v_in));
@@ -475,7 +523,6 @@ fn prove(s: St) {
         s.cr_in.path,
         s.cr_out.rho,
         s.cr_out.rcm,
-        s.salt,
         s.anchor,
         s.asset,
         s.nf[0],
@@ -490,7 +537,13 @@ fn prove(s: St) {
         s.cr_cm,
         s.cr_v_in,
         s.cr_move_time,
-        s.otag,
+        s.gw[0],
+        s.gw[1],
+        s.cr_gw,
+        s.gw_out,
+        s.w_out,
+        s.cr_gw_out,
+        s.cr_w_out,
         SIGHASH,
     );
 }
@@ -617,11 +670,6 @@ fn test_redelegate_clears_its_source_first() {
     let s = honest([n[1], none_in()], none_out(), root, 0, 490);
     let s = clearing(s, debt(MK, 190, MK));
     prove(with_credit(s, n[2], out(580, 0xf1), 480, 7000));
-}
-
-#[test]
-fn test_position_owner_proof() {
-    prove(honest([none_in(), none_in()], none_out(), 0, 0, 0));
 }
 
 #[test]
@@ -845,20 +893,13 @@ fn test_padding_output_arbitrary() {
     prove(s);
 }
 
-#[test(should_fail_with = "bad owner tag")]
-fn test_owner_tag_of_another_owner() {
-    let mut s = honest([none_in(), none_in()], none_out(), 0, 0, 0);
-    s.otag = owner_tag(owner_pk(0xbad), 0x5a17);
-    prove(s);
-}
-
 #[test(should_fail_with = "input not in stake tree")]
 fn test_spend_another_owners_note() {
     let (n, root) = tree(300, 500, 100);
     let mut s = honest([n[0], none_in()], none_out(), root, 0, 300);
     s.nk = 0xbad;
     s.nf[0] = stake_nf(0xbad, n[0].rho, n[0].pos);
-    s.otag = owner_tag(owner_pk(0xbad), 0x5a17);
+    s.gw[0] = stake_gw(0xbad, n[0].rho);
     prove(s);
 }
 
@@ -931,5 +972,192 @@ fn test_top_up_claims_more_than_credited() {
 fn test_padding_input_carries_no_value() {
     let mut s = honest([dummy_in(0xd1), none_in()], out(1001, 0xe1), 0, 1000, 0);
     s.nf[0] = stake_nf(NK, 0xd1, 0);
+    prove(s);
+}
+
+// ---- Groundworks votes
+
+/// s with lane A's output voting.
+fn voting(s: St) -> St {
+    let mut t = s;
+    t.gw_out = stake_gw(NK, t.out.rho);
+    let mut ex = 0;
+    if !t.clear {
+        for i in 0..2 {
+            if t.ins[i].mk != 0 {
+                ex = t.ins[i].ex;
+            }
+        }
+    }
+    t.w_out = t.out.amount - ex;
+    t
+}
+
+#[test]
+fn test_first_delegation_votes() {
+    prove(voting(honest([none_in(), none_in()], out(1000, 0xe1), 0, 1000, 0)));
+}
+
+#[test]
+fn test_top_up_carries_the_vote() {
+    // The old note's tag is published (the chain cancels its vote) and the
+    // merged note votes its whole amount.
+    let (n, root) = tree(300, 500, 100);
+    prove(voting(honest([n[0], none_in()], out(500, 0xe1), root, 200, 0)));
+}
+
+#[test]
+fn test_restake_onto_itself_votes() {
+    // Voting, renewing or changing the split alone: the note respent as is.
+    let (n, root) = tree(300, 500, 100);
+    prove(voting(honest([n[0], none_in()], out(300, 0xe9), root, 0, 0)));
+}
+
+#[test]
+fn test_labelled_note_votes_its_unexposed_part() {
+    let (n, root) = tree(300, 500, 100);
+    let s = voting(honest([n[1], none_in()], out(1500, 0xe1), root, 1000, 0));
+    assert(s.w_out == 1300);
+    prove(s);
+}
+
+#[test]
+fn test_cleared_note_votes_all() {
+    let (n, root) = tree(300, 500, 100);
+    let s = clearing(honest([n[1], none_in()], out(490, 0xe1), root, 0, 0), debt(MK, 190, MK));
+    let s = voting(s);
+    assert(s.w_out == 490);
+    prove(s);
+}
+
+#[test]
+fn test_undelegate_with_change_votes() {
+    let (n, root) = tree(300, 500, 100);
+    prove(voting(honest([n[0], none_in()], out(50, 0xe1), root, 0, 250)));
+}
+
+#[test]
+fn test_credit_votes_its_unexposed_part() {
+    // A move: the source's change and the destination's merged note both
+    // vote; the arrival (240, labelled) is exposed, the 100 already there is not.
+    let (n, root) = tree(300, 500, 100);
+    let s = voting(honest([n[0], none_in()], out(50, 0xe1), root, 0, 250));
+    let mut s = with_credit(s, n[2], out(340, 0xf1), 240, 7000);
+    s.cr_gw_out = stake_gw(NK, 0xf1);
+    s.cr_w_out = 100;
+    prove(s);
+}
+
+#[test(should_fail_with = "the vote's weight is the unexposed amount")]
+fn test_credit_vote_counts_its_exposure() {
+    let (n, root) = tree(300, 500, 100);
+    let s = honest([n[0], none_in()], out(50, 0xe1), root, 0, 250);
+    let mut s = with_credit(s, n[2], out(340, 0xf1), 240, 7000);
+    s.cr_gw_out = stake_gw(NK, 0xf1);
+    s.cr_w_out = 340;
+    prove(s);
+}
+
+#[test(should_fail_with = "the vote's weight is the unexposed amount")]
+fn test_vote_counts_the_exposure() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = voting(honest([n[1], none_in()], out(1500, 0xe1), root, 1000, 0));
+    s.w_out = 1500;
+    prove(s);
+}
+
+#[test(should_fail_with = "the vote's weight is the unexposed amount")]
+fn test_vote_overstates_its_weight() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = voting(honest([n[0], none_in()], out(500, 0xe1), root, 200, 0));
+    s.w_out = 501;
+    prove(s);
+}
+
+#[test(should_fail_with = "the vote's weight is the unexposed amount")]
+fn test_vote_understates_its_weight() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = voting(honest([n[0], none_in()], out(500, 0xe1), root, 200, 0));
+    s.w_out = 499;
+    prove(s);
+}
+
+#[test(should_fail_with = "bad vote tag")]
+fn test_vote_under_another_notes_tag() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = voting(honest([n[0], none_in()], out(500, 0xe1), root, 200, 0));
+    s.gw_out = stake_gw(NK, 0xa1);
+    prove(s);
+}
+
+#[test(should_fail_with = "bad vote tag")]
+fn test_vote_under_another_owners_tag() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = voting(honest([n[0], none_in()], out(500, 0xe1), root, 200, 0));
+    s.gw_out = stake_gw(0xbad, 0xe1);
+    prove(s);
+}
+
+#[test(should_fail_with = "a weight without a vote")]
+fn test_weight_without_a_vote() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = honest([n[0], none_in()], out(500, 0xe1), root, 200, 0);
+    s.w_out = 500;
+    prove(s);
+}
+
+#[test(should_fail_with = "a padding output cannot vote")]
+fn test_padding_output_votes() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = honest([n[0], none_in()], out(0, 0xe1), root, 0, 300);
+    s.cm_out = cm_of(NK, ASSET, 0, 0xe1, 0xe2, 0);
+    s.gw_out = stake_gw(NK, 0xe1);
+    prove(s);
+}
+
+#[test(should_fail_with = "a padding output cannot vote")]
+fn test_padding_credit_output_votes() {
+    let mut s = honest([none_in(), none_in()], out(1000, 0xe1), 0, 1000, 0);
+    s.cr_gw_out = stake_gw(NK, 0x99);
+    prove(s);
+}
+
+#[test(should_fail_with = "bad groundworks tag")]
+fn test_real_input_hides_its_tag() {
+    // A voting note spent without its tag would keep its vote.
+    let (n, root) = tree(300, 500, 100);
+    let mut s = honest([n[0], none_in()], none_out(), root, 0, 300);
+    s.gw[0] = 0;
+    prove(s);
+}
+
+#[test(should_fail_with = "bad groundworks tag")]
+fn test_real_input_publishes_another_tag() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = honest([n[0], none_in()], none_out(), root, 0, 300);
+    s.gw[0] = stake_gw(NK, 0xb1);
+    prove(s);
+}
+
+#[test(should_fail_with = "bad groundworks tag")]
+fn test_credit_input_hides_its_tag() {
+    let (n, root) = tree(300, 500, 100);
+    let s = honest([n[0], none_in()], out(50, 0xe1), root, 0, 250);
+    let mut s = with_credit(s, n[2], out(340, 0xf1), 240, 7000);
+    s.cr_gw = 0;
+    prove(s);
+}
+
+#[test(should_fail_with = "bad groundworks tag")]
+fn test_padding_tag_arbitrary() {
+    let mut s = honest([dummy_in(0xd1), none_in()], out(1000, 0xe1), 0, 1000, 0);
+    s.gw[0] = 5;
+    prove(s);
+}
+
+#[test]
+fn test_padding_input_may_publish_its_tag() {
+    let mut s = honest([dummy_in(0xd1), none_in()], out(1000, 0xe1), 0, 1000, 0);
+    s.gw[0] = stake_gw(NK, 0xd1);
     prove(s);
 }

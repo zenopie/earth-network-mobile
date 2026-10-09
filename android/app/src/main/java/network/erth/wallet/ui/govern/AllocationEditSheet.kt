@@ -52,7 +52,8 @@ fun AllocationEditSheet(
     val dimens = EarthTheme.dimens
     val weights = remember {
         mutableStateMapOf<Long, Long>().apply {
-            stream.options.forEach { put(it.id, stream.mine[it.id] ?: 0L) }
+            // Only options a split may name: a removed one's weight is dropped.
+            stream.options.filter { !it.removed }.forEach { put(it.id, stream.mine[it.id] ?: 0L) }
         }
     }
 
@@ -82,7 +83,7 @@ fun AllocationEditSheet(
 
         Spacer(Modifier.height(dimens.space16))
 
-        stream.options.forEach { option ->
+        stream.options.filter { !it.removed }.forEach { option ->
             val value = weights[option.id] ?: 0L
             Row(
                 Modifier.fillMaxWidth().padding(vertical = dimens.space8),

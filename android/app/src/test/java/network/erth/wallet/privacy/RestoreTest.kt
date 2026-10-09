@@ -92,13 +92,9 @@ class RestoreTest : WalletTest() {
         chain.matureWithdrawals()
         a.delegate(validator, 1_500_000)
         a.sync()
-        // Forty locks proved and refused: owner-tag counters 0..39 burnt.
-        chain.rejectNext = 40
-        repeat(40) { assertThrows(IOException::class.java) { a.lockPosition(validator, 100_000, mapOf(2L to 100L)) } }
-        a.sync()
-        a.lockPosition(validator, 100_000, mapOf(2L to 100L))
-        a.sync()
-        assertEquals(40, a.positions().single().second)
+        chain.minGroundworksVote = 100_000
+        a.castGroundworks(mapOf(2L to 100L))
+        assertEquals(1, a.groundworksVotes().size)
         a.undelegate(validator, 200_000)
         a.sync()
         assertTrue(a.balances().keys.containsAll(listOf("uerth", "uanml", "dexlp/1", PrivacyWallet.derthDenom(validator))))
@@ -108,7 +104,11 @@ class RestoreTest : WalletTest() {
         val restored = wallet(chain)
         restored.sync()
         assertEquals(a.balances(), restored.balances())
-        assertEquals(a.positions().map { it.first.id to it.second }, restored.positions().map { it.first.id to it.second })
+        // Its Groundworks vote, found by its notes' tags, and the split adopted from it.
+        val rv = restored.groundworksVotes()
+        assertEquals(1, rv.size)
+        assertEquals(a.groundworksVotes().map { it.derth }, rv.map { it.derth })
+        assertEquals(mapOf(2L to 100L), restored.groundworksSplit)
         // The registration, from its record note and the identity stream alone.
         assertEquals(WalletSync.IdentityStatus.LIVE, restored.identityStatus())
         val id = a.store.state.identity!!
@@ -121,10 +121,12 @@ class RestoreTest : WalletTest() {
         restored.claimAnml()
         restored.sync()
         assertEquals(bal(a, "uanml") + 1_000_000, bal(restored, "uanml"))
-        // A next lock takes a fresh tag past every one in use.
-        restored.lockPosition(validator, 100_000, mapOf(3L to 100L))
+        // Its next stake tx keeps voting with the adopted split.
+        restored.delegate(validator, 1_000_000)
         restored.sync()
-        assertEquals(listOf(40, 41), restored.positions().map { it.second })
+        val after = restored.groundworksVotes()
+        assertEquals(1, after.size)
+        assertEquals(mapOf(2L to 100L), after[0].split)
         dump(chain, "restore")
     }
 
@@ -349,36 +351,30 @@ class RestoreTest : WalletTest() {
     }
 
     /**
-     * Positions closed before a restore are known from their unlock
-     * memos, so the restored wallet's next lock never reuses a tag the chain
-     * has already seen (without them it would take counter 1 again).
+     * A wallet that stopped voting never adopts a split back off the chain;
+     * a restored one whose stake no longer votes has nothing to adopt.
      */
     @Test
-    fun restoredWalletNeverReusesAClosedTag() {
+    fun aStoppedSplitStaysStopped() {
         val chain = FakeChain()
+        chain.minGroundworksVote = 100_000
         val v = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
         val a = wallet(chain)
         funded(chain, a, 5_000_000)
         a.sync()
         a.delegate(v, 3_000_000)
         a.sync()
-        repeat(3) { a.lockPosition(v, 100_000, mapOf(2L to 100L)); a.sync() }
-        val used = chain.positions.values.map { it.ownerTag }.toSet()
-        assertEquals(3, used.size)
-        for ((p, c) in a.positions().filter { it.second >= 1 }) { a.unlockPosition(p, c); a.sync() }
-        assertEquals(listOf(0), a.positions().map { it.second })
-        assertEquals(2, a.store.state.closedOtagMax)
+        a.castGroundworks(mapOf(2L to 100L))
+        a.castGroundworks(emptyMap())
+        assertTrue(chain.gwVotes.isEmpty())
+        a.delegate(v, 1_000_000)
+        a.sync()
+        assertTrue(chain.gwVotes.isEmpty())
+        assertTrue(a.groundworksSplit.isEmpty())
         val restored = wallet(chain)
         restored.sync()
-        assertEquals(2, restored.store.state.closedOtagMax)
-        assertEquals(listOf(0), restored.positions().map { it.second })
-        restored.lockPosition(v, 100_000, mapOf(2L to 100L))
-        restored.sync()
-        val fresh = chain.positions.values.last().ownerTag
-        assertFalse(fresh in used)
-        assertEquals(listOf(0, 3), restored.positions().map { it.second })
-        // A gift of stake carrying someone else's (untagged) unlock memo is ignored.
-        assertEquals(null, WalletSync.parseUnlockMemo(a.keys.nk, WalletSync.unlockMemo(Fr.of(9), 1_000_000)))
+        assertTrue(restored.groundworksVotes().isEmpty())
+        assertTrue(restored.groundworksSplit.isEmpty())
     }
 
     @Test

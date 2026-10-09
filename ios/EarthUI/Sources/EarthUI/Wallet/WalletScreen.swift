@@ -90,7 +90,7 @@ struct WalletScreen: View {
             tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")]),
                               onSuccess: { await model.syncPrivacy() }) { w in try await w.claimAnml() }
         case .caretakerExpiring: model.governLink = .caretaker; model.tab = .govern
-        case .groundworksExpiring: model.governLink = .positions; model.tab = .govern
+        case .groundworksExpiring: model.governLink = .groundworks; model.tab = .govern
         case .handleExpiring, .handlePaysElsewhere: handleOpen = true
         case .moveSuggested: identityOpen = true
         // The handle first when it is one of them; the caretaker vote is renewed where it is cast.
@@ -404,16 +404,11 @@ struct HomePanel: View {
                             Figures.whole(model.totalStaked) + " ERTH")
             }
             // Private stake: derth notes, worth more ERTH each epoch as rewards
-            // compound into the validator's rate, and positions locked from them.
+            // compound into the validator's rate.
             ForEach(model.privateStake.sorted(by: { $0.key < $1.key }), id: \.key) { denom, amount in
                 let op = String(denom.dropFirst("derth/".count))
                 positionRow("Staked (private)", Figures.balance(BigInt(amount)) + " derth · " + op, "shield.lefthalf.filled",
                             Figures.balance(BigInt(model.derthValue(amount, validator: op))) + " ERTH")
-            }
-            ForEach(model.positions) { p in
-                positionRow("Groundworks position", Figures.balance(BigInt(p.position.derth)) + " derth · " + p.position.validator,
-                            "square.stack.3d.up.fill",
-                            Figures.balance(BigInt(model.derthValue(p.position.derth, validator: p.position.validator))) + " ERTH")
             }
             // An undelegation waiting for its payout, from this wallet's own
             // record until the chain mints the payout to it.

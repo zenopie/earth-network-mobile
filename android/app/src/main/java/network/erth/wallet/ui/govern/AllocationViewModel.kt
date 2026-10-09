@@ -136,11 +136,10 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
                         options = runCatching { Allocation.stream(StreamId.STREAM_ID_CARETAKER).options }.getOrDefault(emptyList()),
                         mine = runCatching { PrivacySession.wallet(ctx).store.state.caretakerSplit }.getOrDefault(emptyMap()),
                     ),
-                    // Groundworks is directed by this wallet's positions:
-                    // their splits, weighted by the stake each holds.
+                    // Groundworks: the split this wallet's stake votes with.
                     capital = StreamUiState(
                         options = runCatching { Allocation.stream(StreamId.STREAM_ID_GROUNDWORKS).options }.getOrDefault(emptyList()),
-                        mine = runCatching { positionSplit(PrivacySession.wallet(ctx).positions().map { it.first }) }.getOrDefault(emptyMap()),
+                        mine = runCatching { PrivacySession.wallet(ctx).groundworksSplit }.getOrDefault(emptyMap()),
                     ),
                     proposals = proposals,
                     assemblyTallies = assemblyTallies(proposals),
@@ -175,23 +174,4 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = null
     }
 
-}
-
-/**
- * Positions' splits combined, each weighted by its stake, as whole
- * percents summing to 100 (largest remainder).
- */
-internal fun positionSplit(positions: List<network.erth.wallet.privacy.PrivacyChainReads.Position>): Map<Long, Long> {
-    val weight = HashMap<Long, Double>()
-    positions.forEach { p -> p.splits.forEach { (id, pct) -> weight.merge(id, p.derth.toDouble() * pct, Double::plus) } }
-    val total = weight.values.sum()
-    if (total <= 0) return emptyMap()
-    val exact = weight.mapValues { it.value / total * 100 }
-    val out = exact.mapValues { floor(it.value).toLong() }.toMutableMap()
-    var left = 100 - out.values.sum()
-    for (id in exact.keys.sortedByDescending { exact[it]!! - floor(exact[it]!!) }) {
-        if (left <= 0) break
-        out[id] = out[id]!! + 1; left--
-    }
-    return out.filterValues { it > 0 }
 }

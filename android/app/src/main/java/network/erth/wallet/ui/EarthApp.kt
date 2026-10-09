@@ -399,7 +399,6 @@ private fun EarthRoute.title(): String = when (this) {
     is EarthRoute.ProposalDetail -> "Proposal #$id"
     EarthRoute.Explore -> "Explorer"
     EarthRoute.Personhood -> "Identity"
-    EarthRoute.Positions -> "Groundworks positions"
     EarthRoute.RemovalBallots -> "Removal ballots"
     EarthRoute.Notes -> "Shielded notes"
     EarthRoute.Handle -> "Handle"

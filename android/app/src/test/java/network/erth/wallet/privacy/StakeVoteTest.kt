@@ -19,12 +19,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Stake votes: one tx per validator and per position, each the user's own;
+ * Stake votes: one tx per validator, each the user's own;
  * two slots and the chain's rounded weight; the snapshot and its nullifier
  * tree taken from the chain; what has voted survives a reset.
  */
 class StakeVoteTest : WalletTest() {
-    /** Two validators' derth and a position, all before proposal 12's snapshot. */
+    /** Two validators' derth, before proposal 12's snapshot. */
     private fun stakedAtTwoValidators(chain: FakeChain): PrivacyWallet {
         val v1 = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
         val v2 = "earthvaloper1qyqszqgpqyqszqgpqyqszqgpqyqszqgpjnp7du"
@@ -33,7 +33,6 @@ class StakeVoteTest : WalletTest() {
         a.sync()
         a.delegate(v1, 1_000_000); a.sync()
         a.delegate(v2, 1_000_000); a.sync()
-        a.lockPosition(v1, 100_000, mapOf(2L to 100L)); a.sync()
         chain.openProposal(12)
         return a
     }
@@ -71,26 +70,23 @@ class StakeVoteTest : WalletTest() {
     private class Voting(val chain: FakeChain, val a: PrivacyWallet, val k: network.erth.wallet.privacy.note.OwnedStakeNote)
 
     /**
-     * One vote per validator and one
-     * per position, each its own tx the user confirms; nothing is cast in the
-     * background. A validator voted once is not voted again.
+     * One vote per validator, each its own tx the user confirms; nothing is
+     * cast in the background. A validator voted once is not voted again.
      */
     @Test
-    fun stakeVotesAreOneTxPerValidatorAndPosition() {
+    fun stakeVotesAreOneTxPerValidator() {
         val chain = FakeChain()
         val a = stakedAtTwoValidators(chain)
         a.sync()
         val items = a.stakeVoteItems(12)
-        assertEquals(3, items.size)
-        assertEquals(2, items.count { it is PrivacyWallet.StakeVoteItem.Validator })
+        assertEquals(2, items.size)
         val before = chain.height
         for (item in items) {
             org.junit.Assert.assertNotNull(a.castStakeVote(12, item, yes))
             a.sync()
         }
         assertEquals(2, chain.stakeVotes.size)
-        assertEquals(1, chain.positionVotes.size)
-        assertEquals(before + 3, chain.height)
+        assertEquals(before + 2, chain.height)
         // Final: the validators' notes have voted.
         assertEquals(null, a.castStakeVote(12, items.first(), yes))
         assertEquals(2, chain.stakeVotes.size)

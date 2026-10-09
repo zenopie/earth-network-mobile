@@ -22,40 +22,31 @@ enum StakeAction: Identifiable, Equatable {
 }
 
 /// One validator's private stake as the Stake screen shows it, from
-/// `StakeRound.lines` (notes and Groundworks positions alike).
+/// `StakeRound.lines`. A delegation bonds in its own block, so stake earns
+/// from then on while its validator does.
 struct StakeCard {
     let validator: String
     let holding: PrivacyWallet.StakeHolding?
-    /// Notes and positions here, at the live rate.
+    /// The stake here, at the live rate.
     let value: UInt64
-    /// The part locked in Groundworks positions, in ERTH.
-    let lockedValue: UInt64
-    /// The part still waiting to join its validator (in ERTH), nil when unknown.
-    let joiningValue: UInt64?
     let standing: StakeRound.Standing?
 
-    /// What earns now: all of it but what is waiting to join.
-    var earningValue: UInt64 { value - min(value, joiningValue ?? 0) }
+    enum Status { case earning, idle }
 
-    enum Status { case earning, waiting, idle }
-
-    /// The row's dot. Waiting only when all of it waits: a top-up still
-    /// queued does not stop the rest from earning.
+    /// The row's dot.
     var status: Status {
         if let standing, !standing.earns { return .idle }
-        if let j = joiningValue, j > 0, j >= value { return .waiting }
         return .earning
     }
 
     @MainActor
-    static func all(_ model: AppModel, after: UInt64?) -> [StakeCard] {
+    static func all(_ model: AppModel) -> [StakeCard] {
         let list = PrivacyQueries.cachedValidators
-        // Read so the rows redraw when a sync changes the notes or positions.
-        _ = (model.privateStake, model.positions)
-        return model.stakeLines(after: after).map { line in
+        // Read so the rows redraw when a sync changes the notes.
+        _ = model.privateStake
+        return model.stakeLines().map { line in
             StakeCard(validator: line.validator, holding: model.stakeHoldings.first { $0.validator == line.validator },
-                      value: line.value, lockedValue: line.lockedValue, joiningValue: line.joiningValue,
-                      standing: list?[line.validator].map(StakeRound.Standing.init))
+                      value: line.value, standing: list?[line.validator].map(StakeRound.Standing.init))
         }
     }
 }
@@ -73,7 +64,7 @@ struct StakeOverview: View {
         // Re-drawn each minute so a payout date that passes updates.
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let now = Int64(context.date.timeIntervalSince1970)
-            let cards = StakeCard.all(model, after: round.startHeight)
+            let cards = StakeCard.all(model)
             let empty = cards.isEmpty && model.pendingUnbonds.isEmpty
             VStack(spacing: 0) {
                 hero(cards)
@@ -121,17 +112,10 @@ struct StakeOverview: View {
         .padding(.top, theme.space.x24)
     }
 
-    /// The hero's one line: what it earns a day, or, only while stake waits,
-    /// when it starts.
+    /// The hero's one line: what it earns a day.
     private func heroLine(_ cards: [StakeCard], total: UInt64) -> (text: String, color: Color)? {
         if total == 0 {
             return cards.isEmpty && model.pendingUnbonds.isEmpty ? ("Earn by staking ERTH", theme.colors.textTertiary) : nil
-        }
-        let waiting = cards.reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.joiningValue ?? 0) }
-        if waiting > 0 {
-            let at = round.epoch.map { StakeRoundModel.clock($0.endTime) } ?? "soon"
-            let who = waiting >= total ? "Starts" : "\(model.balancesVisible ? Figures.display(BigInt(waiting)) : "••••") starts"
-            return ("\(who) earning \(at)", theme.colors.warnInk)
         }
         let daily = perDay(cards)
         guard daily > 0 else { return ("Not earning", theme.colors.textTertiary) }
@@ -142,14 +126,13 @@ struct StakeOverview: View {
     private var bonded: Int64 { Int64(model.totalBonded.description) ?? 0 }
 
     /// About what the stake adds in a day at the network rate, after each
-    /// validator's commission. Stake still waiting to join earns nothing yet
-    /// (rewards accrue only on what is delegated), so it is left out.
+    /// validator's commission.
     private func perDay(_ cards: [StakeCard]) -> Double {
         cards.reduce(0) { acc, c in
             guard c.standing?.earns ?? true,
                   let r = StakingApr.forValidator(bondedUerth: bonded, commission: model.commission(of: c.validator) ?? 0)
             else { return acc }
-            return acc + Double(c.earningValue) * r / 365
+            return acc + Double(c.value) * r / 365
         }
     }
 
@@ -248,7 +231,7 @@ struct StakeRow: View {
     }
 }
 
-/// Green earning, amber waiting to start, grey not earning.
+/// Green earning, grey not earning.
 struct StakeDot: View {
     let status: StakeCard.Status
     var size: CGFloat = 8
@@ -263,7 +246,6 @@ struct StakeDot: View {
     private var color: Color {
         switch status {
         case .earning: return Palette.Brand.b500
-        case .waiting: return Palette.Warning.w300
         case .idle: return Palette.Gray.g400
         }
     }
@@ -271,7 +253,6 @@ struct StakeDot: View {
     var label: String {
         switch status {
         case .earning: return "Earning"
-        case .waiting: return "Waiting to start earning"
         case .idle: return "Not earning"
         }
     }
@@ -296,9 +277,8 @@ struct ValidatorMark: View {
     }
 }
 
-/// One validator: the big amount and Add / Move / Unstake. A Groundworks
-/// part, a window still closed, or notes to merge get one short line each,
-/// and only when they apply.
+/// One validator: the big amount and Add / Move / Unstake. A window still
+/// closed, or notes to merge get one short line each, and only when they apply.
 struct ValidatorStakeSheet: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
@@ -308,7 +288,7 @@ struct ValidatorStakeSheet: View {
     let merge: (String) -> Void
 
     var body: some View {
-        let card = StakeCard.all(model, after: round.startHeight).first { $0.validator == validator }
+        let card = StakeCard.all(model).first { $0.validator == validator }
         let free = card?.holding?.free ?? 0
         VStack(spacing: 0) {
             Spacer().frame(height: theme.space.x32)
@@ -342,9 +322,6 @@ struct ValidatorStakeSheet: View {
                 .foregroundStyle(theme.colors.textTertiary)
 
             VStack(spacing: theme.space.x4) {
-                if let card, card.lockedValue > 0 {
-                    shortLine("\(model.balancesVisible ? Figures.whole(BigInt(card.lockedValue)) : "••••") in Groundworks")
-                }
                 if let h = card?.holding, h.locked > 0, free == 0 {
                     shortLine(h.lockedUntil.map { "Can move \(StakeRoundModel.day(Int64(clamping: $0)))" } ?? "Recently moved here")
                 }
@@ -380,7 +357,6 @@ struct ValidatorStakeSheet: View {
     private func statusWord(_ c: StakeCard) -> String {
         switch c.status {
         case .earning: return "Earning"
-        case .waiting: return round.epoch.map { "Starts \(StakeRoundModel.clock($0.endTime))" } ?? "Starts soon"
         case .idle: return c.standing?.label ?? "Not earning"
         }
     }

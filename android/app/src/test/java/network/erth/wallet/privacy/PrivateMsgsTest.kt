@@ -29,15 +29,11 @@ import network.erth.earth.proto.shielded.Bundle
 import network.erth.earth.proto.shielded.MsgSend
 import network.erth.earth.proto.shielded.ValueBalance
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
-import network.erth.earth.proto.shieldedstaking.MsgLockPosition
-import network.erth.earth.proto.shieldedstaking.MsgPositionVote
 import network.erth.earth.proto.shieldedstaking.MsgRedelegate
 import network.erth.earth.proto.shieldedstaking.MsgRestake
 import network.erth.earth.proto.shieldedstaking.StakeProof
 import network.erth.earth.proto.shieldedstaking.MsgStakeVote
 import network.erth.earth.proto.shieldedstaking.MsgUndelegate
-import network.erth.earth.proto.shieldedstaking.MsgUnlockPosition
-import network.erth.earth.proto.shieldedstaking.MsgUpdatePosition
 import network.erth.wallet.crypto.Bech32
 import network.erth.wallet.privacy.Vectors.fe
 import network.erth.wallet.privacy.Vectors.hex
@@ -85,16 +81,28 @@ class PrivateMsgsTest {
     /** A deterministic 201-byte stand-in for a wallet stake ciphertext (main.go sct). */
     private fun sct(seed: Int): ByteString = ByteString.copyFrom(ByteArray(201) { (seed xor it).toByte() })
 
-    /** main.go stakeProof: lane A nullifiers, its output, the credit lane, a clear_before and debt root. */
+    /** main.go stakeProof: lane A nullifiers and tags, its output, the credit lane, a clear_before and debt root. */
     private fun stake(seed: Long, spends: Int, creates: Boolean, credits: Boolean = false, clears: Boolean = true): StakeProof {
         val p = StakeProof.newBuilder().setProof(ByteString.copyFrom(byteArrayOf(0x5e, seed.toByte())))
-            .setAnchor(fb(seed)).setOwnerTag(fb(seed + 8))
+            .setAnchor(fb(seed))
             .setCommitment(zero32).setCreditNullifier(zero32).setCreditCommitment(zero32).setDebtRoot(zero32)
+            .addAllGroundworksTags(listOf(fb(seed + 8), fb(seed + 9))).setCreditGroundworksTag(zero32)
+            .setVoteTag(zero32).setCreditVoteTag(zero32)
         for (i in 0 until 2) p.addNullifiers(if (i < spends) fb(seed + 1 + i) else zero32)
         if (creates) p.setCommitment(fb(seed + 3)).setCiphertext(sct(seed.toInt()))
-        if (credits) p.setCreditNullifier(fb(seed + 4)).setCreditCommitment(fb(seed + 5)).setCreditCiphertext(sct(seed.toInt() + 1))
+        if (credits) {
+            p.setCreditNullifier(fb(seed + 4)).setCreditCommitment(fb(seed + 5)).setCreditCiphertext(sct(seed.toInt() + 1))
+                .setCreditGroundworksTag(fb(seed + 10))
+        }
         if (clears) p.setClearBefore(1_790_000_000 + seed).setDebtRoot(fb(seed + 6))
         return p.build()
+    }
+
+    /** main.go voting: lane A's output votes (tag seed+11, weight [w]), and the credit lane's (seed+12, [cw]) when cw > 0. */
+    private fun voting(p: StakeProof, seed: Long, w: Long, cw: Long = 0): StakeProof {
+        val b = p.toBuilder().setVoteTag(fb(seed + 11)).setVoteWeight(w)
+        if (cw > 0) b.setCreditVoteTag(fb(seed + 12)).setCreditVoteWeight(cw)
+        return b.build()
     }
 
     private fun membership(seed: Long): Membership = Membership.newBuilder()
@@ -171,14 +179,16 @@ class PrivateMsgsTest {
             "stake_vote_two" to MsgStakeVote.newBuilder().setBundle(fee(127, 2000)).setProposalId(6).setValidator(validator)
                 .addAllOptions(opts()).setWeight(999).setProof(ByteString.copyFrom(byteArrayOf(0x70, 0x7e)))
                 .addAllVoteNullifiers(listOf(fb(128), fb(129))).setDebtRoot(fb(130)).build(),
-            "lock_position" to MsgLockPosition.newBuilder().setBundle(fee(140, 2000)).setValidator(validator).setAmount(400000)
-                .addSplits(w(2, 100)).setStake(stake(140, 1, true)).build(),
-            "update_position" to MsgUpdatePosition.newBuilder().setBundle(fee(150, 2000)).setPositionId(9)
-                .addSplits(w(2, 100)).setStake(stake(150, 0, false)).build(),
-            "unlock_position" to MsgUnlockPosition.newBuilder().setBundle(fee(160, 2000)).setPositionId(9)
-                .setStake(stake(160, 1, true)).build(),
-            "position_vote" to MsgPositionVote.newBuilder().setBundle(fee(170, 2000)).setPositionId(9)
-                .setProposalId(5).addAllOptions(opts()).setStake(stake(170, 0, false)).build(),
+            "delegate_vote" to MsgDelegate.newBuilder().setBundle(fee(140, 502_000)).setValidator(validator).setAmount(500_000).setDerth(449_995)
+                .setStake(voting(stake(140, 1, true), 140, 849_995)).addGroundworksSplit(w(2, 100)).build(),
+            "restake_vote" to MsgRestake.newBuilder().setBundle(fee(150, 2000)).setValidator(validator)
+                .setStake(voting(stake(150, 2, true), 150, 1_200_000)).addGroundworksSplit(w(2, 100)).build(),
+            "undelegate_vote" to MsgUndelegate.newBuilder().setBundle(fee(160, 2000)).setValidator(validator).setAmount(400_000)
+                .setStake(voting(stake(160, 1, true), 160, 600_000)).setPc(fb(161)).setCiphertext(bct(161)).addGroundworksSplit(w(2, 100)).build(),
+            "redelegate_vote" to MsgRedelegate.newBuilder().setBundle(fee(170, 2000)).setSrcValidator(validator)
+                .setDstValidator(json.getString("validator2")).setAmount(400_000)
+                .setStake(voting(stake(170, 1, true, credits = true), 170, 500_000, 380_000))
+                .setDstDerth(380_000).setMoveTime(1_790_000_123).addGroundworksSplit(w(2, 100)).build(),
             "redelegate" to MsgRedelegate.newBuilder().setBundle(fee(175, 2000)).setSrcValidator(validator)
                 .setDstValidator(json.getString("validator2")).setAmount(400000).setStake(stake(175, 1, true, credits = true))
                 .setDstDerth(380_000).setMoveTime(1_790_000_123).build(),
@@ -223,7 +233,7 @@ class PrivateMsgsTest {
     @Test
     fun stakeFieldsMatchTheChain() {
         val want = json.getJSONArray("stake_fields_redelegate")
-        val got = PrivateMsgs.stakeFields(stake(175, 1, true, credits = true))
+        val got = PrivateMsgs.stakeFields(voting(stake(175, 1, true, credits = true), 175, 500_000, 380_000))
         assertEquals(want.length(), got.size)
         for (i in got.indices) assertEquals("field $i", want.getString(i), got[i].toHex())
     }
@@ -232,7 +242,7 @@ class PrivateMsgsTest {
     @Test
     fun publicInputLayoutsMatchTheChain() {
         val want = json.getJSONObject("public_inputs")
-        for (name in listOf("delegate", "undelegate", "redelegate")) {
+        for (name in listOf("delegate", "undelegate", "redelegate", "redelegate_vote")) {
             val m = msgs.getValue(name)
             val got = ChainLayout.stakePublicInputs(PrivateMsgs.stake(m)!!, ChainLayout.lanes(m), fe(77))
             val w = want.getJSONArray(name)

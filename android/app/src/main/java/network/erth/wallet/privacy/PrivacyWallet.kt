@@ -18,14 +18,10 @@ import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.MsgSend
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
-import network.erth.earth.proto.shieldedstaking.MsgLockPosition
-import network.erth.earth.proto.shieldedstaking.MsgPositionVote
 import network.erth.earth.proto.shieldedstaking.MsgRedelegate
 import network.erth.earth.proto.shieldedstaking.MsgRestake
 import network.erth.earth.proto.shieldedstaking.MsgStakeVote
 import network.erth.earth.proto.shieldedstaking.MsgUndelegate
-import network.erth.earth.proto.shieldedstaking.MsgUnlockPosition
-import network.erth.earth.proto.shieldedstaking.MsgUpdatePosition
 import network.erth.wallet.chain.math.StakingApr
 import network.erth.wallet.privacy.keys.PrivacyKeys
 import network.erth.wallet.privacy.keys.ShieldedAddress
@@ -109,16 +105,21 @@ interface PrivacyChainReads {
     )
     /** Query/StakeNullifierTree: the values at leaf start+1.. in insertion order, and the tree's current size. */
     data class NfTreePage(val values: List<Fr>, val size: Long)
-    /** A Groundworks position: public, its owner known only by [ownerTag]. */
-    data class Position(
+    /**
+     * A Groundworks vote (public): a stake note's derth at [validator] voting
+     * [splits], stored under the note's tag H(TAG_GW, nk, rho); its owner is
+     * not known. [weight]: derth x the validator's epoch rate (0 when a reset
+     * made it stale).
+     */
+    data class GroundworksVote(
         val id: Long,
         val validator: String,
         val derth: Long,
-        val ownerTag: Fr,
-        val splits: Map<Long, Long> = emptyMap(),
-        val createdHeight: Long = 0,
-        /** When the split stops counting (x/allocation groundworks_lease_seconds after it was cast or renewed; 0 without a split). */
-        val splitExpiresAt: Long = 0,
+        val weight: Long = 0,
+        val tag: Fr,
+        val splits: Map<Long, Long>,
+        /** When the vote stops counting (x/allocation groundworks_lease_seconds after it was cast). */
+        val splitExpiresAt: Long,
     )
 
     /**
@@ -171,6 +172,8 @@ interface PrivacyChainReads {
         val delegation: java.math.BigInteger = backing - pendingDelegation + pendingUndelegation,
         val rewards: java.math.BigInteger = java.math.BigInteger.ZERO,
         val rate: BigDecimal = if (supply.signum() == 0) BigDecimal.ONE else BigDecimal(backing).divide(BigDecimal(supply), 18, java.math.RoundingMode.DOWN),
+        /** The rate at the last epoch end (book.epoch_rate): what a Groundworks vote weighs at. */
+        val epochRate: BigDecimal = rate,
         val status: String = PrivacyChainReads.BOND_STATUS_BONDED,
         val jailed: Boolean = false,
         val tombstoned: Boolean = false,
@@ -224,7 +227,12 @@ interface PrivacyChainReads {
     fun ballotInputs(proposalId: Long = 0, optionId: Long = 0): BallotInputs
     fun epochNumber(): Long
     fun snapshot(proposalId: Long): Snapshot
-    fun positions(): List<Position>
+    /** Every Groundworks vote (chain-wide: a wallet finds its own by its notes' tags). */
+    fun groundworksVotes(): List<GroundworksVote>
+    /** x/shieldedstaking params.min_position: the least weight (uerth) a Groundworks vote carries. */
+    fun minGroundworksVote(): Long = 1_000_000
+    /** The Groundworks fund's options a split may name now (not removed); null: unknown. */
+    fun groundworksOptions(): Set<Long>? = null
     /** x/shieldedstaking Query/StakeNullifierTree{start, limit} (at most 1000 a page). */
     fun stakeNullifierTree(start: Long, limit: Int): NfTreePage
     /** x/shieldedstaking Query/DebtTree{start, limit} (at most 1000 a page). */
@@ -416,7 +424,7 @@ class PrivacyWallet(
         val outs = a.bundles.flatMap { b -> b.actions.map { it.out } }
         val back = outs.filter { o -> o.note != null && o.note.pc(own) == o.pc }
         val stakeBack = listOfNotNull(
-            a.stake?.let { p -> p.out?.let { o -> p.denom?.let { ActivityCoin(it, o.amount) } } },
+            a.stake?.let { p -> ActivityCoin(p.denom, p.out.amount) },
             a.stake?.credit?.let { c -> ActivityCoin(c.denom, c.out.amount) },
         )
         val (o, i) = PrivateActivity.coins(
@@ -1838,8 +1846,8 @@ class PrivacyWallet(
         vIn: Long,
         vOut: Long,
         d: DebtView,
-        salt: Fr = StakePlan.freshSalt(),
         credit: StakePlan.Credit? = null,
+        gw: GroundworksContext = GroundworksContext.NONE,
     ): StakePlan {
         val l = spends.firstNotNullOfOrNull { it.label }
         val clear = clearOf(l, d)
@@ -1848,7 +1856,13 @@ class PrivacyWallet(
         amount = Math.subtractExact(Math.addExact(amount, vIn), vOut)
         require(amount >= 0) { "insufficient stake" }
         val out = StakePlan.out(keys, denom, amount, if (clear.clears) null else l)
-        return StakePlan(keys.nk, denom, spends, spends.map { store.stakeTree.path(it.position) }, out, vIn, vOut, clear, credit, salt, stakeAnchor())
+        // A split chosen: each output votes with it, when it weighs enough.
+        val vote = votes(gw, denom, out.amount - (out.label?.exposed ?: 0L))
+        val creditVote = credit?.let { votes(gw, it.denom, it.out.amount - it.vIn) } ?: false
+        return StakePlan(
+            keys.nk, denom, spends, spends.map { store.stakeTree.path(it.position) }, out, vIn, vOut, clear, credit,
+            vote = vote, creditVote = creditVote, anchor = stakeAnchor(),
+        )
     }
 
     /** What a lane A clear gives up: the slash's cut of the cleared exposure (0 when nothing is cleared, or nothing was cut). */
@@ -1913,15 +1927,17 @@ class PrivacyWallet(
      * outran the quote is refused in the ante: nothing spent, nothing paid.
      */
     fun delegate(q: DelegateQuote): TxResult {
+        val gw = groundworksContext()
         val denom = derthDenom(q.validator)
         val d = debtView()
-        val stake = laneA(denom, StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }, q.derth, 0, d)
+        val stake = laneA(denom, StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }, q.derth, 0, d, gw = gw)
         if (haircutOf(stake) > q.haircut) throw QuoteChanged("a slash reached stake you moved to this validator since the quote; review it again")
         return run(Act(PrivateActivityKind.STAKE, q.validator)) { fee ->
             // The fee is the bundle's uerth balance less amount.
             val b = bundle(release = mapOf(FEE to Math.addExact(q.amount, fee)))
             Assembled(listOf(b), stake) { bs, sp, _ ->
-                MsgDelegate.newBuilder().setBundle(bs[0]).setValidator(q.validator).setAmount(q.amount).setDerth(q.derth).setStake(sp!!).build()
+                MsgDelegate.newBuilder().setBundle(bs[0]).setValidator(q.validator).setAmount(q.amount).setDerth(q.derth).setStake(sp!!)
+                    .addAllGroundworksSplit(gw.split(stake)).build()
             }
         }
     }
@@ -1936,6 +1952,7 @@ class PrivacyWallet(
      * labelled; a closed window clears. One user tap; nothing merges by itself.
      */
     fun restake(validator: String): TxResult {
+        val gw = groundworksContext()
         val denom = derthDenom(validator)
         val d = debtView()
         val two = StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }
@@ -1943,10 +1960,10 @@ class PrivacyWallet(
             if (spendableStake(denom).size >= 2) "these notes each hold stake moved here recently; they merge once one of their windows closes"
             else "nothing to merge"
         }
-        val stake = laneA(denom, two, 0, 0, d)
+        val stake = laneA(denom, two, 0, 0, d, gw = gw)
         return run(Act(PrivateActivityKind.RESTAKE, validator)) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setStake(sp!!).build()
+                MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setStake(sp!!).addAllGroundworksSplit(gw.split(stake)).build()
             }
         }
     }
@@ -1960,15 +1977,21 @@ class PrivacyWallet(
     fun mergeStake(denom: String): TxResult = restake(parseDerth(denom))
 
     /**
-     * What leaving [amount] derth/[validator] (an undelegation or a lock)
+     * What leaving [amount] derth/[validator] (an undelegation or a move)
      * spends: the notes whose free value covers it, refused up front when
      * the exposure a window keeps in place is what it would take.
      */
-    private fun leave(validator: String, amount: Long, d: DebtView, salt: Fr = StakePlan.freshSalt(), credit: StakePlan.Credit? = null): StakePlan {
+    private fun leave(
+        validator: String,
+        amount: Long,
+        d: DebtView,
+        credit: StakePlan.Credit? = null,
+        gw: GroundworksContext = GroundworksContext.NONE,
+    ): StakePlan {
         val denom = derthDenom(validator)
         val notes = spendableStake(denom)
         val ins = StakeSelection.cover(notes, amount, { freeOf(it, d) }) { lockedText(notes, d) }
-        return laneA(denom, ins, 0, amount, d, salt, credit)
+        return laneA(denom, ins, 0, amount, d, credit, gw)
     }
 
     /** What leaving [amount] derth/[validator] costs beyond its fee: a cleared label's slash cut (0: none). Refuses as the tx would. */
@@ -2016,7 +2039,8 @@ class PrivacyWallet(
      * (it would tie this wallet's IP to the undelegation).
      */
     fun undelegate(validator: String, amount: Long, maxHaircut: Long = Long.MAX_VALUE): TxResult {
-        val stake = leave(validator, amount, debtView())
+        val gw = groundworksContext()
+        val stake = leave(validator, amount, debtView(), gw = gw)
         if (haircutOf(stake) > maxHaircut) throw QuoteChanged("a slash reached stake you moved to this validator since the sheet was shown; review it again")
         val payout = mint(FEE)
         val pc = payout.pc
@@ -2028,7 +2052,8 @@ class PrivacyWallet(
         ) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgUndelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount).setStake(sp!!)
-                    .setPc(ByteString.copyFrom(pc.toBytes())).setCiphertext(ByteString.copyFrom(payout.ciphertext)).build()
+                    .setPc(ByteString.copyFrom(pc.toBytes())).setCiphertext(ByteString.copyFrom(payout.ciphertext))
+                    .addAllGroundworksSplit(gw.split(stake)).build()
             }
         }
         confirmUnbond(r)
@@ -2097,16 +2122,17 @@ class PrivacyWallet(
      * quote, move_time too old) costs nothing: the ante runs before any spend.
      */
     fun redelegate(q: MoveQuote): TxResult {
+        val gw = groundworksContext()
         val d = debtView()
         val moveTime = roots.latestBlock()?.time?.takeIf { it > 0 } ?: throw IllegalStateException("the node did not say its latest block time; try again")
         val target = creditTarget(q.dst)
         val credit = StakePlan.credit(keys, derthDenom(q.dst), target, target?.let { store.stakeTree.path(it.position) }, q.dstDerth, moveTime)
-        val stake = leave(q.src, q.amount, d, credit = credit)
+        val stake = leave(q.src, q.amount, d, credit = credit, gw = gw)
         if (haircutOf(stake) > q.haircut) throw QuoteChanged("a slash reached stake you moved to this validator since the quote; review it again")
         return run(Act(PrivateActivityKind.REDELEGATE, "${q.src} → ${q.dst}")) { fee ->
             Assembled(listOf(feeBundle(fee)), stake, extraGas = redelegateHeadroom(q.pairEntries, q.pairCounted)) { bs, sp, _ ->
                 MsgRedelegate.newBuilder().setBundle(bs[0]).setSrcValidator(q.src).setDstValidator(q.dst).setAmount(q.amount)
-                    .setStake(sp!!).setDstDerth(q.dstDerth).setMoveTime(moveTime).build()
+                    .setStake(sp!!).setDstDerth(q.dstDerth).setMoveTime(moveTime).addAllGroundworksSplit(gw.split(stake)).build()
             }
         }
     }
@@ -2461,32 +2487,27 @@ class PrivacyWallet(
     /**
      * One stake vote msg: a validator's eligible notes (one msg votes up to
      * [PrivateMsgs.MAX_VOTE_NOTES]; [notes] more take [parts] msgs, each its
-     * own weight and fee), or a position.
+     * own weight and fee).
      */
     sealed interface StakeVoteItem {
         data class Validator(val validator: String, val notes: Int) : StakeVoteItem {
             val parts: Int get() = (notes + PrivateMsgs.MAX_VOTE_NOTES - 1) / PrivateMsgs.MAX_VOTE_NOTES
         }
-        data class Position(val id: Long, val counter: Int) : StakeVoteItem
     }
 
     /**
      * Every stake vote [proposalId] takes from this wallet: one per validator
-     * with eligible derth notes, and one per position of ours that may vote
-     * (created before the snapshot's block). Each is its own tx, confirmed and
-     * sent by the user one at a time ([castStakeVote]); nothing is cast for
-     * them in the background.
+     * with eligible derth notes. Each is its own tx, confirmed and sent by
+     * the user one at a time ([castStakeVote]); nothing is cast for them in
+     * the background.
      */
     fun stakeVoteItems(proposalId: Long): List<StakeVoteItem> {
         val snap = snapshot(proposalId)
-        val notes = eligible(proposalId, snap).groupBy { parseDerth(it.denom) }.toSortedMap()
+        return eligible(proposalId, snap).groupBy { parseDerth(it.denom) }.toSortedMap()
             .map { (v, ns) -> StakeVoteItem.Validator(v, ns.size) }
-        val mine = positions()
-        val voting = votingPositions(mine.map { it.first }, snap).map { it.id }.toSet()
-        return notes + mine.filter { it.first.id in voting }.map { (p, c) -> StakeVoteItem.Position(p.id, c) }
     }
 
-    /** What one stake vote weighs: the notes it carries (0 for a position) and the ERTH its weight is worth at the snapshot. */
+    /** What one stake vote weighs: the notes it carries and the ERTH its weight is worth at the snapshot. */
     data class VotePreview(val notes: Int, val uerth: Long)
 
     /** What [item]'s next vote on [proposalId] carries, for its confirm sheet (null: nothing left). */
@@ -2501,8 +2522,6 @@ class PrivacyWallet(
                 if (part.isEmpty() || v <= 0) null
                 else rateFor(snap, item.validator)?.let { VotePreview(part.size, derthValue(voteWeight(v), it)) }
             }
-            is StakeVoteItem.Position -> positions().firstOrNull { it.first.id == item.id }?.first
-                ?.let { p -> rateFor(snap, p.validator)?.let { VotePreview(0, derthValue(p.derth, it)) } }
         }
     }
 
@@ -2518,9 +2537,8 @@ class PrivacyWallet(
 
     /**
      * Casts [item] as the last sync left things: a validator's next vote (up
-     * to two notes) or a position's. Null when there is nothing left of it
-     * to cast (its notes already voted on this proposal, or were spent before
-     * its snapshot; the position is gone).
+     * to two notes). Null when there is nothing left of it to cast (its notes
+     * already voted on this proposal, or were spent before its snapshot).
      */
     fun castStakeVote(proposalId: Long, item: StakeVoteItem, options: List<WeightedVoteOption>): String? = when (item) {
         is StakeVoteItem.Validator -> try {
@@ -2528,139 +2546,227 @@ class PrivacyWallet(
         } catch (e: AlreadyVoted) {
             if (eligible(proposalId, snapshot(proposalId)).none { it.denom == derthDenom(item.validator) }) null else throw e
         } catch (e: SpentBeforeSnapshot) { null }
-        is StakeVoteItem.Position -> positions().firstOrNull { it.first.id == item.id && it.second == item.counter }
-            ?.let { (p, c) -> positionVote(p, c, proposalId, options).hash }
+    }
+
+    // ---- Groundworks votes --------------------------------------------------
+
+    /**
+     * What a stake tx votes in Groundworks with: the split the user chose
+     * (empty: none), the chain's least vote weight (min_position) and the
+     * validator list (each validator's epoch rate, what the chain weighs a
+     * vote at). Chain reads only, taken before the tx is laid out.
+     */
+    internal class GroundworksContext(val split: Map<Long, Long>, val min: Long, val list: PrivacyChainReads.ValidatorList?) {
+        /** The msg's split: the chosen one when an output of [plan] votes. */
+        fun split(plan: StakePlan): List<AllocationWeight> = if (plan.vote || plan.creditVote) weights(split) else emptyList()
+
+        companion object {
+            val NONE = GroundworksContext(emptyMap(), 0, null)
+        }
     }
 
     /**
-     * This wallet's Groundworks positions: the public positions whose owner
-     * tag is one of ours (owner-tag counters 0 ... last+gap, so a wallet
-     * restored from the mnemonic finds them too), each with its counter.
+     * A read that fails refuses the tx rather than send it without the vote
+     * (its inputs' tags would cancel the vote held now). A split naming an
+     * option the fund has since removed is refused by the chain: stake moves
+     * go on without it (the Govern tab asks for a new split).
      */
-    fun positions(): List<Pair<PrivacyChainReads.Position, Int>> {
+    internal fun groundworksContext(): GroundworksContext {
+        val (local, chosen) = synchronized(this) { store.state.groundworksSplit to store.state.groundworksChosen }
+        var split = local
+        if (split.isEmpty() && !chosen) {
+            val all = runCatching { reads.groundworksVotes() }.getOrNull()
+                ?: throw IllegalStateException("could not read the Groundworks votes (to keep any of yours); try again")
+            split = adopt(all)
+        }
+        if (split.isEmpty()) return GroundworksContext.NONE
+        val live = runCatching { reads.groundworksOptions() }.getOrNull()
+        if (live != null && !live.containsAll(split.keys)) return GroundworksContext.NONE
+        val min = runCatching { reads.minGroundworksVote() }.getOrNull()
+        val list = runCatching { reads.validators() }.getOrNull()
+        if (min == null || list == null) throw IllegalStateException("could not read what a Groundworks vote needs (to keep yours); try again")
+        return GroundworksContext(split, min, list)
+    }
+
+    /** Whether [split] names only options the Groundworks fund still has (null: unknown). */
+    fun groundworksSplitLive(split: Map<Long, Long>): Boolean? =
+        runCatching { reads.groundworksOptions() }.getOrNull()?.containsAll(split.keys)
+
+    /** The Groundworks split this wallet votes with (empty: none). Every stake tx carries it to the note it makes. */
+    val groundworksSplit: Map<Long, Long> get() = store.state.groundworksSplit
+
+    /** One of this wallet's Groundworks votes, as the chain stores it. */
+    data class GroundworksVoteView(
+        val validator: String,
+        val derth: Long,
+        /** derth x the validator's epoch rate (0 when a reset made it stale). */
+        val weight: Long,
+        val split: Map<Long, Long>,
+        val expiresAt: Long,
+    )
+
+    /**
+     * This wallet's live Groundworks votes: the chain's whole list (never a
+     * query about one tag), matched against our notes' tags.
+     */
+    fun groundworksVotes(): List<GroundworksVoteView> {
+        val all = reads.groundworksVotes()
+        adopt(all)
+        val mine = myTags()
+        return all.filter { it.tag in mine }.map { GroundworksVoteView(it.validator, it.derth, it.weight, it.splits, it.splitExpiresAt) }
+    }
+
+    private fun myTags(): Set<Fr> = synchronized(this) {
+        store.state.stakeNotes.filter { it.spendable }.map { Privacy.stakeGw(keys.nk, it.rho) }.toSet()
+    }
+
+    /**
+     * The split to vote with: ours, or, when none is chosen here and the
+     * chain holds a vote of ours (cast before a restore or on another
+     * device), that vote's (the latest cast), remembered so the next stake
+     * tx keeps voting rather than cancelling it. A wallet that stopped
+     * voting ([PrivacyState.groundworksChosen]) never adopts one again.
+     */
+    private fun adopt(all: List<PrivacyChainReads.GroundworksVote>): Map<Long, Long> {
+        val mine = myTags()
+        return synchronized(this) {
+            val s = store.state
+            if (s.groundworksChosen || s.groundworksSplit.isNotEmpty()) return@synchronized s.groundworksSplit
+            val v = all.filter { it.tag in mine && it.splits.isNotEmpty() }.maxByOrNull { it.id } ?: return@synchronized emptyMap()
+            s.groundworksSplit = v.splits
+            s.groundworksExpiresAt = v.splitExpiresAt
+            runCatching { store.save() }
+            v.splits
+        }
+    }
+
+    /**
+     * This wallet's Groundworks vote's lease, for the reminder: the earliest
+     * lease end among [votes] (ours, [groundworksVotes]), remembered; with
+     * none left on chain while a split is chosen, the last seen (it lapsed).
+     * Null when no split is chosen.
+     */
+    fun groundworksLease(votes: List<GroundworksVoteView>): Reminders.GroundworksLease? = synchronized(this) {
         val s = store.state
-        val all = reads.positions()
-        // Counters 0 ... next + OTAG_GAP, extended past every match: closed
-        // positions vanish from the chain, so the window must cross a run of
-        // them (and of failed locks) to reach a live one. A restored wallet
-        // knows the closed ones' counters from their unlock memos.
-        var limit = maxOf(s.nextOtagCounter, s.closedOtagMax + 1) + OTAG_GAP
-        val out = ArrayList<Pair<PrivacyChainReads.Position, Int>>()
-        var from = 0
-        while (from < limit) {
-            val mine = (from until limit).associateBy { ownerTag(it) }
-            val found = all.mapNotNull { p -> mine[p.ownerTag]?.let { p to it } }
-            out += found
-            from = limit
-            found.maxOfOrNull { it.second }?.let { top -> if (top + 1 + OTAG_GAP > limit) limit = top + 1 + OTAG_GAP }
+        val split = s.groundworksSplit
+        if (split.isEmpty()) return@synchronized null
+        val e = votes.map { it.expiresAt }.filter { it > 0 }.minOrNull()
+        if (e != null) {
+            if (e != s.groundworksExpiresAt) {
+                s.groundworksExpiresAt = e
+                runCatching { store.save() }
+            }
+            Reminders.GroundworksLease(e, held = true, split = split)
+        } else {
+            Reminders.GroundworksLease(s.groundworksExpiresAt, held = false, split = split)
         }
-        val next = maxOf(s.nextOtagCounter, s.closedOtagMax + 1, (out.maxOfOrNull { it.second } ?: -1) + 1)
-        var dirty = next > s.nextOtagCounter
-        if (dirty) s.nextOtagCounter = next
-        if (rememberLeases(out.map { it.first })) dirty = true
-        if (dirty) store.save()
-        return out.sortedBy { it.first.id }
     }
 
     /**
-     * Keeps each of our positions' split and lease end as last seen, so a
-     * lapse (which the chain records by clearing both) is still known: when,
-     * and which split to cast again. Closed positions are forgotten. True
-     * when anything changed.
+     * Votes every validator's stake of ours with [split] (or, empty, stops
+     * voting): a restake per validator, its notes merged into one that votes
+     * (or does not; more restakes while more notes can merge), and from then
+     * on every stake tx carries the split. Each restake is its own tx, sent
+     * in turn: the wallet syncs between them, so each pays its fee from what
+     * the last one left.
      */
-    private fun rememberLeases(mine: List<PrivacyChainReads.Position>): Boolean = synchronized(this) {
-        val leases = store.state.positionLeases
-        val before = HashMap(leases)
-        leases.keys.retainAll(mine.map { it.id }.toSet())
-        for (p in mine) if (p.splits.isNotEmpty() && p.splitExpiresAt > 0) {
-            leases[p.id] = network.erth.wallet.privacy.sync.PositionLease(minOf(p.splitExpiresAt, Handles.satAdd(now(), Handles.MAX_AHEAD_SECONDS)), p.splits)
+    fun castGroundworks(split: Map<Long, Long>): List<TxResult> {
+        // A split naming a removed option is refused by the chain: never saved or sent.
+        if (split.isNotEmpty()) {
+            val live = try {
+                reads.groundworksOptions()
+            } catch (e: Exception) {
+                throw IllegalStateException("could not read the Groundworks options; try again")
+            }
+            if (live != null && !live.containsAll(split.keys)) {
+                throw IllegalStateException("an option in this split has been removed from the fund; choose another split")
+            }
         }
-        leases != before
+        var denoms = synchronized(this) {
+            store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) }.map { it.denom }.toSortedSet().toList()
+        }
+        // A validator whose stake is too small to vote is skipped (a restake
+        // there would only cost a fee), unless a note there holds a vote to
+        // cancel. Refused before the split is saved when nothing could vote.
+        if (split.isNotEmpty()) {
+            val min = runCatching { reads.minGroundworksVote() }.getOrNull()
+            val list = runCatching { reads.validators() }.getOrNull()
+            if (min == null || list == null) throw IllegalStateException("could not read what a Groundworks vote needs; try again")
+            val gw = GroundworksContext(split, min, list)
+            val all = reads.groundworksVotes()
+            val mine = myTags()
+            val held = all.filter { it.tag in mine }.map { derthDenom(it.validator) }.toSet()
+            val can = synchronized(this) { denoms.filter { d -> votes(gw, d, Amounts.satSum(spendableStake(d)) { it.amount }) } }
+            if (can.isEmpty() && denoms.isNotEmpty()) throw IllegalStateException("the stake at each validator is below the least a Groundworks vote may weigh")
+            denoms = denoms.filter { it in can || it in held }
+        }
+        synchronized(this) {
+            store.state.groundworksSplit = split.toMap()
+            store.state.groundworksChosen = true
+            store.save()
+        }
+        val out = ArrayList<TxResult>()
+        for (denom in denoms) {
+            // A restake merges two notes: again while more can merge, so all of it votes.
+            val v = parseDerth(denom)
+            for (i in 0 until 8) {
+                out.add(revote(v))
+                syncThrough(out.last())
+                if (mergeableStake(denom) < 2) break
+            }
+            // Notes no merge reaches (two labelled notes never pair) still
+            // holding another split: each respent alone, so none keeps it.
+            val all = reads.groundworksVotes()
+            val stale = synchronized(this) {
+                spendableStake(denom).filter { n ->
+                    val tag = Privacy.stakeGw(keys.nk, n.rho)
+                    all.any { it.tag == tag && it.splits != split }
+                }
+            }
+            for (n in stale) {
+                out.add(revote(v, only = n))
+                syncThrough(out.last())
+            }
+        }
+        return out
     }
 
-    /**
-     * Each of [mine]'s (from [positions]) Groundworks lease: the chain's
-     * split and lease end while it holds them, else the ones last seen here.
-     * From this wallet's own reads only; nothing is asked about a position.
-     */
-    fun groundworksLeases(mine: List<PrivacyChainReads.Position>): List<Reminders.GroundworksLease> {
-        val seen = store.state.positionLeases
-        val cap = Handles.satAdd(now(), Handles.MAX_AHEAD_SECONDS)
-        return mine.map { p ->
-            if (p.splits.isNotEmpty()) Reminders.GroundworksLease(p.id, minOf(p.splitExpiresAt, cap), held = true, split = p.splits)
-            else Reminders.GroundworksLease(p.id, seen[p.id]?.expiresAt ?: 0, held = false, split = seen[p.id]?.split.orEmpty())
-        }
-    }
-
-    private val otags = HashMap<Int, Fr>()
-
-    private fun ownerTag(c: Int): Fr = synchronized(otags) { otags.getOrPut(c) { keys.ownerTag(c) } }
-
-    /** Locks [amount] derth/[validator] into a new position split by [splits], under a fresh owner tag. */
-    fun lockPosition(validator: String, amount: Long, splits: Map<Long, Long>): TxResult {
+    /** How many of our notes of [denom] the next restake would spend. */
+    private fun mergeableStake(denom: String): Int = runCatching {
         val d = debtView()
-        // Refused up front, before a counter is taken, when moved-in stake whose window is open would have to leave.
-        leave(validator, amount, d)
-        positions() // a restored wallet's counter starts past every tag it already holds
-        val counter = synchronized(this) { store.state.nextOtagCounter.also { store.state.nextOtagCounter = it + 1; store.save() } }
-        val stake = leave(validator, amount, d, salt = keys.otagSalt(counter))
-        val w = weights(splits)
-        return run(Act(PrivateActivityKind.POSITION, "locked with $validator")) { fee ->
-            Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgLockPosition.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount)
-                    .addAllSplits(w).setStake(sp!!).build()
-            }
-        }
-    }
-
-    /** A position's own proof (its update, its vote): no notes, the position's owner tag, the chain's current clear_before and debt root. */
-    private fun ownerPlan(position: PrivacyChainReads.Position, counter: Int): StakePlan {
-        check(keys.ownerTag(counter) == position.ownerTag) { "position ${position.id} is not owned by tag $counter" }
-        return StakePlan(keys.nk, null, emptyList(), emptyList(), null, 0, 0, clearOf(null, debtView()), null, keys.otagSalt(counter), stakeAnchor())
-    }
-
-    fun updatePosition(position: PrivacyChainReads.Position, counter: Int, splits: Map<Long, Long>): TxResult {
-        val stake = ownerPlan(position, counter)
-        val w = weights(splits)
-        return run(Act(PrivateActivityKind.POSITION, "updated position ${position.id}")) { fee ->
-            Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgUpdatePosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).addAllSplits(w).setStake(sp!!).build()
-            }
-        }
-    }
+        StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }.size
+    }.getOrDefault(0)
 
     /**
-     * Closes [position]: the stake proof (its owner tag) merges the
-     * position's derth into our note at its validator, or pads when we hold
-     * none there (ORCHARD_DESIGN 8.3). The fee bundle carries a value-0
-     * record note to ourselves naming the closed counter, so no
-     * restore ever locks under its tag again.
+     * Respends our notes at [validator] onto one (merging up to two), voting
+     * with the chosen split when it weighs enough: a vote cast, changed,
+     * renewed or (no split) cancelled. [only]: respend just that note.
      */
-    fun unlockPosition(position: PrivacyChainReads.Position, counter: Int): TxResult {
-        check(keys.ownerTag(counter) == position.ownerTag) { "position ${position.id} is not owned by tag $counter" }
-        val denom = derthDenom(position.validator)
+    fun revote(validator: String, only: OwnedStakeNote? = null): TxResult {
+        val gw = groundworksContext()
+        val denom = derthDenom(validator)
         val d = debtView()
-        val stake = laneA(denom, StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }, position.derth, 0, d, salt = keys.otagSalt(counter))
-        val record = NoteOut.to(keys.address, FEE, 0, WalletSync.unlockMemo(keys.nk, counter))
-        return run(Act(PrivateActivityKind.POSITION, "unlocked position ${position.id}")) { fee ->
-            Assembled(listOf(bundle(outputs = listOf(record), release = mapOf(FEE to fee))), stake) { bs, sp, _ ->
-                MsgUnlockPosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).setStake(sp!!).build()
-            }
-        }
-    }
-
-    fun positionVote(position: PrivacyChainReads.Position, counter: Int, proposalId: Long, options: List<WeightedVoteOption>, accepted: (hash: String) -> Unit = {}): TxResult {
-        val stake = ownerPlan(position, counter)
-        return run(Act(PrivateActivityKind.VOTE, "proposal $proposalId, position ${position.id}"), accepted = { hash, _ -> accepted(hash) }) { fee ->
+        val ins = only?.let { n -> spendableStake(denom).filter { it.position == n.position } }
+            ?: StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }
+        require(ins.isNotEmpty()) { "no stake at this validator" }
+        val stake = laneA(denom, ins, 0, 0, d, gw = gw)
+        return run(Act(PrivateActivityKind.RESTAKE, validator)) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgPositionVote.newBuilder().setBundle(bs[0]).setPositionId(position.id).setProposalId(proposalId)
-                    .addAllOptions(PrivateMsgs.canonicalOptions(options)).setStake(sp!!).build()
+                MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setStake(sp!!).addAllGroundworksSplit(gw.split(stake)).build()
             }
         }
     }
 
-    private fun weights(splits: Map<Long, Long>): List<AllocationWeight> =
-        splits.entries.sortedBy { it.key }.map { AllocationWeight.newBuilder().setOptionId(it.key).setPercent(it.value).build() }
+    /** Syncs until the wallet has seen [r]'s block (its notes in the trees), at most a minute. */
+    internal fun syncThrough(r: TxResult) {
+        repeat(30) {
+            sync()
+            if (store.state.notesHeight >= r.height && store.state.stakeHeight >= r.height) return
+            Thread.sleep(2_000)
+        }
+        throw IllegalStateException("the wallet has not caught up with block ${r.height} yet; try again")
+    }
+
 
     // ---- dex ----------------------------------------------------------------
 
@@ -3009,12 +3115,20 @@ class PrivacyWallet(
                 .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
                 .format(java.util.Date(unix.coerceIn(0, 253_402_300_799) * 1000))
 
-        /** Positions created before the block the proposal entered voting at (all, when unknown). */
-        fun votingPositions(positions: List<PrivacyChainReads.Position>, snap: PrivacyChainReads.Snapshot) =
-            positions.filter { snap.height == 0L || it.createdHeight < snap.height }
+        internal fun weights(splits: Map<Long, Long>): List<AllocationWeight> =
+            splits.entries.sortedBy { it.key }.map { AllocationWeight.newBuilder().setOptionId(it.key).setPercent(it.value).build() }
 
-        /** Owner-tag counters scanned past the highest known (PRIVACY_FORMATS.md §7). */
-        const val OTAG_GAP = 1024
+        /**
+         * Whether an output of [unexposed] derth of [denom] votes: a split is
+         * chosen and the output weighs at least the minimum at its validator's
+         * epoch rate (the chain refuses less).
+         */
+        internal fun votes(c: GroundworksContext, denom: String, unexposed: Long): Boolean {
+            if (c.split.isEmpty() || unexposed <= 0) return false
+            val v = runCatching { parseDerth(denom) }.getOrNull() ?: return false
+            val book = c.list?.get(v) ?: return false
+            return derthValue(unexposed, book.epochRate) >= c.min
+        }
 
         /**
          * The ISO alpha-2 of the DSC's issuer (C=): the wallet's guess at the

@@ -93,6 +93,8 @@ object ValidatorPages {
         val supply = int(v, "supply")
         val rate = str(v, "rate").toBigDecimalOrNull()?.takeIf { it.signum() >= 0 }
             ?: if (supply.signum() == 0) BigDecimal.ONE else throw IOException("$op's rate is not a non-negative decimal")
+        // The rate at the last epoch end: what a Groundworks vote weighs at (1 before the first).
+        val epochRate = str(book, "epoch_rate").toBigDecimalOrNull()?.takeIf { it.signum() > 0 } ?: BigDecimal.ONE
         return PrivacyChainReads.ValidatorQuote(
             validator = op,
             backing = backing,
@@ -102,6 +104,7 @@ object ValidatorPages {
             delegation = int(v, "delegation"),
             rewards = int(v, "rewards"),
             rate = rate,
+            epochRate = epochRate,
             // A book whose validator x/staking removed: no status.
             status = if (stOp.isEmpty()) "" else str(st, "status"),
             jailed = stOp.isNotEmpty() && st.optBoolean("jailed"),

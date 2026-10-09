@@ -22,6 +22,9 @@ public enum Allocation {
         /// handler rather than the description means a rename in governance
         /// does not silently detach the APR from its source.
         public let handler: String
+        /// Struck by the assembly (x/allocation Option.removed): kept until
+        /// pruned, but no split may name it.
+        public var removed = false
     }
 
     /// A stream's options and the weight they are shares of.
@@ -63,21 +66,33 @@ public enum Allocation {
 
 public extension EarthClient {
 
+    /// Every page (the chain serves at most 100 options a page).
     func stream(_ stream: Msg.StreamID) async -> Allocation.Stream {
-        guard let json = try? await rest.get(
-            "/earth/allocation/v1/options/\(Allocation.path(stream))"
-        ) else { return .empty }
-        return Allocation.Stream(
-            options: json.options.array.map {
+        var options: [Allocation.OptionInfo] = []
+        var total = "0"
+        var key: String?
+        var keys = Set<String>()
+        var seen = Set<UInt64>()
+        repeat {
+            // Capped: a node serving new keys forever is not followed.
+            guard keys.count < 100 else { return .empty }
+            let path = "/earth/allocation/v1/options/\(Allocation.path(stream))" +
+                (key.map { "?pagination.key=" + ($0.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0) } ?? "")
+            guard let json = try? await rest.get(path) else { return .empty }
+            if key == nil { total = json.total_weight.string(default: "0") }
+            options += json.options.array.filter { seen.insert($0.id.uint64(default: 0)).inserted }.map {
                 Allocation.OptionInfo(
                     id: $0.id.uint64(default: 0),
                     description: $0.description.string(default: ""),
                     kind: $0.kind.string(default: ""),
                     amountAllocated: $0.amount_allocated.string(default: "0"),
-                    handler: $0.handler.string(default: "")
+                    handler: $0.handler.string(default: ""),
+                    removed: $0.removed.bool(default: false)
                 )
-            },
-            totalWeight: json.total_weight.string(default: "0")
-        )
+            }
+            key = json.pagination.next_key.string.flatMap { $0.isEmpty || $0 == "null" ? nil : $0 }
+            if let k = key, !keys.insert(k).inserted { return .empty }
+        } while key != nil
+        return Allocation.Stream(options: options, totalWeight: total)
     }
 }

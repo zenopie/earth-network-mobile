@@ -49,7 +49,7 @@ import network.erth.wallet.ui.theme.EarthAccent
  * validator as one row (its picker in place of the amount while choosing),
  * one button.
  *
- * One sheet for both directions (and for locking a position). Staking and
+ * One sheet for both directions. Staking and
  * unstaking differ only in which list you choose from and what the cap is,
  * and two near-identical sheets is two places for the amount parsing to
  * drift apart.

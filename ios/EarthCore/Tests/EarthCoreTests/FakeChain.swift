@@ -75,28 +75,24 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     struct Withdrawal { let shares: BigInt; let erthPC: Fr; let erthCt: Data; let tokenPC: Fr; let tokenCt: Data }
     var withdrawals: [Withdrawal] = []
 
-    final class Pos {
-        let id: UInt64, validator: String, derth: UInt64, ownerTag: Fr, createdHeight: UInt64
-        var splits: [UInt64: UInt64]
-        var splitExpiresAt: Int64
-        init(id: UInt64, validator: String, derth: UInt64, ownerTag: Fr, splits: [UInt64: UInt64], createdHeight: UInt64, splitExpiresAt: Int64 = 0) {
-            self.id = id; self.validator = validator; self.derth = derth; self.ownerTag = ownerTag; self.splits = splits
-            self.createdHeight = createdHeight; self.splitExpiresAt = splitExpiresAt
-        }
+    /// A Groundworks vote: a stake note's, stored under its tag (x/shieldedstaking GroundworksVote).
+    struct GwVote: Equatable {
+        let id: UInt64, validator: String, derth: UInt64, tag: Fr, splits: [UInt64: UInt64], splitExpiresAt: Int64
     }
-    /// x/allocation groundworks_lease_seconds: a split counts this long after it was cast or renewed.
+    /// x/allocation groundworks_lease_seconds: a vote counts this long after it was cast.
     var groundworksLease: Int64 = 365 * 86400
+    /// min_position: a vote's least weight (derth x epoch rate).
+    var minGroundworksVote: UInt64 = 1_000_000
+    /// The Groundworks options a split may name (nil: any); and a failing min_position read.
+    var gwOptions: Set<UInt64>?
+    var failMinVoteRead = false
 
-    /// The chain's lapse at `now`: every split whose lease has ended is cleared (splits empty, split_expires_at 0).
+    /// The chain's lapse at `now`: every vote whose lease has ended is deleted.
     func lapseSplits() {
-        for p in positions.values where !p.splits.isEmpty && p.splitExpiresAt > 0 && p.splitExpiresAt <= now {
-            p.splits = [:]; p.splitExpiresAt = 0
-        }
+        for (t, v) in gwVotes where v.splitExpiresAt <= now { gwVotes[t] = nil }
     }
-    var positions: [UInt64: Pos] = [:]
-    var positionOrder: [UInt64] = []
-    var nextPositionID: UInt64 = 1
-    var positionVotes: [(UInt64, UInt64)] = []
+    var gwVotes: [Fr: GwVote] = [:]
+    var nextVoteID: UInt64 = 1
     var removalBallots: [UInt64: UInt64] = [:]
     var removalVotes: [(UInt64, Fr, Int)] = []
     var caretakerVotes: [Fr: [UInt64: UInt64]] = [:]
@@ -610,28 +606,65 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         try need(m.totalFee > 0, "no fee")
     }
 
-    private func lanes(_ m: any PrivateMsg) -> ChainLayout.Lanes {
-        ChainLayout.lanes(m) { id in self.positions[id].map { ($0.validator, $0.derth) } ?? ("", 0) }
+    private func lanes(_ m: any PrivateMsg) -> ChainLayout.Lanes { ChainLayout.lanes(m) }
+
+    /// The msg's Groundworks split and lane A's and the credit lane's validators.
+    private func groundworks(_ m: any PrivateMsg) -> (split: [Msg.AllocationWeight], a: String, credit: String) {
+        switch m {
+        case let m as MsgShieldedDelegate: return (m.groundworksSplit, m.validator, "")
+        case let m as MsgRestake: return (m.groundworksSplit, m.validator, "")
+        case let m as MsgShieldedUndelegate: return (m.groundworksSplit, m.validator, "")
+        case let m as MsgRedelegate: return (m.groundworksSplit, m.srcValidator, m.dstValidator)
+        default: return ([], "", "")
+        }
+    }
+
+    private func inputTags(_ p: StakeProof) throws -> [Fr] {
+        try (p.groundworksTags + [p.creditGroundworksTag]).map(f).filter { !$0.isZero }
+    }
+
+    /// The chain's checkGroundworks: a split only with a vote, each vote weighing
+    /// at least min_position, under a tag no live vote holds unless this proof cancels it.
+    private func checkGroundworks(_ m: any PrivateMsg, _ p: StakeProof) throws {
+        let g = groundworks(m)
+        let outs = [(try f(p.voteTag), p.voteWeight, g.a), (try f(p.creditVoteTag), p.creditVoteWeight, g.credit)]
+        let voting = outs.contains { $0.1 > 0 }
+        try need(voting == !g.split.isEmpty, "a groundworks_split exactly when an output votes")
+        for (tag, w, _) in outs { try need((w == 0) == tag.isZero, "a vote tag exactly with a vote weight") }
+        guard voting else { return }
+        try need(g.split.reduce(UInt64(0)) { $0 + $1.percent } == 100, "a split sums to 100")
+        if let o = gwOptions { try need(g.split.allSatisfy { o.contains($0.optionID) }, "option removed (ValidateSplit)") }
+        let cancelled = Set(try inputTags(p))
+        for (tag, w, v) in outs where w > 0 {
+            try need(PrivacyWallet.derthValue(w, rate: quoteOf(v).epochRate) >= minGroundworksVote, "a vote weighs at least \(minGroundworksVote) (code 1108)")
+            try need(gwVotes[tag] == nil || cancelled.contains(tag), "a vote is already stored under this tag (code 1108)")
+        }
+    }
+
+    private func applyGroundworks(_ m: any PrivateMsg, _ p: StakeProof) throws {
+        for t in try inputTags(p) { gwVotes[t] = nil }
+        let g = groundworks(m)
+        let splits = Dictionary(uniqueKeysWithValues: g.split.map { ($0.optionID, $0.percent) })
+        for (tag, w, v) in [(try f(p.voteTag), p.voteWeight, g.a), (try f(p.creditVoteTag), p.creditVoteWeight, g.credit)] where w > 0 {
+            gwVotes[tag] = GwVote(id: nextVoteID, validator: v, derth: w, tag: tag, splits: splits, splitExpiresAt: now + groundworksLease)
+            nextVoteID += 1
+        }
     }
 
     private func spent(_ p: StakeProof) throws -> [Fr] { try (p.nullifiers + [p.creditNullifier]).map(f).filter { !$0.isZero } }
 
     /// The chain's shape rule: a note-moving msg spends (or pads) in both slots and creates; a crediting one uses its credit lane; the rest are zero.
     private func stakeShape(_ m: any PrivateMsg, _ p: StakeProof) throws {
-        let notes = !(m is MsgUpdatePosition) && !(m is MsgPositionVote)
         let credit = m is MsgRedelegate
-        if notes {
-            try need(!(try f(p.nullifiers[0])).isZero && !(try f(p.nullifiers[1])).isZero,
-                     "the stake proof spends a note (or pads with its own nullifier) in both slots")
-            try need(!(try f(p.commitment)).isZero, "the stake proof creates a note (the merged note, the change or a zero note)")
-        } else {
-            try need((try f(p.nullifiers[0])).isZero && (try f(p.nullifiers[1])).isZero && (try f(p.commitment)).isZero,
-                     "the stake proof spends and creates nothing for this msg")
-        }
+        try need(!(try f(p.nullifiers[0])).isZero && !(try f(p.nullifiers[1])).isZero,
+                 "the stake proof spends a note (or pads with its own nullifier) in both slots")
+        try need(!(try f(p.commitment)).isZero, "the stake proof creates a note (the merged note, the change or a zero note)")
+        try need(p.groundworksTags.allSatisfy { !(try! f($0)).isZero }, "every lane A input publishes its Groundworks tag")
         if credit {
             try need(!(try f(p.creditNullifier)).isZero && !(try f(p.creditCommitment)).isZero, "the credit lane spends (or pads) and creates")
         } else {
-            try need((try f(p.creditNullifier)).isZero && (try f(p.creditCommitment)).isZero, "this msg credits no second asset")
+            try need((try f(p.creditNullifier)).isZero && (try f(p.creditCommitment)).isZero && (try f(p.creditGroundworksTag)).isZero
+                     && (try f(p.creditVoteTag)).isZero && p.creditVoteWeight == 0, "this msg credits no second asset")
         }
     }
 
@@ -762,13 +795,6 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             let queueFirst = unbonded.contains(m.srcValidator) || src.delegation <= src.pendingUndelegation
             let arrived = queueFirst && u <= src.pendingDelegation + src.rewards ? u : (u > 1001 ? u - 1001 : 0)
             try checkCredit(m.dstValidator, arrived, m.dstDerth)
-        case let m as MsgUpdatePosition:
-            try need(positions[m.positionID]?.ownerTag == (try f(m.stake.ownerTag)), "not the position's owner")
-        case let m as MsgUnlockPosition:
-            try need(positions[m.positionID]?.ownerTag == (try f(m.stake.ownerTag)), "not the position's owner")
-        case let m as MsgPositionVote:
-            try need(positions[m.positionID]?.ownerTag == (try f(m.stake.ownerTag)), "not the position's owner")
-            try need(m.options.allSatisfy { (try? PrivateMsgs.legacyDec($0.weight)) == $0.weight }, "a vote weight is not canonical")
         case let m as MsgStakeVote:
             // Option weights only in their canonical LegacyDec form.
             try need(m.options.allSatisfy { (try? PrivateMsgs.legacyDec($0.weight)) == $0.weight }, "a vote weight is not canonical")
@@ -834,8 +860,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         for b in m.bundles { for a in b.actions { try need(a.ciphertext.count == NoteCipher.ciphertextBytes, "action ciphertext \(a.ciphertext.count) bytes") } }
         // Stake proofs: every field 32 bytes, a 201-byte ciphertext exactly for a non-zero commitment.
         if let p = m.stakeProof {
-            try need(p.nullifiers.count == 2, "a stake proof carries exactly two nullifiers")
-            for b in p.nullifiers + [p.anchor, p.ownerTag, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot] {
+            try need(p.nullifiers.count == 2 && p.groundworksTags.count == 2, "a stake proof carries exactly two nullifiers and two tags")
+            for b in p.nullifiers + p.groundworksTags + [p.anchor, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot,
+                                                         p.creditGroundworksTag, p.voteTag, p.creditVoteTag] {
                 try need(b.count == 32, "a stake field of \(b.count) bytes")
             }
             for (cm, ct) in [(p.commitment, p.ciphertext), (p.creditCommitment, p.creditCiphertext)] {
@@ -872,6 +899,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         if let stake {
             try need(stake.proof.count == PrivateTxEngine.proofBytes, "a stake proof is exactly \(PrivateTxEngine.proofBytes) bytes")
             try stakeShape(m, stake)
+            try checkGroundworks(m, stake)
             let nfs = try spent(stake)
             try need(!nfs.contains { stakeNullifiers[$0] != nil }, "stake nullifier spent")
             try need(Set(nfs).count == nfs.count, "duplicate stake nullifier")
@@ -950,6 +978,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                 let pos = stakeTree.append(c)
                 stakeRows.append(StakeNoteRow(position: pos, height: height, cm: c, ciphertext: ct))
             }
+            try applyGroundworks(m, stake)
         }
         var events: [(type: String, attributes: [String: String])] = []
         switch m {
@@ -1043,21 +1072,6 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgRemoveLiquidityShielded:
             withdrawals.append(Withdrawal(shares: BigInt(rem["dexlp/1"]!), erthPC: try f(m.erthPC), erthCt: m.erthCiphertext,
                                           tokenPC: try f(m.tokenPC), tokenCt: m.tokenCiphertext))
-        case let m as MsgLockPosition:
-            let id = nextPositionID
-            nextPositionID += 1
-            positions[id] = Pos(id: id, validator: m.validator, derth: m.amount, ownerTag: try f(m.stake.ownerTag),
-                                splits: Dictionary(uniqueKeysWithValues: m.splits.map { ($0.optionID, $0.percent) }), createdHeight: height,
-                                splitExpiresAt: m.splits.isEmpty ? 0 : now + groundworksLease)
-            positionOrder.append(id)
-        case let m as MsgUpdatePosition:
-            positions[m.positionID]!.splits = Dictionary(uniqueKeysWithValues: m.splits.map { ($0.optionID, $0.percent) })
-            positions[m.positionID]!.splitExpiresAt = m.splits.isEmpty ? 0 : now + groundworksLease
-        case let m as MsgUnlockPosition:
-            _ = positions.removeValue(forKey: m.positionID)!
-            positionOrder.removeAll { $0 == m.positionID }
-        case let m as MsgPositionVote:
-            positionVotes.append((m.positionID, m.proposalID))
         case let m as MsgSetCaretaker:
             let n = try f(m.membership.nullifier)
             if m.percentages.isEmpty { caretakerVotes[n] = nil; caretakerExpiry[n] = nil } else {
@@ -1296,10 +1310,12 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                         fetchStream: { [self] f, l in try await handles(fromIndex: f, limit: l) }, now: { [self] in now })
     }
 
-    func positionReads() -> [PrivacyReads.Position] {
-        positionOrder.compactMap { positions[$0] }.map {
-            PrivacyReads.Position(id: $0.id, validator: $0.validator, derth: $0.derth, ownerTag: $0.ownerTag, splits: $0.splits,
-                                  createdHeight: $0.createdHeight, splitExpiresAt: $0.splitExpiresAt)
+    /// Query/GroundworksVotes: every live vote, by id, its weight at the epoch rate.
+    func gwVoteReads() -> [PrivacyReads.GroundworksVote] {
+        gwVotes.values.sorted { $0.id < $1.id }.map {
+            PrivacyReads.GroundworksVote(id: $0.id, validator: $0.validator, derth: $0.derth,
+                                         weight: PrivacyWallet.derthValue($0.derth, rate: quoteOf($0.validator).epochRate),
+                                         tag: $0.tag, splits: $0.splits, splitExpiresAt: $0.splitExpiresAt)
         }
     }
 
@@ -1385,7 +1401,14 @@ struct FakeReads: PrivacyChainReads, @unchecked Sendable {
 
     func stakeNullifierTree(start: UInt64, limit: Int) async throws -> PrivacyReads.NfTreePage { chain.nfTreeRead(start: start, limit: limit) }
 
-    func positions() async throws -> [PrivacyReads.Position] { chain.positionReads() }
+    func groundworksVotes() async throws -> [PrivacyReads.GroundworksVote] { chain.gwVoteReads() }
+
+    func minGroundworksVote() async throws -> UInt64 {
+        if chain.failMinVoteRead { throw PrivacyError("node unreachable") }
+        return chain.minGroundworksVote
+    }
+
+    func groundworksOptions() async throws -> Set<UInt64>? { chain.gwOptions }
 
     func debtTree(start: UInt64, limit: Int) async throws -> PrivacyReads.DebtTreePage { chain.debtTreeRead(start: start, limit: limit) }
 
@@ -1409,16 +1432,11 @@ enum ChainLayout {
         var crMoveTime: UInt64 = 0
     }
 
-    /// `position` names an unlocked position's validator and derth (the keeper fills an unlock's lanes in).
-    static func lanes(_ m: any PrivateMsg, position: (UInt64) -> (String, UInt64) = { _ in ("", 0) }) -> Lanes {
+    static func lanes(_ m: any PrivateMsg) -> Lanes {
         switch m {
         case let m as MsgShieldedDelegate: return Lanes(denom: PrivacyWallet.derthDenom(m.validator), vIn: m.derth, vOut: 0)
         case let m as MsgRestake: return Lanes(denom: PrivacyWallet.derthDenom(m.validator), vIn: 0, vOut: 0)
         case let m as MsgShieldedUndelegate: return Lanes(denom: PrivacyWallet.derthDenom(m.validator), vIn: 0, vOut: m.amount)
-        case let m as MsgLockPosition: return Lanes(denom: PrivacyWallet.derthDenom(m.validator), vIn: 0, vOut: m.amount)
-        case let m as MsgUnlockPosition:
-            let (v, d) = position(m.positionID)
-            return Lanes(denom: PrivacyWallet.derthDenom(v), vIn: d, vOut: 0)
         case let m as MsgRedelegate:
             return Lanes(denom: PrivacyWallet.derthDenom(m.srcValidator), vIn: 0, vOut: m.amount, crDenom: PrivacyWallet.derthDenom(m.dstValidator),
                          crVIn: m.dstDerth, crMoveTime: m.moveTime)
@@ -1431,7 +1449,8 @@ enum ChainLayout {
         return [try f(p.anchor), l.denom.map(PrivacyHash.assetID) ?? .zero, try f(p.nullifiers[0]), try f(p.nullifiers[1]),
                 try f(p.commitment), PrivacyHash.u64(l.vIn), PrivacyHash.u64(l.vOut), PrivacyHash.u64(p.clearBefore), try f(p.debtRoot),
                 l.crDenom.map(PrivacyHash.assetID) ?? .zero, try f(p.creditNullifier), try f(p.creditCommitment), PrivacyHash.u64(l.crVIn),
-                PrivacyHash.u64(l.crMoveTime), try f(p.ownerTag), sighash]
+                PrivacyHash.u64(l.crMoveTime), try f(p.groundworksTags[0]), try f(p.groundworksTags[1]), try f(p.creditGroundworksTag),
+                try f(p.voteTag), PrivacyHash.u64(p.voteWeight), try f(p.creditVoteTag), PrivacyHash.u64(p.creditVoteWeight), sighash]
     }
 
     static func votePublicInputs(_ m: MsgStakeVote, noteRoot: Fr, nfRoot: Fr, sighash: Fr) throws -> [Fr] {

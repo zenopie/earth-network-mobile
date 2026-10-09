@@ -139,10 +139,16 @@ public struct StakeIn: Sendable, Equatable {
 /// credits no second asset.
 ///
 /// An amount-0 output publishes 0 or, with `padOut`, the zero note's
-/// commitment (a full exit looks like a partial one). Public inputs, in the
-/// chain's order (StakeProof.PublicInputs): anchor, asset, nf_0, nf_1,
-/// cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm,
-/// cr_v_in, cr_move_time, otag, sighash.
+/// commitment (a full exit looks like a partial one).
+///
+/// Groundworks: every input publishes its tag H(TAG_GW, nk, rho) (as it
+/// publishes its nullifier: a padding input its own, no input 0); an output
+/// that votes (`vote`, `crVote`) publishes its own tag and its unexposed
+/// amount as the weight. Public inputs, in the chain's order
+/// (StakeProof.PublicInputs): anchor, asset, nf_0, nf_1, cm_out, v_in,
+/// v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in,
+/// cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out,
+/// sighash.
 public struct StakeWitness: Sendable {
     public let nk: Fr
     public let ins: [StakeIn]
@@ -155,7 +161,8 @@ public struct StakeWitness: Sendable {
     public let crIn: StakeIn
     public let crOutRho: Fr
     public let crOutRcm: Fr
-    public let tagSalt: Fr
+    public let vote: Bool
+    public let crVote: Bool
     public let anchor: Fr
     public let asset: Fr
     public let vIn: UInt64
@@ -172,11 +179,18 @@ public struct StakeWitness: Sendable {
     public let crOutAmount: UInt64
     public let crLabel: StakeLabel?
     public let crCM: Fr
-    public let otag: Fr
+    /// The inputs' Groundworks tags (lane A's two, the credit lane's).
+    public let gw: [Fr]
+    public let crGW: Fr
+    /// The outputs' votes: tag and weight, zero and 0 when not voting.
+    public let gwOut: Fr
+    public let wOut: UInt64
+    public let crGWOut: Fr
+    public let crWOut: UInt64
 
     public init(nk: Fr, ins: [StakeIn], outAmount: UInt64, outRho: Fr, outRcm: Fr, padOut: Bool, clear: Bool, debt: DebtTree.Witness,
-                crIn: StakeIn, crOutRho: Fr, crOutRcm: Fr, tagSalt: Fr, anchor: Fr, asset: Fr, vIn: UInt64, vOut: UInt64,
-                clearBefore: UInt64, debtRoot: Fr, crAsset: Fr, crVIn: UInt64, crMoveTime: UInt64, sighash: Fr) throws {
+                crIn: StakeIn, crOutRho: Fr, crOutRcm: Fr, vote: Bool = false, crVote: Bool = false, anchor: Fr, asset: Fr,
+                vIn: UInt64, vOut: UInt64, clearBefore: UInt64, debtRoot: Fr, crAsset: Fr, crVIn: UInt64, crMoveTime: UInt64, sighash: Fr) throws {
         try require(ins.count == 2, "a stake proof has two lane A input slots")
         try require(crIn.label == nil, "the credit lane merges only into an unlabelled note")
         try require(debt.lowPath.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
@@ -185,12 +199,16 @@ public struct StakeWitness: Sendable {
         let (crOut, overflow) = crIn.amount.addingReportingOverflow(crVIn)
         try require(!overflow, "the credit lane's note overflows")
         self.nk = nk; self.ins = ins; self.outAmount = outAmount; self.outRho = outRho; self.outRcm = outRcm; self.padOut = padOut
-        self.clear = clear; self.debt = debt; self.crIn = crIn; self.crOutRho = crOutRho; self.crOutRcm = crOutRcm; self.tagSalt = tagSalt
+        self.clear = clear; self.debt = debt; self.crIn = crIn; self.crOutRho = crOutRho; self.crOutRcm = crOutRcm
+        self.vote = vote; self.crVote = crVote
         self.anchor = anchor; self.asset = asset; self.vIn = vIn; self.vOut = vOut; self.clearBefore = clearBefore; self.debtRoot = debtRoot
         self.crAsset = crAsset; self.crVIn = crVIn; self.crMoveTime = crMoveTime; self.sighash = sighash
         let opk = PrivacyHash.ownerPK(nk)
         func nf(_ i: StakeIn) -> Fr { i.amount != 0 || i.pad ? PrivacyHash.stakeNF(nk: nk, rho: i.rho, position: i.pos) : .zero }
+        func tag(_ i: StakeIn) -> Fr { i.amount != 0 || i.pad ? PrivacyHash.stakeGW(nk: nk, rho: i.rho) : .zero }
         nullifiers = ins.map(nf)
+        gw = ins.map(tag)
+        crGW = tag(crIn)
         let labelled = ins.compactMap(\.label).first
         let outLabel = clear ? nil : labelled
         commitment = outAmount == 0 && !padOut ? .zero
@@ -202,7 +220,12 @@ public struct StakeWitness: Sendable {
         crCM = crOut == 0 ? .zero
             : PrivacyHash.stakeCM(asset: crAsset, amount: crOut, spc: PrivacyHash.stakePC(ownerPK: opk, rho: crOutRho, rcm: crOutRcm),
                                   label: StakeLabel.hash(crLabel))
-        otag = PrivacyHash.ownerTag(ownerPK: opk, salt: tagSalt)
+        try require(!vote || outAmount != 0, "a padding output cannot vote")
+        try require(!crVote || crOut != 0, "a padding output cannot vote")
+        gwOut = vote ? PrivacyHash.stakeGW(nk: nk, rho: outRho) : .zero
+        wOut = vote ? outAmount - (outLabel?.exposed ?? 0) : 0
+        crGWOut = crVote ? PrivacyHash.stakeGW(nk: nk, rho: crOutRho) : .zero
+        crWOut = crVote ? (crMoveTime != 0 ? crIn.amount : crOut) : 0
     }
 
     /// The labelled input, if any (the circuit takes at most one).
@@ -245,7 +268,8 @@ public struct StakeWitness: Sendable {
 
     public func publicInputs() -> [Fr] {
         [anchor, asset, nullifiers[0], nullifiers[1], commitment, PrivacyHash.u64(vIn), PrivacyHash.u64(vOut),
-         PrivacyHash.u64(clearBefore), debtRoot, crAsset, crNF, crCM, PrivacyHash.u64(crVIn), PrivacyHash.u64(crMoveTime), otag, sighash]
+         PrivacyHash.u64(clearBefore), debtRoot, crAsset, crNF, crCM, PrivacyHash.u64(crVIn), PrivacyHash.u64(crMoveTime),
+         gw[0], gw[1], crGW, gwOut, PrivacyHash.u64(wOut), crGWOut, PrivacyHash.u64(crWOut), sighash]
     }
 
     public func noirInputs() -> [String: Any] {
@@ -277,7 +301,6 @@ public struct StakeWitness: Sendable {
             "cr_in_path": crIn.path.map(\.noir),
             "cr_out_rho": crOutRho.noir,
             "cr_out_rcm": crOutRcm.noir,
-            "tag_salt": tagSalt.noir,
             "anchor": anchor.noir,
             "asset": asset.noir,
             "nf_0": nullifiers[0].noir,
@@ -292,7 +315,13 @@ public struct StakeWitness: Sendable {
             "cr_cm": crCM.noir,
             "cr_v_in": noirHex(crVIn),
             "cr_move_time": noirHex(crMoveTime),
-            "otag": otag.noir,
+            "gw_0": gw[0].noir,
+            "gw_1": gw[1].noir,
+            "cr_gw": crGW.noir,
+            "gw_out": gwOut.noir,
+            "w_out": noirHex(wOut),
+            "cr_gw_out": crGWOut.noir,
+            "cr_w_out": noirHex(crWOut),
             "sighash": sighash.noir,
         ]
     }
@@ -300,8 +329,9 @@ public struct StakeWitness: Sendable {
     static let inputOrder = ["nk", "in_amount", "in_rho", "in_rcm", "in_pos", "in_path", "in_move_key", "in_move_time", "in_exposed",
                              "out_amount", "out_rho", "out_rcm", "clear", "debt_low_key", "debt_low_next_key", "debt_low_next_index",
                              "debt_low_retained", "debt_low_index", "debt_low_path", "cr_in_amount", "cr_in_rho", "cr_in_rcm", "cr_in_pos",
-                             "cr_in_path", "cr_out_rho", "cr_out_rcm", "tag_salt", "anchor", "asset", "nf_0", "nf_1", "cm_out", "v_in",
-                             "v_out", "clear_before", "debt_root", "cr_asset", "cr_nf", "cr_cm", "cr_v_in", "cr_move_time", "otag", "sighash"]
+                             "cr_in_path", "cr_out_rho", "cr_out_rcm", "anchor", "asset", "nf_0", "nf_1", "cm_out", "v_in",
+                             "v_out", "clear_before", "debt_root", "cr_asset", "cr_nf", "cr_cm", "cr_v_in", "cr_move_time",
+                             "gw_0", "gw_1", "cr_gw", "gw_out", "w_out", "cr_gw_out", "cr_w_out", "sighash"]
 
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
 }

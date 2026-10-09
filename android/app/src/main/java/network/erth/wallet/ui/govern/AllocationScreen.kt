@@ -96,7 +96,7 @@ fun AllocationScreen(
         Spacer(Modifier.height(dimens.space8))
         GovernRow(
             title = "Groundworks Fund",
-            detail = "Weighted by staked ERTH locked in positions.",
+            detail = "Directed by staked ERTH.",
             status = state?.capital.statusFor(
                 eligible = stakedUerth > 0,
                 blocked = "Stake ERTH privately to take part",

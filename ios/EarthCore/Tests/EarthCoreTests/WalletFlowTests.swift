@@ -6,8 +6,8 @@ import XCTest
 /// tree (ports WalletFlowTest.kt): gas grant, registration, claim, assembly
 /// vote, private sends of any number of notes and assets, unshields, swaps,
 /// private LP add and remove, delegate / restake / undelegate (paid out), stake
-/// votes, Groundworks positions, the personhood paths, and wallets restored
-/// from their mnemonics finding everything again (stake notes and positions
+/// votes, Groundworks votes, the personhood paths, and wallets restored
+/// from their mnemonics finding everything again (stake notes and Groundworks votes
 /// included).
 ///
 /// With PRIVACY_TOML_OUT=<dir>, every witness proved is written as
@@ -162,7 +162,7 @@ final class WalletFlowTests: XCTestCase {
         return a
     }
 
-    /// The dex, LP, staking, positions and personhood paths with two wallets.
+    /// The dex, LP, staking, Groundworks and personhood paths with two wallets.
     func testDexStakingPositionsAndPersonhood() async throws {
         let chain = FakeChain()
         let a = try await registered(chain, alice)
@@ -250,35 +250,28 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertEqual(held0 + 90_000 - 1, total)
         XCTAssertEqual(1, a.stakeNotes.filter(\.spendable).count)
 
-        // Groundworks: lock a position (owner tag), re-split, vote, unlock.
-        _ = try await a.lockPosition(validator: validator, amount: 1_000_000, splits: [2: 60, 5: 40])
-        try await a.sync()
-        XCTAssertEqual(total - 1_000_000, bal(a, derth))
-        let mine = try await a.positions()
-        XCTAssertEqual(1, mine.count)
-        let (pos, tag) = (mine[0].position, mine[0].counter)
-        XCTAssertEqual([2: 60, 5: 40], pos.splits)
-        _ = try await a.updatePosition(pos, counter: tag, splits: [2: 100])
-        XCTAssertEqual([2: 100], chain.positions[pos.id]!.splits)
-        _ = try await a.positionVote(try await a.positions()[0].position, counter: tag, proposalID: 9, options: yes)
-        XCTAssertEqual(9, chain.positionVotes.first?.1)
-        // Only its owner can move it.
-        await assertThrowsAsync({ try await b.updatePosition(pos, counter: 0, splits: [2: 100]) }) { $0 is PrivacyError }
-        // Unlocking merges the position's derth back into the note; the fee bundle records the closed counter.
-        _ = try await a.unlockPosition(try await a.positions()[0].position, counter: tag)
-        try await a.sync()
-        let gone = try await a.positions()
-        XCTAssertTrue(gone.isEmpty)
+        // Groundworks: vote the stake with a split, change it, stop.
+        chain.minGroundworksVote = 100_000
+        _ = try await a.castGroundworks(split: [2: 60, 5: 40])
+        var votes = try await a.groundworksVotes()
+        XCTAssertEqual([[2: 60, 5: 40]], votes.map(\.split))
+        XCTAssertEqual(total, votes[0].derth)
+        _ = try await a.castGroundworks(split: [2: 100])
+        votes = try await a.groundworksVotes()
+        XCTAssertEqual([[2: 100]], votes.map(\.split))
+        XCTAssertEqual(1, chain.gwVotes.count)
+        // b sees none of a's.
+        let bVotes = try await b.groundworksVotes()
+        XCTAssertTrue(bVotes.isEmpty)
+        _ = try await a.castGroundworks(split: [:])
+        XCTAssertTrue(chain.gwVotes.isEmpty)
         XCTAssertEqual(total, bal(a, derth))
         XCTAssertEqual(1, a.stakeNotes.filter(\.spendable).count)
-        let restoredA = try wallet(chain, alice)
-        try await restoredA.sync()
-        XCTAssertEqual(tag, restoredA.store.state.closedOtagMax)
 
         // Stake votes: the derth note from before the snapshot, one vote per validator, its rounded amount.
         try await a.sync()
         chain.openProposal(11)
-        let weight = try await a.stakeVoteWeight(proposalID: 11, positions: [])
+        let weight = try await a.stakeVoteWeight(proposalID: 11)
         let held = a.stakeNotes.filter { $0.spendable && $0.denom == derth }
         XCTAssertEqual(1, held.count)
         let rounded = try PrivacyWallet.voteWeight(held.reduce(UInt64(0)) { $0 + $1.amount })

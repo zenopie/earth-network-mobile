@@ -81,9 +81,6 @@ sealed interface EarthRoute {
 
     data object Personhood : EarthRoute
 
-    /** Groundworks positions: the private way to direct the Groundworks Fund. */
-    data object Positions : EarthRoute
-
     /** The human chamber's ballots to remove Groundworks options. */
     data object RemovalBallots : EarthRoute
 

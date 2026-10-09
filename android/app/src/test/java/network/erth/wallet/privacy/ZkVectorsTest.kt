@@ -79,7 +79,7 @@ class ZkVectorsTest {
             "id" to Privacy.TAG_ID, "owner" to Privacy.TAG_OWNER, "leaf" to Privacy.TAG_LEAF, "succ" to Privacy.TAG_SUCC, "sn" to Privacy.TAG_SN,
             "pc" to Privacy.TAG_PC, "cm" to Privacy.TAG_CM, "nf" to Privacy.TAG_NF, "reg" to Privacy.TAG_REG,
             "asset" to Privacy.TAG_ASSET, "signal" to Privacy.TAG_SIGNAL, "bytes" to Privacy.TAG_BYTES, "scope" to Privacy.TAG_SCOPE, "affiliate" to Privacy.TAG_AFFILIATE, "referral" to Privacy.TAG_REFERRAL,
-            "stake" to Privacy.TAG_STAKE, "spc" to Privacy.TAG_SPC, "snf" to Privacy.TAG_SNF, "otag" to Privacy.TAG_OTAG,
+            "stake" to Privacy.TAG_STAKE, "spc" to Privacy.TAG_SPC, "snf" to Privacy.TAG_SNF, "otag" to Privacy.TAG_OTAG, "gw" to Privacy.TAG_GW,
             "snfl" to Privacy.TAG_SNFL, "vnf" to Privacy.TAG_VNF, "slabel" to Privacy.TAG_SLABEL, "debtl" to Privacy.TAG_DEBTL,
             "gen" to network.erth.wallet.privacy.zk.Grumpkin.TAG_GEN, "cv_r" to network.erth.wallet.privacy.zk.Grumpkin.TAG_CV_R,
             "bsig" to network.erth.wallet.privacy.zk.Grumpkin.TAG_BSIG, "bundle" to network.erth.wallet.privacy.tx.PrivateMsgs.TAG_BUNDLE,
@@ -145,8 +145,8 @@ class ZkVectorsTest {
         assertEquals("0ffc538b4162732774bd5026e7a07bd00d2fe406af55231fa0c255c321ad4232", Privacy.stakeCm(Fr.of(1), 2, Fr.of(3), Fr.of(4)).toHex())
         assertEquals(d.getString("stake_cm_1_2_3_4"), Privacy.stakeCm(Fr.of(1), 2, Fr.of(3), Fr.of(4)).toHex())
         assertEquals(d.getString("stake_nf"), Privacy.stakeNf(nk, rho, 4_000_000_000).toHex())
-        assertEquals(fe(1006), fr(d.getString("otag_salt")))
-        assertEquals(d.getString("otag"), Privacy.ownerTag(opk, fe(1006)).toHex())
+        assertEquals(d.getString("stake_gw"), Privacy.stakeGw(nk, rho).toHex())
+        assertEquals(d.getString("stake_gw_1_2"), Privacy.stakeGw(Fr.of(1), Fr.of(2)).toHex())
         // Stake votes (ORCHARD_DESIGN 8.5), and the design's golden values (= Noir test_go_parity).
         assertEquals(d.getString("nf_leaf_1_2_3"), Privacy.nfLeaf(Fr.of(1), Fr.of(2), 3).toHex())
         assertEquals("0cdc3a81748c6389efaa3a6c29b7f4609a8e9f860230b70413e8bef512978276", d.getString("nf_leaf_1_2_3"))

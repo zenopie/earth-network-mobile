@@ -60,10 +60,10 @@ public final class AppModel {
     /// largest max_actions_per_bundle notes. Under `shieldedErth` only when
     /// the notes are spread over more than that.
     public private(set) var unshieldableErth: UInt64 = 0
-    /// This wallet's Groundworks positions (public positions whose key is ours).
-    public private(set) var positions: [OwnedPosition] = []
-    /// Each of those positions' split lease, by position id (PrivacyWallet.groundworksLeases).
-    public private(set) var groundworksLeases: [UInt64: Reminders.GroundworksLease] = [:]
+    /// This wallet's Groundworks votes (the chain's votes under our notes' tags).
+    public private(set) var groundworksVotes: [PrivacyWallet.GroundworksVoteView] = []
+    /// Their lease, for the reminder and the Renew (PrivacyWallet.groundworksLease); nil when no split is chosen.
+    public private(set) var groundworksLease: Reminders.GroundworksLease?
     /// This wallet's private stake per validator: what may move now, what waits for its window.
     public private(set) var stakeHoldings: [PrivacyWallet.StakeHolding] = []
     /// The chain's label window as last read (0: never): how long moved stake stays put.
@@ -106,12 +106,6 @@ public final class AppModel {
     /// Undelegations waiting for their payout, from this wallet's own record (nothing asked of the chain).
     public private(set) var pendingUnbonds: [PendingUnbond] = []
 
-    public struct OwnedPosition: Identifiable, Sendable {
-        public let position: PrivacyReads.Position
-        /// Its owner-tag counter (PrivacyKeys.otagSalt): what proves it ours.
-        public let counter: UInt32
-        public var id: UInt64 { position.id }
-    }
     /// Recent transactions, nil until the first load lands.
     ///
     /// The distinction matters: a zero that is really "not loaded yet" is the
@@ -161,7 +155,7 @@ public final class AppModel {
     public var tab: Tab = .wallet
     /// Where in Govern a reminder asked to go; GovernScreen opens it and clears it.
     public var governLink: GovernLink?
-    public enum GovernLink: Equatable, Sendable { case caretaker, positions }
+    public enum GovernLink: Equatable, Sendable { case caretaker, groundworks }
 
     public private(set) var balancesVisible = true
 
@@ -838,12 +832,11 @@ public final class AppModel {
         shielded.filter { $0.key.hasPrefix("derth/") }
     }
 
-    /// Private stake in derth, positions included. A count of notes' units,
-    /// not ERTH: what decides whether the wallet can stake-vote at all.
+    /// Private stake in derth. A count of notes' units, not ERTH: what
+    /// decides whether the wallet can stake-vote at all.
     public var privateStakeTotal: UInt64 {
         // Saturating: amounts a node publishes never trap a sum.
-        PrivateMsgs.saturatingAdd(privateStake.values.reduce(0, PrivateMsgs.saturatingAdd),
-                                  positions.reduce(0) { PrivateMsgs.saturatingAdd($0, $1.position.derth) })
+        privateStake.values.reduce(0, PrivateMsgs.saturatingAdd)
     }
 
     /// What `derth` derth/`validator` is worth in uerth at the live rate:
@@ -853,21 +846,19 @@ public final class AppModel {
         PrivacyWallet.derthValue(derth, rate: derthRates[validator] ?? 1)
     }
 
-    /// This wallet's Groundworks positions as stake: derth locked at a validator.
-    public var stakePositions: [StakeRound.Locked] {
-        positions.map { StakeRound.Locked(validator: $0.position.validator, derth: $0.position.derth, height: $0.position.createdHeight) }
+    /// Private stake per validator at the live rates. What the Stake tab
+    /// shows; the Portfolio's rows add up to it.
+    public func stakeLines() -> [StakeRound.Line] {
+        StakeRound.lines(notes: privacy?.stakeNotes ?? [], rate: { [derthRates] in derthRates[$0] ?? 1 })
     }
 
-    /// Private stake per validator, notes and positions, at the live rates
-    /// (`after`: the block that ended the last round, for what is still waiting
-    /// to join). What the Stake tab shows; the Portfolio's rows add up to it.
-    public func stakeLines(after: UInt64? = nil) -> [StakeRound.Line] {
-        StakeRound.lines(notes: privacy?.stakeNotes ?? [], positions: stakePositions,
-                         rate: { [derthRates] in derthRates[$0] ?? 1 }, after: after)
+    /// The Groundworks split this wallet votes with (empty: none).
+    public var groundworksSplit: [UInt64: UInt64] {
+        _ = groundworksVotes
+        return privacy?.groundworksSplit ?? [:]
     }
 
-    /// Private stake in ERTH (uerth): every derth note and position at its
-    /// validator's live rate.
+    /// Private stake in ERTH (uerth): every derth note at its validator's live rate.
     public var privateStakeValue: UInt64 {
         stakeLines().reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.value) }
     }
@@ -902,8 +893,8 @@ public final class AppModel {
         claimOpensAt = nil
         mergeable = [:]
         unshieldableErth = 0
-        positions = []
-        groundworksLeases = [:]
+        groundworksVotes = []
+        groundworksLease = nil
         stakeHoldings = []
         labelWindowSeconds = 0
         derthRates = [:]
@@ -949,11 +940,7 @@ public final class AppModel {
         }
         publishPrivacy()
         let queries = PrivacyQueries(rest: client.rest)
-        if let mine = try? await w.positions() {
-            positions = mine.map { OwnedPosition(position: $0.position, counter: $0.counter) }
-            // First per id: a duplicate the node served must not trap here.
-            groundworksLeases = Dictionary(await w.groundworksLeases(mine.map(\.position)).map { ($0.positionID, $0) }, uniquingKeysWith: { a, _ in a })
-        }
+        await refreshGroundworks()
         await refreshStakeHoldings()
         await refreshRemovalBallots()
         // The list the sync just read.
@@ -962,6 +949,13 @@ public final class AppModel {
         // The claim wait uses the lease the chain's bound uses (LeaseBounds: the longest ever in force), never Params.
         if let b = try? await queries.leaseBounds(), (1 ... Handles.maxAheadSeconds).contains(b.handleLeaseSeconds) { handleLeaseSeconds = b.handleLeaseSeconds }
         await refreshPersonal()
+    }
+
+    /// This wallet's Groundworks votes and their lease (the chain's whole list, never a query about ours).
+    func refreshGroundworks() async {
+        guard let w = privacy else { return }
+        if let mine = try? await w.groundworksVotes() { groundworksVotes = mine }
+        groundworksLease = await w.groundworksLease(groundworksVotes)
     }
 
     /// This wallet's stake per validator (the chain's debt view is read only when a label is held).
@@ -1004,7 +998,7 @@ public final class AppModel {
             now: Int64(Date().timeIntervalSince1970), identityLive: live, claimOpensAt: w.claimOpensAt(),
             claimedToday: w.claimedToday(), caretakerExpiresAt: caretakerExpiresAt, handle: snap.handle, handleEntry: handleEntry,
             addressed: addressed, ownAddress: w.address.encode(),
-            groundworks: groundworksLeases.values.sorted { $0.positionID < $1.positionID },
+            groundworks: groundworksLease,
             moveSuggestedAt: w.moveSuggestionDue(), moveDeadline: w.moveDeadline(),
             registrationEndsAt: registrationEndsAt, handleExpiresAt: handleExp))
     }

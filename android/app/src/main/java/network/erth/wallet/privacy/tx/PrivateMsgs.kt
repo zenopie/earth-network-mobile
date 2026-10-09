@@ -20,14 +20,10 @@ import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.Bundle
 import network.erth.earth.proto.shielded.MsgSend
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
-import network.erth.earth.proto.shieldedstaking.MsgLockPosition
-import network.erth.earth.proto.shieldedstaking.MsgPositionVote
 import network.erth.earth.proto.shieldedstaking.MsgRedelegate
 import network.erth.earth.proto.shieldedstaking.MsgRestake
 import network.erth.earth.proto.shieldedstaking.MsgStakeVote
 import network.erth.earth.proto.shieldedstaking.MsgUndelegate
-import network.erth.earth.proto.shieldedstaking.MsgUnlockPosition
-import network.erth.earth.proto.shieldedstaking.MsgUpdatePosition
 import network.erth.earth.proto.shieldedstaking.StakeProof
 import network.erth.wallet.crypto.Bech32
 import network.erth.wallet.privacy.handles.Handles
@@ -64,10 +60,6 @@ object PrivateMsgs {
     const val RESTAKE = "/earth.shieldedstaking.v1.MsgRestake"
     const val UNDELEGATE = "/earth.shieldedstaking.v1.MsgUndelegate"
     const val STAKE_VOTE = "/earth.shieldedstaking.v1.MsgStakeVote"
-    const val LOCK_POSITION = "/earth.shieldedstaking.v1.MsgLockPosition"
-    const val UPDATE_POSITION = "/earth.shieldedstaking.v1.MsgUpdatePosition"
-    const val UNLOCK_POSITION = "/earth.shieldedstaking.v1.MsgUnlockPosition"
-    const val POSITION_VOTE = "/earth.shieldedstaking.v1.MsgPositionVote"
     const val REDELEGATE = "/earth.shieldedstaking.v1.MsgRedelegate"
     const val NOTE_SWAP = "/earth.dex.v1.MsgNoteSwap"
     const val ADD_LIQUIDITY_SHIELDED = "/earth.dex.v1.MsgAddLiquidityShielded"
@@ -230,10 +222,6 @@ object PrivateMsgs {
         is MsgRestake -> listOf(msg.bundle)
         is MsgUndelegate -> listOf(msg.bundle)
         is MsgStakeVote -> listOf(msg.bundle)
-        is MsgLockPosition -> listOf(msg.bundle)
-        is MsgUpdatePosition -> listOf(msg.bundle)
-        is MsgUnlockPosition -> listOf(msg.bundle)
-        is MsgPositionVote -> listOf(msg.bundle)
         is MsgRedelegate -> listOf(msg.bundle)
         is MsgNoteSwap -> listOf(msg.bundle)
         is MsgAddLiquidityShielded -> listOf(msg.bundle)
@@ -285,24 +273,23 @@ object PrivateMsgs {
         is MsgDelegate -> msg.stake
         is MsgRestake -> msg.stake
         is MsgUndelegate -> msg.stake
-        is MsgLockPosition -> msg.stake
-        is MsgUpdatePosition -> msg.stake
-        is MsgUnlockPosition -> msg.stake
-        is MsgPositionVote -> msg.stake
         is MsgRedelegate -> msg.stake
         else -> null
     }
 
     /**
      * StakeFields: anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm,
-     * Bytes(credit_ct), owner_tag, clear_before, debt_root (an absent
+     * Bytes(credit_ct), clear_before, debt_root, gw_0, gw_1, credit_gw,
+     * vote_tag, vote_weight, credit_vote_tag, credit_vote_weight (an absent
      * ciphertext is Bytes of nothing).
      */
     fun stakeFields(p: StakeProof): List<Fr> = listOf(
         fieldOrZero(p.anchor), fieldOrZero(p.nullifiersList.getOrNull(0)), fieldOrZero(p.nullifiersList.getOrNull(1)),
         fieldOrZero(p.commitment), bytes(p.ciphertext),
         fieldOrZero(p.creditNullifier), fieldOrZero(p.creditCommitment), bytes(p.creditCiphertext),
-        fieldOrZero(p.ownerTag), u(p.clearBefore), fieldOrZero(p.debtRoot),
+        u(p.clearBefore), fieldOrZero(p.debtRoot),
+        fieldOrZero(p.groundworksTagsList.getOrNull(0)), fieldOrZero(p.groundworksTagsList.getOrNull(1)), fieldOrZero(p.creditGroundworksTag),
+        fieldOrZero(p.voteTag), u(p.voteWeight), fieldOrZero(p.creditVoteTag), u(p.creditVoteWeight),
     )
 
     /** The bundles' summed uerth balance (shielded UerthBalance). */
@@ -345,25 +332,23 @@ object PrivateMsgs {
         is MsgVoteProposal -> listOf(u(msg.proposalId), u(msg.optionValue.toLong()))
         is MsgProposeRemoval -> listOf(u(msg.optionId))
         is MsgVoteRemoval -> listOf(u(msg.optionId), u(msg.optionValue.toLong()))
-        is MsgDelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount), u(msg.derth))
-        is MsgRestake -> stakeFields(msg.stake) + listOf(bytes(msg.validator))
-        is MsgUndelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount), f(msg.pc), bytes(msg.ciphertext))
+        // groundworks_split: the split the stake proof's outputs vote with (empty: none votes).
+        is MsgDelegate -> stakeFields(msg.stake) + listOf(
+            bytes(msg.validator), u(msg.amount), u(msg.derth), Privacy.bytes(splitsBytes(msg.groundworksSplitList)),
+        )
+        is MsgRestake -> stakeFields(msg.stake) + listOf(bytes(msg.validator), Privacy.bytes(splitsBytes(msg.groundworksSplitList)))
+        is MsgUndelegate -> stakeFields(msg.stake) + listOf(
+            bytes(msg.validator), u(msg.amount), f(msg.pc), bytes(msg.ciphertext), Privacy.bytes(splitsBytes(msg.groundworksSplitList)),
+        )
         // A vote carries no stake proof (ORCHARD_DESIGN 8.5): its vote proof's statement is the chain's.
         is MsgStakeVote -> {
             require(msg.voteNullifiersCount == MAX_VOTE_NOTES) { "a stake vote carries exactly $MAX_VOTE_NOTES vote nullifiers" }
             listOf(u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight)) +
                 msg.voteNullifiersList.map { f(it) } + listOf(f(msg.debtRoot))
         }
-        is MsgLockPosition -> stakeFields(msg.stake) + listOf(
-            bytes(msg.validator), u(msg.amount), Privacy.bytes(splitsBytes(msg.splitsList)),
-        )
-        is MsgUpdatePosition -> stakeFields(msg.stake) + listOf(u(msg.positionId), Privacy.bytes(splitsBytes(msg.splitsList)))
-        is MsgUnlockPosition -> stakeFields(msg.stake) + listOf(u(msg.positionId))
-        is MsgPositionVote -> stakeFields(msg.stake) + listOf(
-            u(msg.positionId), u(msg.proposalId), Privacy.bytes(optionsBytes(msg.optionsList)),
-        )
         is MsgRedelegate -> stakeFields(msg.stake) + listOf(
             bytes(msg.srcValidator), bytes(msg.dstValidator), u(msg.amount), u(msg.dstDerth), u(msg.moveTime),
+            Privacy.bytes(splitsBytes(msg.groundworksSplitList)),
         )
         is MsgNoteSwap -> listOf(
             bytes(msg.denomIn), u(msg.amountIn), bytes(msg.denomOut), u(msg.minAmountOut), f(msg.pc), bytes(msg.ciphertext),
@@ -410,10 +395,6 @@ object PrivateMsgs {
         is MsgRestake -> RESTAKE
         is MsgUndelegate -> UNDELEGATE
         is MsgStakeVote -> STAKE_VOTE
-        is MsgLockPosition -> LOCK_POSITION
-        is MsgUpdatePosition -> UPDATE_POSITION
-        is MsgUnlockPosition -> UNLOCK_POSITION
-        is MsgPositionVote -> POSITION_VOTE
         is MsgRedelegate -> REDELEGATE
         is MsgNoteSwap -> NOTE_SWAP
         is MsgAddLiquidityShielded -> ADD_LIQUIDITY_SHIELDED

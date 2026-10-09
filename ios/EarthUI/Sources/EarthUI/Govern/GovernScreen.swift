@@ -20,8 +20,6 @@ struct GovernScreen: View {
     @Environment(AppModel.self) private var model
     @State private var streams = StreamsModel()
     @State private var route: Route?
-    /// The Groundworks sheet opens on Positions (a lease reminder's tap).
-    @State private var openPositions = false
 
     enum Route: Hashable, Identifiable {
         case stream(caretaker: Bool)
@@ -59,7 +57,7 @@ struct GovernScreen: View {
                 Spacer().frame(height: theme.space.x8)
                 GovernRow(
                     title: "Groundworks Fund",
-                    detail: "Directed by positions: locked private stake.",
+                    detail: "Directed by staked ERTH.",
                     status: streams.groundworks.status(
                         eligible: model.privateStakeTotal > 0,
                         blocked: "Stake ERTH privately to take part"
@@ -108,24 +106,22 @@ struct GovernScreen: View {
         .onChange(of: model.governLink, initial: true) { _, link in
             guard let link else { return }
             model.governLink = nil
-            openPositions = link == .positions
             route = .stream(caretaker: link == .caretaker)
         }
-        .sheet(item: $route, onDismiss: { openPositions = false }) { route in
+        .sheet(item: $route) { route in
             switch route {
             case let .stream(caretaker):
                 StreamDetailScreen(
                     title: caretaker ? "Caretaker Fund" : "Groundworks Fund",
                     detail: caretaker
                         ? "One verified human, one vote."
-                        : "Directed by positions: private stake locked to this wallet by an owner tag. The split and amount are public; the owner is not.",
+                        : "Directed by staked ERTH. Your stake votes with your split; the split and amount are public, who you are is not.",
                     stream: caretaker ? .caretaker : .groundworks,
                     state: caretaker ? streams.caretaker : streams.groundworks,
                     eligibility: caretaker
                         ? (model.isRegistered ? nil : "Register with your passport to vote here.")
-                        : (model.privateStakeTotal > 0 ? nil : "Stake ERTH privately, then lock it in a position, to take part."),
-                    onChanged: { Task { await streams.load(model: model) } },
-                    openPositions: !caretaker && openPositions
+                        : (model.privateStakeTotal > 0 ? nil : "Stake ERTH to take part."),
+                    onChanged: { Task { await streams.load(model: model) } }
                 )
                 .earthThemed()
             case .proposals:
@@ -231,10 +227,10 @@ final class StreamsModel {
 
         // Neither vote is filed under an address any more: the caretaker
         // split is cast anonymously (kept locally by the wallet), and
-        // Groundworks is the stake-weighted blend of this wallet's positions.
+        // Groundworks is the split this wallet's stake votes with.
         let caretakerSplit = model.privacy?.snapshot.caretakerSplit ?? [:]
         let mineCaretaker = caretakerSplit.sorted { $0.key < $1.key }.map { Allocation.Weight(optionID: $0.key, percent: $0.value) }
-        let mineGroundworks = positionSplit(model.positions.map(\.position))
+        let mineGroundworks = model.groundworksSplit
             .sorted { $0.key < $1.key }.map { Allocation.Weight(optionID: $0.key, percent: $0.value) }
         caretaker = State(stream: await caretakerStream, mine: mineCaretaker)
         groundworks = State(stream: await groundworksStream, mine: mineGroundworks)

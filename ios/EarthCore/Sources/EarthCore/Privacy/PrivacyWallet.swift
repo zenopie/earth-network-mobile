@@ -57,8 +57,6 @@ public final class PrivacyWallet: @unchecked Sendable {
     public static let fee = "uerth"
     public static let derthPrefix = "derth/"
     public static let lpPrefix = "dexlp/"
-    /// Owner-tag counters scanned past the highest known (PRIVACY_FORMATS.md 7).
-    public static let otagGap: UInt32 = 1024
     /// A pending registration whose tx failed in its block.
     public static let txFailed = "the registration tx failed"
     /// A register proof's public signals: [current_date, address, nullifier, dsc_key, idc].
@@ -174,6 +172,10 @@ public final class PrivacyWallet: @unchecked Sendable {
         /// Undelegations waiting for their payout (local only).
         public let pendingUnbonds: [PendingUnbond]
         public let syncedHeight: UInt64
+        /// The stake tree's synced height.
+        public let stakeSyncedHeight: UInt64
+        /// The Groundworks split this wallet votes with (empty: none).
+        public let groundworksSplit: [UInt64: UInt64]
         /// A committed registration whose leaf is not matched yet (nil: none), and why, if it failed.
         public let pendingRegistration: PendingRegistration?
         /// Until when a registration this wallet broadcast can still land (0: none ever).
@@ -209,6 +211,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             handle = s.handle; handleMovedOut = s.handleMovedOut
             caretakerSplitUnknown = s.caretakerSplitUnknown; pendingMoves = s.pendingMoves; switchTarget = s.switchTarget
             pendingUnbonds = s.pendingUnbonds; syncedHeight = s.notesHeight
+            stakeSyncedHeight = s.stakeHeight; groundworksSplit = s.groundworksSplit
             pendingRegistration = s.pendingRegistration; registrationKeepUntil = s.registrationKeepUntil; rootsVerified = s.rootsVerified; rootsError = s.rootsError
             identityStatus = WalletSync.identityStatus(store: store, keys: keys)
             self.maxActions = maxActions
@@ -478,11 +481,11 @@ public final class PrivacyWallet: @unchecked Sendable {
         let outs = a.bundles.flatMap { $0.actions.map(\.out) }
         let back = outs.filter { o in o.note.map { $0.pc(ownerPK: own) == o.pc } ?? false }
         var stakeBack: [ActivityCoin] = []
-        if let p = a.stake, let o = p.out, let d = p.denom { stakeBack.append(PrivateActivity.coin(d, o.amount)) }
+        if let p = a.stake { stakeBack.append(PrivateActivity.coin(p.denom, p.out.amount)) }
         if let c = a.stake?.credit { stakeBack.append(PrivateActivity.coin(c.denom, c.out.amount)) }
         let (o, i) = PrivateActivity.coins(poolSpent: PrivateActivity.ofNotes(a.spends), poolBack: back.map { PrivateActivity.coin($0.denom, $0.value) },
                                            stakeSpent: PrivateActivity.ofStake(a.stakeSpends), stakeBack: stakeBack, fee: a.fee)
-        let change = back.compactMap { $0.note?.rho.hex } + [a.stake?.out?.rho.hex, a.stake?.credit?.out.rho.hex].compactMap { $0 }
+        let change = back.compactMap { $0.note?.rho.hex } + [a.stake?.out.rho.hex, a.stake?.credit?.out.rho.hex].compactMap { $0 }
         let tx = SentPrivateTx(hash: hash, kind: act.kind, generation: store.state.generation, counterparty: act.counterparty, fee: a.fee,
                                submittedAt: now(), outs: o, ins: i, change: change, receives: act.receives.compactMap { $0.note?.rho.hex },
                                spent: (a.spends.map(\.nf) + a.stakeSpends.map(\.nf)).map(\.hex))
@@ -2127,7 +2130,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// less `vOut` into one note back to us (the change, or a zero note), the
     /// label kept or cleared (`clearOf`).
     private func laneA(_ denom: String, spends: [OwnedStakeNote], vIn: UInt64, vOut: UInt64, _ d: DebtView,
-                       salt: Fr = StakePlan.freshSalt(), credit: StakePlan.Credit? = nil) throws -> StakePlan {
+                       credit: StakePlan.Credit? = nil, gw: GroundworksContext = .none) throws -> StakePlan {
         let l = spends.compactMap(\.label).first
         let clear = try Self.clearOf(l, d)
         var amount = BigUInt(try Self.sum(spends))
@@ -2137,8 +2140,11 @@ public final class PrivacyWallet: @unchecked Sendable {
         amount -= BigUInt(vOut)
         try require(amount <= BigUInt(Int64.max), "a stake note holds at most 2^63-1")
         let out = try StakePlan.out(keys, denom: denom, amount: UInt64(amount), label: clear.clears ? nil : l)
+        // A split chosen: each output votes with it, when it weighs enough.
+        let vote = Self.votes(gw, denom: denom, unexposed: out.amount - (out.label?.exposed ?? 0))
+        let creditVote = credit.map { Self.votes(gw, denom: $0.denom, unexposed: $0.out.amount - $0.vIn) } ?? false
         return try StakePlan(nk: keys.nk, denom: denom, spends: spends, paths: spends.map { store.stakeTree.path($0.position) }, out: out,
-                             vIn: vIn, vOut: vOut, clear: clear, credit: credit, tagSalt: salt, anchor: stakeAnchor())
+                             vIn: vIn, vOut: vOut, clear: clear, credit: credit, vote: vote, creditVote: creditVote, anchor: stakeAnchor())
     }
 
     /// What a lane A clear gives up: the slash's cut of the cleared exposure (0 when nothing is cleared, or nothing was cut).
@@ -2250,10 +2256,11 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// outran the quote is refused in the ante: nothing spent, nothing paid.
     public func delegate(_ q: DelegateQuote) async throws -> TxResult {
         let mx = await maxActions()
+        let gw = try await groundworksContext()
         return try await locked {
             let denom = Self.derthDenom(q.validator)
             let d = try await debtView(spendableStake(denom))
-            let stake = try laneA(denom, spends: StakeSelection.merge(spendableStake(denom)) { Self.freeOf($0, d) }, vIn: q.derth, vOut: 0, d)
+            let stake = try laneA(denom, spends: StakeSelection.merge(spendableStake(denom)) { Self.freeOf($0, d) }, vIn: q.derth, vOut: 0, d, gw: gw)
             if Self.haircutOf(stake) > q.haircut {
                 throw QuoteChanged(message: "a slash reached stake you moved to this validator since the quote; review it again")
             }
@@ -2261,7 +2268,8 @@ public final class PrivacyWallet: @unchecked Sendable {
                 // The fee is the bundle's uerth balance less amount.
                 let b = try self.bundle(release: try Self.plus([Self.fee: q.amount], Self.fee, fee), maxActions: mx)
                 return Assembled(bundles: [b], stake: stake) { bs, sp, _ in
-                    MsgShieldedDelegate(bundle: bs[0], validator: q.validator, amount: q.amount, derth: q.derth, stake: sp!)
+                    MsgShieldedDelegate(bundle: bs[0], validator: q.validator, amount: q.amount, derth: q.derth, stake: sp!,
+                                        groundworksSplit: gw.split(for: stake))
                 }
             }
         }
@@ -2278,6 +2286,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// labelled; a closed window clears. One user tap; nothing merges by itself.
     public func restake(validator: String) async throws -> TxResult {
         let mx = await maxActions()
+        let gw = try await groundworksContext()
         return try await locked {
             let denom = Self.derthDenom(validator)
             let d = try await debtView(spendableStake(denom))
@@ -2286,10 +2295,10 @@ public final class PrivacyWallet: @unchecked Sendable {
                 throw PrivacyError(spendableStake(denom).count >= 2 ? "these notes each hold stake moved here recently; they merge once one of their windows closes"
                     : "nothing to merge")
             }
-            let stake = try laneA(denom, spends: two, vIn: 0, vOut: 0, d)
+            let stake = try laneA(denom, spends: two, vIn: 0, vOut: 0, d, gw: gw)
             return try await run(Act(kind: .restake, counterparty: validator)) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                    MsgRestake(bundle: bs[0], validator: validator, stake: sp!)
+                    MsgRestake(bundle: bs[0], validator: validator, stake: sp!, groundworksSplit: gw.split(for: stake))
                 }
             }
         }
@@ -2304,12 +2313,12 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// What leaving `amount` derth/`validator` (an undelegation or a lock)
     /// spends: the notes whose free value covers it, refused up front when
     /// the exposure a window keeps in place is what it would take.
-    private func leave(_ validator: String, amount: UInt64, _ d: DebtView, salt: Fr = StakePlan.freshSalt(),
-                       credit: StakePlan.Credit? = nil) throws -> StakePlan {
+    private func leave(_ validator: String, amount: UInt64, _ d: DebtView,
+                       credit: StakePlan.Credit? = nil, gw: GroundworksContext = .none) throws -> StakePlan {
         let denom = Self.derthDenom(validator)
         let notes = spendableStake(denom)
         let ins = try StakeSelection.cover(notes, amount: amount, free: { Self.freeOf($0, d) }) { Self.lockedText(notes, d) }
-        return try laneA(denom, spends: ins, vIn: 0, vOut: amount, d, salt: salt, credit: credit)
+        return try laneA(denom, spends: ins, vIn: 0, vOut: amount, d, credit: credit, gw: gw)
     }
 
     /// What leaving `amount` derth/`validator` costs beyond its fee: a cleared label's slash cut (0: none). Refuses as the tx would.
@@ -2364,9 +2373,10 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// (it would tie this wallet's IP to the undelegation).
     public func undelegate(validator: String, amount: UInt64, maxHaircut: UInt64 = .max) async throws -> TxResult {
         let mx = await maxActions()
+        let gw = try await groundworksContext()
         let r = try await locked { () -> TxResult in
             let d = try await debtView(spendableStake(Self.derthDenom(validator)))
-            let stake = try leave(validator, amount: amount, d)
+            let stake = try leave(validator, amount: amount, d, gw: gw)
             if Self.haircutOf(stake) > maxHaircut {
                 throw QuoteChanged(message: "a slash reached stake you moved to this validator since the sheet was shown; review it again")
             }
@@ -2381,7 +2391,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             }) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
                     MsgShieldedUndelegate(bundle: bs[0], validator: validator, amount: amount, stake: sp!, pc: pc.bytes,
-                                          ciphertext: payout.ciphertext)
+                                          ciphertext: payout.ciphertext, groundworksSplit: gw.split(for: stake))
                 }
             }
         }
@@ -2453,6 +2463,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// before any spend.
     public func redelegate(_ q: MoveQuote) async throws -> TxResult {
         let mx = await maxActions()
+        let gw = try await groundworksContext()
         return try await locked {
             let d = try await debtView(spendableStake(Self.derthDenom(q.src)))
             guard let moveTime = await roots.latestBlock()?.time, moveTime > 0 else {
@@ -2461,7 +2472,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let target = creditTarget(q.dst)
             let credit = try StakePlan.credit(keys, denom: Self.derthDenom(q.dst), spend: target,
                                               path: target.map { store.stakeTree.path($0.position) }, vIn: q.dstDerth, moveTime: moveTime)
-            let stake = try leave(q.src, amount: q.amount, d, credit: credit)
+            let stake = try leave(q.src, amount: q.amount, d, credit: credit, gw: gw)
             if Self.haircutOf(stake) > q.haircut {
                 throw QuoteChanged(message: "a slash reached stake you moved to this validator since the quote; review it again")
             }
@@ -2469,7 +2480,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake,
                           extraGas: Self.redelegateHeadroom(entries: q.pairEntries, counted: q.pairCounted)) { bs, sp, _ in
                     MsgRedelegate(bundle: bs[0], srcValidator: q.src, dstValidator: q.dst, amount: q.amount, stake: sp!,
-                                  dstDerth: q.dstDerth, moveTime: moveTime)
+                                  dstDerth: q.dstDerth, moveTime: moveTime, groundworksSplit: gw.split(for: stake))
                 }
             }
         }
@@ -2982,17 +2993,9 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// The positions that can vote on `proposalID`: created before the block
-    /// it entered voting at (the chain refuses later ones).
-    public static func votingPositions(_ positions: [PrivacyReads.Position], snapshot: PrivacyReads.Snapshot) -> [PrivacyReads.Position] {
-        positions.filter { snapshot.height <= 0 || $0.createdHeight < UInt64(snapshot.height) }
-    }
-
     /// What a stake vote on a proposal weighs, in uerth.
     public struct StakeWeight: Sendable, Equatable {
         public let notes: Int
-        /// The ids of the positions that can vote.
-        public let positionIDs: Set<UInt64>
         public let uerth: UInt64
     }
 
@@ -3009,14 +3012,13 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// This wallet's weight on `proposalID`: per validator, its eligible derth
     /// notes in votes of up to `MsgStakeVote.maxVoteNotes` (each the rounded
-    /// `voteWeight` of its notes' sum), and every position created before the
-    /// snapshot's block, each at its validator's rate (`rateFor`: the
-    /// snapshot's, else the live book's; a validator with neither adds nothing).
-    public func stakeVoteWeight(proposalID: UInt64, positions: [PrivacyReads.Position]) async throws -> StakeWeight {
+    /// `voteWeight` of its notes' sum), each at its validator's rate
+    /// (`rateFor`: the snapshot's, else the live book's; a validator with
+    /// neither adds nothing).
+    public func stakeVoteWeight(proposalID: UInt64) async throws -> StakeWeight {
         let snap = try await snapshot(proposalID: proposalID)
         let books = snap.rates.isEmpty ? try? await reads.validators() : nil
         let notes = await eligible(proposalID, snap)
-        let ps = Self.votingPositions(positions, snapshot: snap)
         let d = notes.contains(where: { $0.label != nil }) ? try? await locked { try await debtView(notes, always: true) } : nil
         var total: UInt64 = 0
         for (denom, ns) in Dictionary(grouping: notes, by: \.denom) {
@@ -3027,11 +3029,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                 total = PrivateMsgs.saturatingAdd(total, Self.derthValue(w, rate: rate))
             }
         }
-        for p in ps {
-            guard let rate = Self.rateFor(snap, p.validator, books) else { continue }
-            total = PrivateMsgs.saturatingAdd(total, Self.derthValue(p.derth, rate: rate))
-        }
-        return StakeWeight(notes: notes.count, positionIDs: Set(ps.map(\.id)), uerth: total)
+        return StakeWeight(notes: notes.count, uerth: total)
     }
 
     /// `ns` in votes of up to `MsgStakeVote.maxVoteNotes`, in order.
@@ -3041,10 +3039,9 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// One stake vote msg: a validator's eligible notes (one msg votes up to
     /// `MsgStakeVote.maxVoteNotes`; more take `parts` msgs, each its own
-    /// weight and fee), or a position.
+    /// weight and fee).
     public enum StakeVoteItem: Sendable, Equatable {
         case validator(String, notes: Int)
-        case position(id: UInt64, counter: UInt32)
 
         /// How many msgs the item takes.
         public var parts: Int {
@@ -3054,21 +3051,16 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     /// Every stake vote `proposalID` takes from this wallet: one per
-    /// validator with eligible derth notes, and one per position of ours that
-    /// may vote (created before the snapshot's block). Each is its own tx,
+    /// validator with eligible derth notes. Each is its own tx,
     /// confirmed and sent by the user one at a time (`castStakeVote`);
     /// nothing is cast for them in the background.
     public func stakeVoteItems(proposalID: UInt64) async throws -> [StakeVoteItem] {
         let snap = try await snapshot(proposalID: proposalID)
         let byValidator = Dictionary(grouping: await eligible(proposalID, snap)) { (try? Self.parseDerth($0.denom)) ?? "" }
-        var out: [StakeVoteItem] = byValidator.keys.sorted().map { .validator($0, notes: byValidator[$0]!.count) }
-        let mine = try await positions()
-        let voting = Set(Self.votingPositions(mine.map(\.position), snapshot: snap).map(\.id))
-        for p in mine where voting.contains(p.position.id) { out.append(.position(id: p.position.id, counter: p.counter)) }
-        return out
+        return byValidator.keys.sorted().map { .validator($0, notes: byValidator[$0]!.count) }
     }
 
-    /// What one stake vote weighs: the notes it carries (0 for a position) and the ERTH its weight is worth at the snapshot.
+    /// What one stake vote weighs: the notes it carries and the ERTH its weight is worth at the snapshot.
     public struct VotePreview: Sendable, Equatable {
         public let notes: Int
         public let uerth: UInt64
@@ -3090,11 +3082,6 @@ public final class PrivacyWallet: @unchecked Sendable {
             let books = snap.rates[v] == nil ? try? await reads.validators() : nil
             guard let rate = Self.rateFor(snap, v, books) else { return nil }
             return VotePreview(notes: part.count, uerth: Self.derthValue(w, rate: rate))
-        case let .position(id, _):
-            guard let p = try await positions().first(where: { $0.position.id == id })?.position else { return nil }
-            let books = snap.rates[p.validator] == nil ? try? await reads.validators() : nil
-            guard let rate = Self.rateFor(snap, p.validator, books) else { return nil }
-            return VotePreview(notes: 0, uerth: Self.derthValue(p.derth, rate: rate))
         }
     }
 
@@ -3111,9 +3098,8 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     /// Casts `item` as the last sync left things: a validator's next vote (up
-    /// to two notes) or a position's. Nil when there is nothing left of it to
-    /// cast (its notes already voted on this proposal, or were spent before
-    /// its snapshot; the position is gone).
+    /// to two notes). Nil when there is nothing left of it to cast (its notes
+    /// already voted on this proposal, or were spent before its snapshot).
     public func castStakeVote(proposalID: UInt64, item: StakeVoteItem, options: [WeightedVoteOption]) async throws -> TxResult? {
         switch item {
         case let .validator(v, _):
@@ -3126,169 +3112,235 @@ public final class PrivacyWallet: @unchecked Sendable {
             } catch is SpentBeforeSnapshot {
                 return nil
             }
-        case let .position(id, counter):
-            guard let p = try await positions().first(where: { $0.position.id == id && $0.counter == counter }) else { return nil }
-            return try await positionVote(p.position, counter: p.counter, proposalID: proposalID, options: options)
         }
     }
 
-    // MARK: - Groundworks positions
+    // MARK: - Groundworks votes
 
-    /// This wallet's Groundworks positions: the public positions whose owner
-    /// tag is one of ours (owner-tag counters 0 ... next + otagGap, extended
-    /// past every match, so a wallet restored from the mnemonic finds them
-    /// too), each with its counter, by position id.
-    public func positions() async throws -> [(position: PrivacyReads.Position, counter: UInt32)] {
-        let all = try await reads.positions()
-        return await locked { positionsLocked(all) }
+    /// What a stake tx votes in Groundworks with: the split the user chose
+    /// (empty: none), the chain's least vote weight (min_position) and the
+    /// validator list (each validator's epoch rate, what the chain weighs a
+    /// vote at). Read before the wallet lock: chain reads only.
+    struct GroundworksContext: Sendable {
+        let split: [UInt64: UInt64]
+        let min: UInt64
+        let list: PrivacyReads.ValidatorList?
+
+        static let none = GroundworksContext(split: [:], min: 0, list: nil)
+
+        /// The msg's split: the chosen one when an output of `plan` votes.
+        func split(for plan: StakePlan) -> [Msg.AllocationWeight] {
+            plan.vote || plan.creditVote ? PrivacyWallet.weights(split) : []
+        }
     }
 
-    private var otags: [UInt32: Fr] = [:]
-
-    private func ownerTag(_ c: UInt32) -> Fr {
-        if let t = otags[c] { return t }
-        let t = keys.ownerTag(c)
-        otags[c] = t
-        return t
+    /// A read that fails refuses the tx rather than send it without the
+    /// vote (its inputs' tags would cancel the vote held now). A split naming
+    /// an option the fund has since removed is refused by the chain: stake
+    /// moves go on without it (the Govern tab asks for a new split).
+    func groundworksContext() async throws -> GroundworksContext {
+        let (local, chosen) = await locked { (store.state.groundworksSplit, store.state.groundworksChosen) }
+        var split = local
+        if split.isEmpty, !chosen {
+            guard let all = try? await reads.groundworksVotes() else {
+                throw PrivacyError("could not read the Groundworks votes (to keep any of yours); try again")
+            }
+            split = await adopt(all)
+        }
+        guard !split.isEmpty else { return .none }
+        if let live = try? await reads.groundworksOptions(), !Set(split.keys).isSubset(of: live) { return .none }
+        guard let min = try? await reads.minGroundworksVote(), let list = try? await reads.validators() else {
+            throw PrivacyError("could not read what a Groundworks vote needs (to keep yours); try again")
+        }
+        return GroundworksContext(split: split, min: min, list: list)
     }
 
-    private func positionsLocked(_ all: [PrivacyReads.Position]) -> [(position: PrivacyReads.Position, counter: UInt32)] {
-        // A restored wallet knows the closed positions' counters from their unlock memos.
-        let closedNext = store.state.closedOtagMax.map { $0 == UInt32.max ? $0 : $0 + 1 } ?? 0
-        let next = max(store.state.nextOtagCounter, closedNext)
-        // Closed positions vanish from the chain, so the window must cross a
-        // run of them (and of failed locks) to reach a live one.
-        var limit = next.addingReportingOverflow(Self.otagGap).overflow ? UInt32.max : next + Self.otagGap
-        var out: [(position: PrivacyReads.Position, counter: UInt32)] = []
-        var from: UInt32 = 0
-        while from < limit {
-            var mine: [Fr: UInt32] = [:]
-            for c in from ..< limit { mine[ownerTag(c)] = c }
-            let found = all.compactMap { p in mine[p.ownerTag].map { (position: p, counter: $0) } }
-            out += found
-            from = limit
-            if let top = found.map(\.counter).max() {
-                let (want, o) = top.addingReportingOverflow(1 + Self.otagGap)
-                if !o, want > limit { limit = want }
+    /// Whether `split` names only options the Groundworks fund still has (nil: unknown).
+    public func groundworksSplitLive(_ split: [UInt64: UInt64]) async -> Bool? {
+        guard let live = try? await reads.groundworksOptions() else { return nil }
+        return Set(split.keys).isSubset(of: live)
+    }
+
+    /// Whether an output of `unexposed` derth of `denom` votes: a split is
+    /// chosen and the output weighs at least the minimum at its validator's
+    /// epoch rate (the chain refuses less).
+    static func votes(_ c: GroundworksContext, denom: String, unexposed: UInt64) -> Bool {
+        guard !c.split.isEmpty, unexposed > 0, let v = try? parseDerth(denom), let book = c.list?[v] else { return false }
+        return derthValue(unexposed, rate: book.epochRate) >= c.min
+    }
+
+    /// The Groundworks split this wallet votes with (empty: none). Every stake
+    /// tx carries it to the note it makes.
+    public var groundworksSplit: [UInt64: UInt64] { snapshot.groundworksSplit }
+
+    /// One of this wallet's Groundworks votes, as the chain stores it.
+    public struct GroundworksVoteView: Sendable, Equatable {
+        public let validator: String
+        public let derth: UInt64
+        /// derth x the validator's epoch rate (0 when a reset made it stale).
+        public let weight: UInt64
+        public let split: [UInt64: UInt64]
+        public let expiresAt: Int64
+    }
+
+    /// This wallet's live Groundworks votes: the chain's whole list (never a
+    /// query about one tag), matched against our notes' tags.
+    public func groundworksVotes() async throws -> [GroundworksVoteView] {
+        let all = try await reads.groundworksVotes()
+        _ = await adopt(all)
+        let mine = await myTags()
+        return all.filter { mine.contains($0.tag) }.map {
+            GroundworksVoteView(validator: $0.validator, derth: $0.derth, weight: $0.weight, split: $0.splits, expiresAt: $0.splitExpiresAt)
+        }
+    }
+
+    private func myTags() async -> Set<Fr> {
+        await locked { Set(store.state.stakeNotes.filter(\.spendable).map { PrivacyHash.stakeGW(nk: keys.nk, rho: $0.rho) }) }
+    }
+
+    /// The split to vote with: ours, or, when none is chosen here and the
+    /// chain holds a vote of ours (cast before a restore or on another
+    /// device), that vote's (the latest cast), remembered so the next stake
+    /// tx keeps voting rather than cancelling it.
+    private func adopt(_ all: [PrivacyReads.GroundworksVote]) async -> [UInt64: UInt64] {
+        let mine = await myTags()
+        return await locked {
+            guard !store.state.groundworksChosen, store.state.groundworksSplit.isEmpty else { return store.state.groundworksSplit }
+            guard let v = all.filter({ mine.contains($0.tag) && !$0.splits.isEmpty }).max(by: { $0.id < $1.id }) else { return [:] }
+            store.mutate { $0.groundworksSplit = v.splits; $0.groundworksExpiresAt = v.splitExpiresAt }
+            persistNoThrow()
+            return v.splits
+        }
+    }
+
+    /// This wallet's Groundworks vote's lease, for the reminder: the earliest
+    /// lease end among `votes` (ours, groundworksVotes), remembered; with
+    /// none left on chain while a split is chosen, the last seen (it lapsed).
+    /// Nil when no split is chosen.
+    public func groundworksLease(_ votes: [GroundworksVoteView]) async -> Reminders.GroundworksLease? {
+        await locked {
+            let split = store.state.groundworksSplit
+            guard !split.isEmpty else { return nil }
+            if let e = votes.map(\.expiresAt).filter({ $0 > 0 }).min() {
+                if e != store.state.groundworksExpiresAt {
+                    store.mutate { $0.groundworksExpiresAt = e }
+                    persistNoThrow()
+                }
+                return Reminders.GroundworksLease(expiresAt: e, held: true, split: split)
+            }
+            return Reminders.GroundworksLease(expiresAt: store.state.groundworksExpiresAt, held: false, split: split)
+        }
+    }
+
+    /// Votes every validator's stake of ours with `split` (or, empty, stops
+    /// voting): a restake per validator, its notes merged into one that
+    /// votes (or does not; more restakes while more notes can merge), and
+    /// from then on every stake tx carries the split.
+    /// Each restake is its own tx, sent in turn: the wallet syncs between
+    /// them, so each pays its fee from what the last one left.
+    public func castGroundworks(split: [UInt64: UInt64]) async throws -> [TxResult] {
+        // Refused up front rather than sent without the vote (which would
+        // cancel the one held): every option must still be live.
+        if !split.isEmpty {
+            let live: Set<UInt64>?
+            do { live = try await reads.groundworksOptions() } catch {
+                throw PrivacyError("could not read the Groundworks options; try again")
+            }
+            if let live, !Set(split.keys).isSubset(of: live) {
+                throw PrivacyError("an option in this split has been removed from the fund; choose another split")
             }
         }
-        let found = out.map(\.counter).max().map { $0 == UInt32.max ? $0 : $0 + 1 } ?? 0
-        let newNext = max(next, found)
-        var dirty = newNext > store.state.nextOtagCounter
-        if dirty { store.mutate { $0.nextOtagCounter = newNext } }
-        if rememberLeases(out.map(\.position)) { dirty = true }
-        if dirty { persistNoThrow() }
-        return out.sorted { $0.position.id < $1.position.id }
-    }
-
-    /// Keeps each of our positions' split and lease end as last seen, so a lapse (which the chain
-    /// records by clearing both) is still known: when, and which split to cast again. Closed
-    /// positions are forgotten. True when anything changed. Under `locked`.
-    private func rememberLeases(_ mine: [PrivacyReads.Position]) -> Bool {
-        let cap = Handles.satAdd(now(), Handles.maxAheadSeconds)
-        let ids = Set(mine.map(\.id))
-        return store.mutate { s -> Bool in
-            let before = s.positionLeases
-            s.positionLeases = s.positionLeases.filter { ids.contains($0.key) }
-            for p in mine where !p.splits.isEmpty && p.splitExpiresAt > 0 {
-                s.positionLeases[p.id] = PositionLease(expiresAt: min(p.splitExpiresAt, cap), split: p.splits)
-            }
-            return s.positionLeases != before
+        var validators = await locked {
+            Set(store.state.stakeNotes.filter { $0.spendable && $0.denom.hasPrefix(Self.derthPrefix) }.map(\.denom)).sorted()
         }
-    }
-
-    /// Each of `mine`'s (from `positions`) Groundworks lease: the chain's split and lease end while
-    /// it holds them, else the ones last seen here. From this wallet's own reads only; nothing is
-    /// asked about a position.
-    public func groundworksLeases(_ mine: [PrivacyReads.Position]) async -> [Reminders.GroundworksLease] {
-        let seen = await locked { store.state.positionLeases }
-        let cap = Handles.satAdd(now(), Handles.maxAheadSeconds)
-        return mine.map { p in
-            p.splits.isEmpty
-                ? Reminders.GroundworksLease(positionID: p.id, expiresAt: seen[p.id]?.expiresAt ?? 0, held: false, split: seen[p.id]?.split ?? [:])
-                : Reminders.GroundworksLease(positionID: p.id, expiresAt: min(p.splitExpiresAt, cap), held: true, split: p.splits)
-        }
-    }
-
-    /// Locks `amount` derth/`validator` into a new position split by `splits`, under a fresh owner tag.
-    public func lockPosition(validator: String, amount: UInt64, splits: [UInt64: UInt64]) async throws -> TxResult {
-        let mx = await maxActions()
-        let all = try await reads.positions()
-        return try await locked {
-            let d = try await debtView(spendableStake(Self.derthDenom(validator)))
-            // Refused up front, before a counter is taken, when moved-in stake whose window is open would have to leave.
-            _ = try leave(validator, amount: amount, d)
-            // A restored wallet's counter starts past every tag it already holds.
-            _ = positionsLocked(all)
-            let counter = store.mutate { s -> UInt32 in
-                let c = s.nextOtagCounter
-                s.nextOtagCounter += 1
-                return c
+        // A validator whose stake is too small to vote is skipped (a restake
+        // there would only cost a fee), unless a note there holds a vote to cancel.
+        if !split.isEmpty {
+            guard let min = try? await reads.minGroundworksVote(), let list = try? await reads.validators() else {
+                throw PrivacyError("could not read what a Groundworks vote needs; try again")
             }
+            let gw = GroundworksContext(split: split, min: min, list: list)
+            let all = try await reads.groundworksVotes()
+            let mine = await myTags()
+            let held = Set(all.filter { mine.contains($0.tag) }.map { Self.derthDenom($0.validator) })
+            let can: [String] = await locked {
+                validators.filter { d in
+                    Self.votes(gw, denom: d, unexposed: spendableStake(d).reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.amount) })
+                }
+            }
+            guard !can.isEmpty || validators.isEmpty else {
+                throw PrivacyError("the stake at each validator is below the least a Groundworks vote may weigh")
+            }
+            validators = validators.filter { can.contains($0) || held.contains($0) }
+        }
+        // Saved only once nothing refuses: a refused cast leaves the split as it was.
+        try await locked {
+            store.mutate { $0.groundworksSplit = split; $0.groundworksChosen = true }
             try store.save()
-            let stake = try leave(validator, amount: amount, d, salt: keys.otagSalt(counter))
-            let w = Self.weights(splits)
-            return try await run(Act(kind: .position, counterparty: "locked with \(validator)")) { fee in
-                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                    MsgLockPosition(bundle: bs[0], validator: validator, amount: amount, splits: w, stake: sp!)
+        }
+        var out: [TxResult] = []
+        for denom in validators {
+            let v = try Self.parseDerth(denom)
+            // A restake merges two notes: again while more can merge, so all of it votes.
+            for _ in 0 ..< 8 {
+                out.append(try await revote(validator: v))
+                try await syncThrough(out.last!)
+                if await mergeableStake(denom) < 2 { break }
+            }
+            // Notes no merge reaches (two labelled notes never pair) still
+            // holding another split: each respent alone, so none keeps it.
+            let all = try await reads.groundworksVotes()
+            let stale: [OwnedStakeNote] = await locked {
+                spendableStake(denom).filter { n in
+                    let tag = PrivacyHash.stakeGW(nk: keys.nk, rho: n.rho)
+                    return all.contains { $0.tag == tag && $0.splits != split }
                 }
             }
-        }
-    }
-
-    /// A position's own proof (its update, its vote): no notes, the position's owner tag, the chain's current clear_before and debt root.
-    private func ownerPlan(_ position: PrivacyReads.Position, counter: UInt32) async throws -> StakePlan {
-        guard keys.ownerTag(counter) == position.ownerTag else { throw PrivacyError("position \(position.id) is not owned by tag \(counter)") }
-        return try StakePlan(nk: keys.nk, denom: nil, spends: [], paths: [], out: nil, vIn: 0, vOut: 0, clear: try Self.clearOf(nil, try await debtView()),
-                             credit: nil, tagSalt: keys.otagSalt(counter), anchor: stakeAnchor())
-    }
-
-    public func updatePosition(_ position: PrivacyReads.Position, counter: UInt32, splits: [UInt64: UInt64]) async throws -> TxResult {
-        let mx = await maxActions()
-        return try await locked {
-            let stake = try await ownerPlan(position, counter: counter)
-            let w = Self.weights(splits)
-            return try await run(Act(kind: .position, counterparty: "updated position \(position.id)")) { fee in
-                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                    MsgUpdatePosition(bundle: bs[0], positionID: position.id, splits: w, stake: sp!)
-                }
+            for n in stale {
+                out.append(try await revote(validator: v, only: n))
+                try await syncThrough(out.last!)
             }
         }
+        return out
     }
 
-    /// Closes `position`: the stake proof (its owner tag) merges the
-    /// position's derth into our note at its validator, or pads when we hold
-    /// none there (ORCHARD_DESIGN 8.3). The fee bundle carries a value-0
-    /// record note to ourselves naming the closed counter, so no
-    /// restore ever locks under its tag again.
-    public func unlockPosition(_ position: PrivacyReads.Position, counter: UInt32) async throws -> TxResult {
-        let mx = await maxActions()
-        return try await locked {
-            guard keys.ownerTag(counter) == position.ownerTag else { throw PrivacyError("position \(position.id) is not owned by tag \(counter)") }
-            let denom = Self.derthDenom(position.validator)
+    /// How many of our notes of `denom` the next restake would spend.
+    private func mergeableStake(_ denom: String) async -> Int {
+        (try? await locked {
             let d = try await debtView(spendableStake(denom))
-            let stake = try laneA(denom, spends: StakeSelection.merge(spendableStake(denom)) { Self.freeOf($0, d) }, vIn: position.derth, vOut: 0, d,
-                                  salt: keys.otagSalt(counter))
-            let record = try NoteOut.to(keys.address, denom: Self.fee, value: 0, memo: WalletSync.unlockMemo(nk: keys.nk, counter: counter))
-            return try await run(Act(kind: .position, counterparty: "unlocked position \(position.id)")) { fee in
-                Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)], stake: stake) { bs, sp, _ in
-                    MsgUnlockPosition(bundle: bs[0], positionID: position.id, stake: sp!)
+            return StakeSelection.merge(spendableStake(denom)) { Self.freeOf($0, d) }.count
+        }) ?? 0
+    }
+
+    /// Respends our notes at `validator` onto one (merging up to two), voting
+    /// with the chosen split when it weighs enough: a vote cast, changed,
+    /// renewed or (no split) cancelled.
+    public func revote(validator: String, only: OwnedStakeNote? = nil) async throws -> TxResult {
+        let mx = await maxActions()
+        let gw = try await groundworksContext()
+        return try await locked {
+            let denom = Self.derthDenom(validator)
+            let d = try await debtView(spendableStake(denom))
+            let ins = only.map { n in spendableStake(denom).filter { $0.position == n.position } }
+                ?? StakeSelection.merge(spendableStake(denom)) { Self.freeOf($0, d) }
+            try require(!ins.isEmpty, "no stake at this validator")
+            let stake = try laneA(denom, spends: ins, vIn: 0, vOut: 0, d, gw: gw)
+            return try await run(Act(kind: .restake, counterparty: validator)) { fee in
+                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
+                    MsgRestake(bundle: bs[0], validator: validator, stake: sp!, groundworksSplit: gw.split(for: stake))
                 }
             }
         }
     }
 
-    public func positionVote(_ position: PrivacyReads.Position, counter: UInt32, proposalID: UInt64, options: [WeightedVoteOption],
-                             accepted: @escaping (String) -> Void = { _ in }) async throws -> TxResult {
-        let mx = await maxActions()
-        return try await locked {
-            let stake = try await ownerPlan(position, counter: counter)
-            return try await run(Act(kind: .vote, counterparty: "proposal \(proposalID), position \(position.id)"), accepted: { hash, _ in accepted(hash) }) { fee in
-                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                    MsgPositionVote(bundle: bs[0], positionID: position.id, proposalID: proposalID, options: try PrivateMsgs.canonicalOptions(options), stake: sp!)
-                }
-            }
+    /// Syncs until the wallet has seen `r`'s block (its notes in the trees), at most a minute.
+    func syncThrough(_ r: TxResult) async throws {
+        for _ in 0 ..< 30 {
+            try await sync()
+            if snapshot.syncedHeight >= r.height && snapshot.stakeSyncedHeight >= r.height { return }
+            try await Task.sleep(nanoseconds: 2_000_000_000)
         }
+        throw PrivacyError("the wallet has not caught up with block \(r.height) yet; try again")
     }
 
     // MARK: - dex

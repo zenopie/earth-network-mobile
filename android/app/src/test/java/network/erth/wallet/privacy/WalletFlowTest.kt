@@ -21,9 +21,9 @@ import java.math.BigInteger
  * Two wallets driven end to end against [FakeChain] on bundles and the stake
  * tree: gas grant, registration, claim, assembly vote, private sends of any
  * number of notes and assets, unshields, swaps, private LP add and remove,
- * delegate / restake / undelegate / claim, stake votes, Groundworks
- * positions, the personhood paths, and wallets restored from their mnemonics
- * finding everything again (stake notes and positions included).
+ * delegate / restake / undelegate / claim, stake votes, Groundworks votes,
+ * the personhood paths, and wallets restored from their mnemonics finding
+ * everything again (stake notes and Groundworks votes included).
  */
 class WalletFlowTest {
     private val alice = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
@@ -44,7 +44,9 @@ class WalletFlowTest {
         override fun epochNumber() = chain.epoch
         override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
         override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
-        override fun positions() = chain.positionReads()
+        override fun groundworksVotes() = chain.gwVoteReads()
+        override fun minGroundworksVote(): Long = if (chain.failMinVoteRead) throw java.io.IOException("node unreachable") else chain.minGroundworksVote
+        override fun groundworksOptions() = chain.gwOptions
         override fun debtTree(start: Long, limit: Int) = chain.debtTreeRead(start, limit)
         override fun validators() = chain.validatorsRead()
         override fun minDelegation() = chain.minDelegation
@@ -181,7 +183,7 @@ class WalletFlowTest {
     }
 
     /**
-     * The dex, LP, staking, positions and personhood paths with two wallets.
+     * The dex, LP, staking, Groundworks and personhood paths with two wallets.
      */
     @Test
     fun dexStakingPositionsAndPersonhood() {
@@ -271,27 +273,22 @@ class WalletFlowTest {
         assertEquals(held + 90_000 - 1, total)
         assertEquals(1, a.stakeNotes.count { it.spendable })
 
-        // Groundworks: lock a position (owner tag), re-split, vote, unlock.
-        a.lockPosition(validator, 1_000_000, mapOf(2L to 60L, 5L to 40L))
-        a.sync()
-        assertEquals(total - 1_000_000, bal(a, derth))
-        val (pos, tag) = a.positions().single()
-        assertEquals(mapOf(2L to 60L, 5L to 40L), pos.splits)
-        a.updatePosition(pos, tag, mapOf(2L to 100L))
-        assertEquals(mapOf(2L to 100L), chain.positions.getValue(pos.id).splits)
-        a.positionVote(a.positions().single().first, tag, 9, yes)
-        assertEquals(9L, chain.positionVotes.single().second)
-        // Only its owner can move it.
-        assertThrows(IllegalStateException::class.java) { b.updatePosition(pos, 0, mapOf(2L to 100L)) }
-        // Unlocking merges the position's derth back into the note; the fee bundle records the closed counter.
-        a.unlockPosition(a.positions().single().first, tag)
-        a.sync()
-        assertTrue(a.positions().isEmpty())
+        // Groundworks: vote the stake with a split, change it, stop.
+        chain.minGroundworksVote = 100_000
+        a.castGroundworks(mapOf(2L to 60L, 5L to 40L))
+        var votes = a.groundworksVotes()
+        assertEquals(listOf(mapOf(2L to 60L, 5L to 40L)), votes.map { it.split })
+        assertEquals(total, votes[0].derth)
+        a.castGroundworks(mapOf(2L to 100L))
+        votes = a.groundworksVotes()
+        assertEquals(listOf(mapOf(2L to 100L)), votes.map { it.split })
+        assertEquals(1, chain.gwVotes.size)
+        // b sees none of a's.
+        assertTrue(b.groundworksVotes().isEmpty())
+        a.castGroundworks(emptyMap())
+        assertTrue(chain.gwVotes.isEmpty())
         assertEquals(total, bal(a, derth))
         assertEquals(1, a.stakeNotes.count { it.spendable })
-        val restoredA = wallet(chain, alice)
-        restoredA.sync()
-        assertEquals(tag, restoredA.store.state.closedOtagMax)
 
         // Stake votes: the derth note from before the snapshot, one vote per validator, its rounded amount.
         a.sync()
@@ -416,20 +413,12 @@ class WalletFlowTest {
     }
 }
 
-/** derth is valued at rate_v, floored as the chain floors it; a vote weighs what the snapshot admits. */
+/** derth is valued at rate_v, floored as the chain floors it. */
 class StakeValueTest {
     @Test
     fun derthValueFloorsAtTheRate() {
         assertEquals(1_050_000L, PrivacyWallet.derthValue(1_000_000, java.math.BigDecimal("1.05")))
         assertEquals(1L, PrivacyWallet.derthValue(3, java.math.BigDecimal("0.5")))
         assertEquals(999_999L, PrivacyWallet.derthValue(999_999, java.math.BigDecimal("1.000001000001000001")))
-    }
-
-    @Test
-    fun positionsFromBeforeTheSnapshotVote() {
-        fun pos(id: Long, h: Long) = PrivacyChainReads.Position(id, "v", 1, Fr.ZERO, emptyMap(), h)
-        val snap = PrivacyChainReads.Snapshot(Fr.ZERO, 0, height = 100)
-        assertEquals(listOf(1L), PrivacyWallet.votingPositions(listOf(pos(1, 99), pos(2, 100), pos(3, 101)), snap).map { it.id })
-        assertEquals(2, PrivacyWallet.votingPositions(listOf(pos(1, 99), pos(2, 100)), PrivacyChainReads.Snapshot(Fr.ZERO, 0)).size)
     }
 }

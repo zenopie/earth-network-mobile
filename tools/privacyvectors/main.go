@@ -105,11 +105,14 @@ func moveProof(seed uint64) personhoodtypes.MoveProof {
 
 // stakeProof is a well-formed stake proof: spends lane A nullifiers (one or
 // two), creates lane A's output, credits fills the credit lane, clears names
-// a clear_before and debt root. Ciphertexts are 201-byte stand-ins.
+// a clear_before and debt root. Every lane A input publishes its Groundworks
+// tag (padding its own). Ciphertexts are 201-byte stand-ins.
 func stakeProof(seed uint64, spends int, creates, credits, clears bool) stakingtypes.StakeProof {
 	zero := make([]byte, 32)
-	p := stakingtypes.StakeProof{Proof: []byte{0x5e, byte(seed)}, Anchor: fb(seed), OwnerTag: fb(seed + 8),
-		Commitment: zero, CreditNullifier: zero, CreditCommitment: zero, DebtRoot: zero}
+	p := stakingtypes.StakeProof{Proof: []byte{0x5e, byte(seed)}, Anchor: fb(seed),
+		GroundworksTags: [][]byte{fb(seed + 8), fb(seed + 9)},
+		Commitment: zero, CreditNullifier: zero, CreditCommitment: zero, DebtRoot: zero,
+		CreditGroundworksTag: zero, VoteTag: zero, CreditVoteTag: zero}
 	for i := 0; i < 2; i++ {
 		nf := zero
 		if i < spends {
@@ -122,9 +125,20 @@ func stakeProof(seed uint64, spends int, creates, credits, clears bool) stakingt
 	}
 	if credits {
 		p.CreditNullifier, p.CreditCommitment, p.CreditCiphertext = fb(seed+4), fb(seed+5), sct(byte(seed+1))
+		p.CreditGroundworksTag = fb(seed + 10)
 	}
 	if clears {
 		p.ClearBefore, p.DebtRoot = 1_790_000_000+seed, fb(seed+6)
+	}
+	return p
+}
+
+// voting is p with its outputs voting in Groundworks: lane A's output (tag
+// seed+11, weight w), and the credit lane's (seed+12, cw) when cw > 0.
+func voting(p stakingtypes.StakeProof, seed, w, cw uint64) stakingtypes.StakeProof {
+	p.VoteTag, p.VoteWeight = fb(seed+11), w
+	if cw > 0 {
+		p.CreditVoteTag, p.CreditVoteWeight = fb(seed+12), cw
 	}
 	return p
 }
@@ -191,7 +205,7 @@ func main() {
 		"sn": hx(privacy.TagSN), "pc": hx(privacy.TagPC), "cm": hx(privacy.TagCM), "nf": hx(privacy.TagNF),
 		"reg": hx(privacy.TagReg), "asset": hx(privacy.TagAsset), "signal": hx(privacy.TagSignal),
 		"bytes": hx(privacy.TagBytes), "scope": hx(privacy.TagScope), "affiliate": hx(privacy.TagAffiliate), "referral": hx(privacy.TagReferral),
-		"stake": hx(privacy.TagStake), "spc": hx(privacy.TagSPC), "snf": hx(privacy.TagSNF), "otag": hx(privacy.TagOTag),
+		"stake": hx(privacy.TagStake), "spc": hx(privacy.TagSPC), "snf": hx(privacy.TagSNF), "otag": hx(privacy.TagOTag), "gw": hx(privacy.TagGW),
 		"snfl": hx(privacy.TagSNFL), "vnf": hx(privacy.TagVNF), "slabel": hx(privacy.TagSLabel), "debtl": hx(privacy.TagDebtL),
 		"gen": hx(orchard.TagGen), "cv_r": hx(orchard.TagCvR), "bsig": hx(orchard.TagBsig), "bundle": hx(orchard.TagBundle),
 	}
@@ -247,8 +261,8 @@ func main() {
 		"stake_label_4d4b": hx(privacy.StakeLabel(u(0x4d4b), 1000, 200)),
 		"stake_cm_1_2_3_4": hx(privacy.StakeCM(u(1), 2, u(3), u(4))),
 		"stake_nf":  hx(privacy.StakeNF(nk, rho, 4_000_000_000)),
-		"otag_salt": hx(fe(1006)),
-		"otag":      hx(privacy.OwnerTag(opk, fe(1006))),
+		"stake_gw":  hx(privacy.StakeGW(nk, rho)),
+		"stake_gw_1_2": hx(privacy.StakeGW(u(1), u(2))),
 		"nf_leaf_1_2_3": hx(privacy.NFLeaf(u(1), u(2), 3)),
 		"nf_leaf":   hx(privacy.NFLeaf(fe(1007), fe(1008), 4_000_000_000)),
 		"vote_nf":   hx(privacy.VoteNF(nk, rho, 4_000_000_000, 5)),
@@ -646,10 +660,12 @@ func main() {
 	}
 	out["round_vote_weight"] = rw
 	splits := []allocationtypes.AllocationWeight{{OptionId: 2, Percent: 100}}
-	add("lock_position", &stakingtypes.MsgLockPosition{Bundle: fee(140, 2000), Validator: val, Amount: 400000, Splits: splits, Stake: stakeProof(140, 1, true, false, true)})
-	add("update_position", &stakingtypes.MsgUpdatePosition{Bundle: fee(150, 2000), PositionId: 9, Splits: splits, Stake: stakeProof(150, 0, false, false, true)})
-	add("unlock_position", &stakingtypes.MsgUnlockPosition{Bundle: fee(160, 2000), PositionId: 9, Stake: stakeProof(160, 1, true, false, true)})
-	add("position_vote", &stakingtypes.MsgPositionVote{Bundle: fee(170, 2000), PositionId: 9, ProposalId: 5, Options: opts, Stake: stakeProof(170, 0, false, false, true)})
+	// Groundworks votes: the output votes with the msg's split.
+	add("delegate_vote", &stakingtypes.MsgDelegate{Bundle: fee(140, 502000), Validator: val, Amount: 500000, Derth: 449_995,
+		Stake: voting(stakeProof(140, 1, true, false, true), 140, 849_995, 0), GroundworksSplit: splits})
+	add("restake_vote", &stakingtypes.MsgRestake{Bundle: fee(150, 2000), Validator: val, Stake: voting(stakeProof(150, 2, true, false, true), 150, 1_200_000, 0), GroundworksSplit: splits})
+	add("undelegate_vote", &stakingtypes.MsgUndelegate{Bundle: fee(160, 2000), Validator: val, Amount: 400000,
+		Stake: voting(stakeProof(160, 1, true, false, true), 160, 600_000, 0), Pc: fb(161), Ciphertext: bct(161), GroundworksSplit: splits})
 	val2raw := make([]byte, 20)
 	for i := range val2raw {
 		val2raw[i] = byte(i + 1)
@@ -658,7 +674,10 @@ func main() {
 	must(err)
 	add("redelegate", &stakingtypes.MsgRedelegate{Bundle: fee(175, 2000), SrcValidator: val, DstValidator: val2, Amount: 400000,
 		Stake: stakeProof(175, 1, true, true, true), DstDerth: 380_000, MoveTime: 1_790_000_123})
-	sp := stakeProof(175, 1, true, true, true)
+	add("redelegate_vote", &stakingtypes.MsgRedelegate{Bundle: fee(170, 2000), SrcValidator: val, DstValidator: val2, Amount: 400000,
+		Stake: voting(stakeProof(170, 1, true, true, true), 170, 500_000, 380_000), DstDerth: 380_000, MoveTime: 1_790_000_123,
+		GroundworksSplit: splits})
+	sp := voting(stakeProof(175, 1, true, true, true), 175, 500_000, 380_000)
 	sf := sp.StakeFields()
 	sfs := make([]string, len(sf))
 	for i := range sf {
@@ -672,6 +691,8 @@ func main() {
 			"delegate":   &stakingtypes.MsgDelegate{Validator: val, Amount: 500000, Derth: 449_995, Stake: stakeProof(90, 1, true, false, true)},
 			"undelegate": &stakingtypes.MsgUndelegate{Validator: val, Amount: 400000, Stake: stakeProof(100, 1, true, false, true)},
 			"redelegate": &stakingtypes.MsgRedelegate{SrcValidator: val, DstValidator: val2, Amount: 400000, Stake: stakeProof(175, 1, true, true, true), DstDerth: 380_000, MoveTime: 1_790_000_123},
+			"redelegate_vote": &stakingtypes.MsgRedelegate{SrcValidator: val, DstValidator: val2, Amount: 400000,
+				Stake: voting(stakeProof(170, 1, true, true, true), 170, 500_000, 380_000), DstDerth: 380_000, MoveTime: 1_790_000_123, GroundworksSplit: splits},
 		} {
 			p := m.StakeProofOf()
 			in := p.PublicInputs(m.StakeLanes(), fe(77))

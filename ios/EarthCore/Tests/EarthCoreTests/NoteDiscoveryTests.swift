@@ -78,9 +78,11 @@ final class NoteDiscoveryTests: PrivacyTestCase {
         let m = MsgRemoveLiquidityShielded(bundle: b, poolID: 1, erthPC: Data(), tokenPC: Data())
         XCTAssertEqual(UInt64.max, m.privateFee)
         let d = MsgShieldedDelegate(bundle: ShieldedBundle(balances: [ValueBalance(denom: "uerth", amount: 5)]), validator: validator, amount: 9,
-                                    derth: 8, stake: StakeProof(proof: Data(), anchor: Data(), nullifiers: [], ownerTag: Data(), commitment: Data(),
+                                    derth: 8, stake: StakeProof(proof: Data(), anchor: Data(), nullifiers: [], commitment: Data(),
                                                                 ciphertext: Data(), creditNullifier: Data(), creditCommitment: Data(),
-                                                                creditCiphertext: Data(), clearBefore: 0, debtRoot: Data()))
+                                                                creditCiphertext: Data(), clearBefore: 0, debtRoot: Data(), groundworksTags: [],
+                                                                creditGroundworksTag: Data(), voteTag: Data(), voteWeight: 0,
+                                                                creditVoteTag: Data(), creditVoteWeight: 0))
         XCTAssertEqual(0, d.privateFee)
     }
 }

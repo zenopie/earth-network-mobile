@@ -97,6 +97,8 @@ public enum ValidatorPages {
             throw PrivacyError("\(op)'s rate is not a non-negative decimal")
         }
         let commission = Double(str(st.commission.commission_rates.rate)).flatMap { (0 ... 1).contains($0) ? $0 : nil } ?? 0
+        // The rate at the last epoch end: what a Groundworks vote weighs at (1 before the first).
+        let epochRate = Decimal(string: str(v.book.epoch_rate), locale: Locale(identifier: "en_US_POSIX")).flatMap { !$0.isNaN && $0 > 0 ? $0 : nil } ?? 1
         return PrivacyReads.ValidatorQuote(
             validator: op,
             backing: try int(v.backing, "backing"),
@@ -106,6 +108,7 @@ public enum ValidatorPages {
             delegation: try int(v.delegation, "delegation"),
             rewards: try int(v.rewards, "rewards"),
             rate: rate,
+            epochRate: epochRate,
             // A book whose validator x/staking removed: no status.
             status: stOp.isEmpty ? "" : str(st.status),
             jailed: !stOp.isEmpty && st.jailed.bool(default: false),

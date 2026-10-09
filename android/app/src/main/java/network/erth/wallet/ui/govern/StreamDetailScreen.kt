@@ -25,8 +25,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import network.erth.wallet.ui.components.PieChart
 import network.erth.wallet.ui.components.PieLegend
+import network.erth.wallet.privacy.Reminders
 import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.designsystem.component.EarthButton
+import network.erth.wallet.ui.designsystem.component.EarthButtonDefaults
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import network.erth.wallet.ui.theme.EarthTheme
@@ -45,6 +47,10 @@ private enum class Lens { Actual, Preferred }
  *
  * Two pie charts, not one bar of your own split: the comparison is the
  * point.
+ *
+ * [groundworks]: the Groundworks vote's controls ([GroundworksVoteControls]),
+ * shown under both lenses in place of the allocation button: the lease and
+ * its renewal are not a chart's.
  */
 @Composable
 fun StreamDetailScreen(
@@ -54,6 +60,7 @@ fun StreamDetailScreen(
     eligibility: String?,
     onEdit: () -> Unit,
     modifier: Modifier = Modifier,
+    groundworks: (@Composable () -> Unit)? = null,
 ) {
     val dimens = EarthTheme.dimens
     var lens by remember { mutableStateOf(Lens.Actual) }
@@ -136,7 +143,13 @@ fun StreamDetailScreen(
         // Only under Preferred. Actual is the whole stream's tally — a vote
         // button there would sit under a chart it cannot change, and read as
         // editing everyone's split rather than your own.
-        if (lens == Lens.Preferred && eligibility == null) {
+        if (groundworks != null) {
+            // Your stake votes: every stake tx carries the split onto the note it makes.
+            if (eligibility == null) {
+                Spacer(Modifier.height(dimens.space24))
+                groundworks()
+            }
+        } else if (lens == Lens.Preferred && eligibility == null) {
             Spacer(Modifier.height(dimens.space24))
             EarthButton(
                 text = if (stream.slices.isEmpty()) "Allocate" else "Change allocation",
@@ -180,3 +193,94 @@ private fun LensTab(
             .padding(vertical = dimens.space8),
     )
 }
+
+/**
+ * The Groundworks vote: Vote / Change vote, when it counts until, Renew when
+ * due or lapsed, Stop voting. Each is one confirmation; nothing renews on its
+ * own. [split]: the one this wallet votes with (empty: none); [lease]: its
+ * lease (PrivacyWallet.groundworksLease; null when no split is chosen).
+ */
+@Composable
+fun GroundworksVoteControls(
+    split: Map<Long, Long>,
+    lease: Reminders.GroundworksLease?,
+    options: List<network.erth.wallet.chain.Allocation.OptionInfo>,
+    now: Long,
+    /** What this wallet's live votes weigh and its private stake, in uerth at the live rates; null when balances are hidden. */
+    voting: Pair<Long, Long>?,
+    onVote: () -> Unit,
+    onRenew: (Map<Long, Long>) -> Unit,
+    onStop: () -> Unit,
+) {
+    val dimens = EarthTheme.dimens
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        EarthButton(
+            text = if (split.isEmpty()) "Vote" else "Change vote",
+            onClick = onVote,
+            modifier = Modifier.fillMaxWidth(),
+            colors = brandButtonColors(),
+        )
+        // The split names an option the fund no longer has, struck (still listed, removed) or pruned (gone): the chain refuses it as it is.
+        fun removed(s: Map<Long, Long>) = options.isNotEmpty() && s.keys.any { id -> options.none { it.id == id && !it.removed } }
+        if (split.isNotEmpty() && removed(split)) {
+            Spacer(Modifier.height(dimens.space12))
+            Text(
+                text = "An option you chose was removed. Vote again to keep counting.",
+                style = EarthTypography.textSm,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                color = network.erth.wallet.ui.theme.EarthAccent.warnInk,
+            )
+        } else if (split.isNotEmpty() && voting != null) {
+            Spacer(Modifier.height(dimens.space12))
+            Text(
+                text = "Voting ${"%,d".format(voting.first / 1_000_000)} of ${"%,d".format(voting.second / 1_000_000)} ERTH",
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textTertiary,
+            )
+        }
+        if (lease != null) {
+            val lapsed = lease.lapsed(now)
+            if (lapsed) {
+                Spacer(Modifier.height(dimens.space12))
+                Text(
+                    text = "Your vote has lapsed",
+                    style = EarthTypography.textSm,
+                    fontWeight = FontWeight.SemiBold,
+                    color = network.erth.wallet.ui.theme.EarthAccent.warnInk,
+                )
+            } else if (lease.expiresAt > 0) {
+                Spacer(Modifier.height(dimens.space12))
+                Text(
+                    text = "Counts until ${countsUntil(lease.expiresAt)}",
+                    style = EarthTypography.textSm,
+                    color = EarthColors.Text.textTertiary,
+                )
+            }
+            // A split naming an option the fund has since removed cannot be cast again as it is.
+            if ((lapsed || lease.renewalDue(now)) && !removed(lease.split)) {
+                Spacer(Modifier.height(dimens.space12))
+                EarthButton(
+                    text = "Renew",
+                    onClick = { onRenew(lease.split) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = EarthButtonDefaults.secondaryColors(),
+                )
+            }
+        }
+        if (split.isNotEmpty()) {
+            Spacer(Modifier.height(dimens.space12))
+            Text(
+                text = "Stop voting",
+                style = EarthTypography.textSm,
+                fontWeight = FontWeight.SemiBold,
+                color = EarthColors.Text.textTertiary,
+                modifier = Modifier.clip(RoundedCornerShape(dimens.space8)).clickable(onClick = onStop).padding(dimens.space4),
+            )
+        }
+    }
+}
+
+/** A lease end as a date: "28 Oct 2027". */
+private fun countsUntil(unix: Long): String =
+    java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(unix.coerceIn(0, 253_402_300_799) * 1000))

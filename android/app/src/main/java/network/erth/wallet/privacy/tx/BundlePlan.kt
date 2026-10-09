@@ -287,7 +287,7 @@ object StakeSelection {
     }
 
     /**
-     * What a merge spends (a delegation's, an unlock's, a restake's): up to
+     * What a merge spends (a delegation's, a restake's, a revote's): up to
      * two of [notes], at most one labelled, the most value first. Empty when
      * there is none (the proof pads).
      */

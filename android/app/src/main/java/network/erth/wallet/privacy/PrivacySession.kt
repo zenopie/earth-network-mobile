@@ -419,9 +419,13 @@ object PrivacySession {
             PrivacyChainReads.NfTreePage(it.values, it.size)
         }
 
-        override fun positions() = PrivacyQueries.positions().map {
-            PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight, it.splitExpiresAt)
+        override fun groundworksVotes() = PrivacyQueries.groundworksVotes().map {
+            PrivacyChainReads.GroundworksVote(it.id, it.validator, it.derth, it.weight, it.tag, it.splits, it.splitExpiresAt)
         }
+
+        override fun minGroundworksVote(): Long = PrivacyQueries.minGroundworksVote()
+
+        override fun groundworksOptions(): Set<Long> = PrivacyQueries.groundworksOptions()
 
         override fun debtTree(start: Long, limit: Int) = PrivacyQueries.debtTree(start, limit)
 

@@ -26,11 +26,6 @@ final class KeysAndNotesTests: XCTestCase {
         XCTAssertEqual(Self.knownAddress, keys.address.encode())
         XCTAssertEqual(PrivacyHash.idc(keys.idSecret), keys.idc)
         XCTAssertNotEqual(keys.idSecret, other.idSecret)
-        // Owner-tag salts (PRIVACY_FORMATS.md section 2), cross-checked with an independent Python HMAC
-        // derivation.
-        XCTAssertEqual("0685f54037389aaceee42288ed8c8c996a884e297ffee771c73370ca885e1618", keys.otagSalt(0).hex)
-        XCTAssertEqual("2e52e73b7af259664a34df8bcee1c0476009a37e0ab2e52b285bae497845a9ba", keys.otagSalt(1).hex)
-        XCTAssertEqual(PrivacyHash.ownerTag(ownerPK: keys.ownerPK, salt: keys.otagSalt(1)), keys.ownerTag(1))
     }
 
     func testAddressRoundTrip() throws {

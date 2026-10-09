@@ -26,16 +26,18 @@ object PrivacyProver {
         // Every kind asks the same SRS: bb honours only a process's first SRS
         // initialization, so whichever proves first sizes it for all five.
         // The hint must be at least the largest circuit's dyadic size: vote
-        // (21,716 gates with two labelled slots) is a 2^15
-        // circuit; membership 5,659, move 8,362, action 8,098 and stake 16,242 are 2^14.
+        // (21,716 gates with two labelled slots) and stake (16,574 with its
+        // Groundworks tags) are 2^15 circuits; membership 5,659, move 8,362
+        // and action 8,098 are 2^14.
         // The bundled 2^15 + 1 points cover them all.
         MEMBERSHIP("membership", SRS_SIZE, 8),
         // root, scope, old_nullifier, new_nullifier, signal.
         MOVE("move", SRS_SIZE, 5),
         ACTION("action", SRS_SIZE, 6),
         // anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before,
-        // debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash.
-        STAKE("stake", SRS_SIZE, 16),
+        // debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, gw_0, gw_1,
+        // cr_gw, gw_out, w_out, cr_gw_out, cr_w_out, sighash.
+        STAKE("stake", SRS_SIZE, 22),
         // note_root, nf_root, debt_root, asset, weight, proposal_id, vnf[0..1], sighash.
         VOTE("vote", SRS_SIZE, 9),
     }

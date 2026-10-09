@@ -197,13 +197,14 @@ public struct PrivateTxEngine: Sendable {
     public static let actionGas: UInt64 = 2_300_000
     /// A stake proof (PRIVACY_FORMATS 11): its proof (2,000,000), two note
     /// writes per lane A nullifier slot and one for its output (the indexed
-    /// nullifier tree rewrites two paths an insert), 5 x 150,000, and the
-    /// msg's base (at most 400,000; the chain's PrivateActionGas).
-    public static let stakeGas: UInt64 = 3_150_000
-    /// A credit lane (a redelegation's), 750,000: its three note writes, and
-    /// the 300,000 by which MsgRedelegate's base (700,000) exceeds the
-    /// 400,000 in `stakeGas`.
-    public static let creditGas: UInt64 = 3 * 150_000 + 300_000
+    /// nullifier tree rewrites two paths an insert), 5 x 150,000, the
+    /// msg's base (at most 600,000, a delegation's; the chain's
+    /// PrivateActionGas) and its Groundworks effect (300,000, voting or not).
+    public static let stakeGas: UInt64 = 3_650_000
+    /// A credit lane (a redelegation's), 550,000: its three note writes, and
+    /// the 100,000 by which MsgRedelegate's base (700,000) exceeds the
+    /// 600,000 in `stakeGas`.
+    public static let creditGas: UInt64 = 3 * 150_000 + 100_000
     /// MsgRedelegate's gas for the (src, dst) pair's x/staking record at its
     /// worst (the chain's redelegateGas): 2,500 an entry read and written,
     /// 2,500 more each while the pair is at its 1,024-entry cap, and 128
@@ -413,8 +414,9 @@ public struct PrivateTxEngine: Sendable {
             }
         }
         if let p = msg.stakeProof {
-            guard p.nullifiers.count == 2 else { throw PrivacyError("a stake proof carries two nullifiers") }
-            for f in p.nullifiers + [p.anchor, p.ownerTag, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot] where f.count != 32 {
+            guard p.nullifiers.count == 2, p.groundworksTags.count == 2 else { throw PrivacyError("a stake proof carries two nullifiers and two tags") }
+            for f in p.nullifiers + p.groundworksTags + [p.anchor, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot,
+                                                         p.creditGroundworksTag, p.voteTag, p.creditVoteTag] where f.count != 32 {
                 throw PrivacyError("a stake proof field is \(f.count) bytes")
             }
             for (cm, ct) in [(p.commitment, p.ciphertext), (p.creditCommitment, p.creditCiphertext)] {
@@ -470,6 +472,13 @@ public struct PrivateTxEngine: Sendable {
                 // A zero marks an unused slot and stays.
                 for i in p.nullifiers.indices where !p.nullifiers[i].allSatisfy({ $0 == 0 }) { p.nullifiers[i] = NotePlaintext.randomField().bytes }
                 if !p.creditNullifier.allSatisfy({ $0 == 0 }) { p.creditNullifier = NotePlaintext.randomField().bytes }
+                // The Groundworks tags too: a quote never shows the node which
+                // stored vote a note holds (gas does not depend on them).
+                func fresh(_ b: Data) -> Data { b.allSatisfy { $0 == 0 } ? b : NotePlaintext.randomField().bytes }
+                p.groundworksTags = p.groundworksTags.map(fresh)
+                p.creditGroundworksTag = fresh(p.creditGroundworksTag)
+                p.voteTag = fresh(p.voteTag)
+                p.creditVoteTag = fresh(p.creditVoteTag)
                 stake = p
             }
         }

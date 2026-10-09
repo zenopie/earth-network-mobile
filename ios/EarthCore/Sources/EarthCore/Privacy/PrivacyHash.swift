@@ -29,7 +29,8 @@ public enum PrivacyHash {
     public static let tagStake = tag("earth.stake")
     public static let tagSPC = tag("earth.spc")
     public static let tagSNF = tag("earth.snf")
-    public static let tagOTag = tag("earth.otag")
+    public static let tagOTag = tag("earth.otag") // retired (Groundworks positions); never reuse
+    public static let tagGW = tag("earth.gw")
     // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 3.4, 8.5).
     public static let tagSNFL = tag("earth.snfl")
     public static let tagVNF = tag("earth.vnf")
@@ -39,7 +40,7 @@ public enum PrivacyHash {
     public static let tagDebtL = tag("earth.debtl")
     // Wallet-defined (PRIVACY_FORMATS.md 6): the registration record's and an unlock memo's tags.
     public static let tagRecTag = tag("earth.rectag")
-    public static let tagUnlockTag = tag("earth.unlocktag")
+    public static let tagUnlockTag = tag("earth.unlocktag") // retired (position unlock records); never reuse
     // Wallet-defined (PRIVACY_FORMATS.md 6): a handle or caretaker state record's tag.
     public static let tagStateTag = tag("earth.statetag")
 
@@ -132,8 +133,9 @@ public enum PrivacyHash {
         h(tagVPad, nk, r, u64(proposalID))
     }
 
-    /// A Groundworks position's owner tag: H(TAG_OTAG, owner_pk, salt).
-    public static func ownerTag(ownerPK: Fr, salt: Fr) -> Fr { h(tagOTag, ownerPK, salt) }
+    /// A stake note's Groundworks tag: H(TAG_GW, nk, rho), the key the chain
+    /// stores its vote under (privacy_core::stake_gw).
+    public static func stakeGW(nk: Fr, rho: Fr) -> Fr { h(tagGW, nk, rho) }
 
     public static func assetID(_ denom: String) -> Fr {
         let b = Data(denom.utf8)

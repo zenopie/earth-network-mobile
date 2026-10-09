@@ -13,8 +13,9 @@ import "earth/shielded/v1/tx.proto";
 // (a delegation's also releasing the ERTH it stakes), a stake proof over the
 // module's owner-locked stake note tree. Every sighash binds the stake
 // proof's StakeFields first (anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf,
-// credit_cm, Bytes(credit_ct), owner_tag, clear_before, debt_root), then the
-// msg's own fields. No msg names a fee: it is the bundle's uerth balance less
+// credit_cm, Bytes(credit_ct), clear_before, debt_root, gw_0, gw_1,
+// credit_gw, vote_tag, vote_weight, credit_vote_tag, credit_vote_weight),
+// then the msg's own fields. No msg names a fee: it is the bundle's uerth balance less
 // what the msg moves (a delegation's amount). The chain mints no stake note
 // (ORCHARD_DESIGN 8.1): every one is a stake proof's output.
 
@@ -23,16 +24,17 @@ import "earth/shielded/v1/tx.proto";
 // supplies asset, v_in, v_out, cr_asset, cr_v_in, cr_move_time and the
 // sighash. Public input order: anchor, asset, nf_0, nf_1, cm_out, v_in,
 // v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in,
-// cr_move_time, owner_tag, sighash. Every byte field is exactly 32 bytes
-// (zero for none) but the proof and the ciphertexts.
+// cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out,
+// sighash. Every byte field is exactly 32 bytes (zero for none) but the
+// proof and the ciphertexts.
 message StakeProof {
   bytes proof = 1;
   bytes anchor = 2;
   // Exactly two (lane A): the owner's note(s), or padding, or zero.
   repeated bytes nullifiers = 3;
-  // commitments, ciphertexts, spc_mint, spc_ciphertext: retired.
-  reserved 4, 5, 6, 8;
-  bytes owner_tag = 7;
+  // commitments, ciphertexts, spc_mint, spc_ciphertext: retired; owner_tag
+  // (7): the retired Groundworks positions' owner tag.
+  reserved 4, 5, 6, 7, 8;
   // Lane A's output (the merged note, the change or a zero note), and its
   // 201-byte wallet stake ciphertext (empty iff the commitment is zero).
   bytes commitment = 9;
@@ -46,11 +48,25 @@ message StakeProof {
   // nothing); debt_root is then the current slash debt root, else zero.
   uint64 clear_before = 14;
   bytes debt_root = 15;
+  // groundworks_tags: exactly two (lane A's inputs, in nullifier order),
+  // H(TAG_GW, nk, rho) each (a padding input its own); zero for none.
+  // credit_groundworks_tag is the credit lane's input's. The chain cancels
+  // the Groundworks vote stored under each.
+  repeated bytes groundworks_tags = 16;
+  bytes credit_groundworks_tag = 17;
+  // vote_tag and vote_weight: lane A's output votes vote_weight derth (its
+  // unexposed amount) under vote_tag; zero and 0 when it does not.
+  bytes vote_tag = 18;
+  uint64 vote_weight = 19;
+  // credit_vote_tag and credit_vote_weight: the same for the credit lane's output.
+  bytes credit_vote_tag = 20;
+  uint64 credit_vote_weight = 21;
 }
 
 // The wallet names derth (the derth/<validator> credited to its note, v_in);
-// the chain refuses it unless amount buys it at the live rate.
-// sighash fields: StakeFields, Bytes(validator), amount, derth.
+// the chain refuses it unless amount buys it at the live rate, and bonds the
+// amount in the same block. sighash fields: StakeFields, Bytes(validator),
+// amount, derth, Bytes(SplitsBytes(groundworks_split)).
 message MsgDelegate {
   earth.shielded.v1.Bundle bundle = 1;
   string validator = 2;
@@ -58,21 +74,29 @@ message MsgDelegate {
   StakeProof stake = 4;
   uint64 amount = 5;
   uint64 derth = 6;
+  // groundworks_split: the Groundworks split the output votes with
+  // (StakeProof.vote_tag); empty when it does not vote.
+  repeated earth.allocation.v1.AllocationWeight groundworks_split = 7;
 }
 
-// sighash fields: StakeFields, Bytes(validator).
+// Merges notes, or votes / changes / renews a note's Groundworks vote by
+// respending it onto itself with groundworks_split. sighash fields:
+// StakeFields, Bytes(validator), Bytes(SplitsBytes(groundworks_split)).
 message MsgRestake {
   earth.shielded.v1.Bundle bundle = 1;
   string validator = 2;
   reserved 3;
   StakeProof stake = 4;
+  // groundworks_split: as MsgDelegate's.
+  repeated earth.allocation.v1.AllocationWeight groundworks_split = 5;
 }
 
 // The chain pays the undelegation out by itself at maturity: value x
 // payout / requested uerth as pool notes to pc with ciphertext (several notes
 // of at most 2^63-1, the same ciphertext, when it is split). The proof
 // creates the change, or a zero note when nothing is left.
-// sighash fields: StakeFields, Bytes(validator), amount, pc, Bytes(ciphertext).
+// sighash fields: StakeFields, Bytes(validator), amount, pc, Bytes(ciphertext),
+// Bytes(SplitsBytes(groundworks_split)).
 message MsgUndelegate {
   earth.shielded.v1.Bundle bundle = 1;
   string validator = 2;
@@ -82,6 +106,8 @@ message MsgUndelegate {
   // The payout notes' pc (32 bytes) and amount-blind v2 ciphertext (177 bytes).
   bytes pc = 6;
   bytes ciphertext = 7;
+  // groundworks_split: as MsgDelegate's (the change votes).
+  repeated earth.allocation.v1.AllocationWeight groundworks_split = 8;
 }
 
 // MsgClaimUnbonding is retired (chain 48b631c): undelegations pay out by
@@ -113,46 +139,9 @@ message MsgStakeVote {
   bytes debt_root = 11;
 }
 
-// sighash fields: StakeFields, Bytes(validator), amount,
-// Bytes(SplitsBytes(splits)).
-message MsgLockPosition {
-  earth.shielded.v1.Bundle bundle = 1;
-  string validator = 2;
-  uint64 amount = 3;
-  repeated earth.allocation.v1.AllocationWeight splits = 4;
-  reserved 5;
-  StakeProof stake = 6;
-}
-
-// sighash fields: StakeFields, position_id, Bytes(SplitsBytes(splits)).
-message MsgUpdatePosition {
-  earth.shielded.v1.Bundle bundle = 1;
-  uint64 position_id = 2;
-  repeated earth.allocation.v1.AllocationWeight splits = 3;
-  reserved 4;
-  StakeProof stake = 5;
-}
-
-// The position's derth is merged into the owner's derth/<validator> note
-// (v_in), or a padding input's output when the owner holds none.
-// sighash fields: StakeFields, position_id.
-message MsgUnlockPosition {
-  earth.shielded.v1.Bundle bundle = 1;
-  uint64 position_id = 2;
-  reserved 3;
-  StakeProof stake = 4;
-}
-
-// sighash fields: StakeFields, position_id, proposal_id,
-// Bytes(OptionsBytes(options)).
-message MsgPositionVote {
-  earth.shielded.v1.Bundle bundle = 1;
-  uint64 position_id = 2;
-  uint64 proposal_id = 3;
-  repeated cosmos.gov.v1.WeightedVoteOption options = 4;
-  reserved 5;
-  StakeProof stake = 6;
-}
+// MsgLockPosition, MsgUpdatePosition, MsgUnlockPosition and MsgPositionVote
+// are retired (chain v1.2.0): Groundworks positions are gone; a stake note
+// votes in Groundworks by itself (groundworks_split).
 
 // Moves amount of the owner's derth/<src_validator> to dst_validator with no
 // unbonding gap (ORCHARD_DESIGN 8.3, 8.7): lane A spends derth/<src>
@@ -161,7 +150,7 @@ message MsgPositionVote {
 // with the move (move_key = credit_nullifier, move_time, exposed =
 // dst_derth). move_time: unix seconds, within 600 s before the block time.
 // sighash fields: StakeFields, Bytes(src_validator), Bytes(dst_validator),
-// amount, dst_derth, move_time.
+// amount, dst_derth, move_time, Bytes(SplitsBytes(groundworks_split)).
 message MsgRedelegate {
   earth.shielded.v1.Bundle bundle = 1;
   string src_validator = 2;
@@ -170,4 +159,6 @@ message MsgRedelegate {
   StakeProof stake = 5;
   uint64 dst_derth = 6;
   uint64 move_time = 7;
+  // groundworks_split: as MsgDelegate's, for both outputs that vote.
+  repeated earth.allocation.v1.AllocationWeight groundworks_split = 8;
 }

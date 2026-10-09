@@ -236,17 +236,6 @@ public struct CarriedMark: Codable, Equatable, Sendable {
     public var tx: String?
 }
 
-/// The last Groundworks split this wallet saw on one of its own positions and
-/// when that split's lease ends. The chain clears a lapsed split (splits
-/// empty, split_expires_at 0), so only this says when it lapsed and what it
-/// was, for the reminder and a re-cast of the same split. Ports PositionLease
-/// in `privacy/sync/PrivacyStore.kt`.
-public struct PositionLease: Codable, Equatable, Sendable {
-    public var expiresAt: Int64
-    public var split: [UInt64: UInt64]
-    public init(expiresAt: Int64, split: [UInt64: UInt64]) { self.expiresAt = expiresAt; self.split = split }
-}
-
 /// What one identity generation of the wallet holds (PrivacyKeys: one
 /// phrase, an identity secret per generation): its registration, handle,
 /// caretaker split and moves. The wallet acts as `PrivacyState.generation`;
@@ -376,12 +365,15 @@ public struct PrivacyState: Codable, Sendable {
     public var voidRecordHeights: Set<UInt64> = []
     /// Undelegations whose payout has not arrived yet.
     public var pendingUnbonds: [PendingUnbond] = []
-    /// Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt).
-    public var nextOtagCounter: UInt32 = 0
-    /// The highest owner-tag counter of a position this wallet closed, from its unlock memos (nil: none).
-    public var closedOtagMax: UInt32?
-    /// Per position id of ours: its split's lease as last seen (PrivacyWallet.positions keeps it).
-    public var positionLeases: [UInt64: PositionLease] = [:]
+    /// The Groundworks split this wallet votes with (empty: none): every
+    /// stake tx carries it to the note it makes (PrivacyWallet.castGroundworks).
+    public var groundworksSplit: [UInt64: UInt64] = [:]
+    /// The split was chosen here (cast, changed or stopped): never replaced
+    /// by one read off the chain's votes (PrivacyWallet.adopt).
+    public var groundworksChosen = false
+    /// The latest lease end seen on this wallet's own votes (0: none seen): a
+    /// lapsed vote is deleted on chain, so only this says when it lapsed.
+    public var groundworksExpiresAt: Int64 = 0
     /// Every stake vote cast: (proposal, vote nullifier).
     public var stakeVotes: [StakeVoteRecord] = []
     /// The stake tree's stream cursors and this wallet's stake notes.
@@ -497,9 +489,9 @@ public struct PrivacyState: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, pendingRegistration,
              regRecords, rootsVerified, rootsError, claimedDays,
-             pendingUnbonds, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax,
+             pendingUnbonds, groundworksSplit, groundworksChosen, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, groundworksExpiresAt,
              syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
-             voidRecordHeights, labelWindowSeconds, carriedMarks, registrationKeepUntil, positionLeases,
+             voidRecordHeights, labelWindowSeconds, carriedMarks, registrationKeepUntil,
              generation, generationFloor, identities, unmatchedRecordFrom, unmatchedRecordWindow, activity
     }
 
@@ -512,15 +504,16 @@ public struct PrivacyState: Codable, Sendable {
         try c.encodeIfPresent(pendingRegistration, forKey: .pendingRegistration); try c.encode(regRecords, forKey: .regRecords)
         try c.encode(rootsVerified, forKey: .rootsVerified); try c.encodeIfPresent(rootsError, forKey: .rootsError)
         try c.encode(claimedDays, forKey: .claimedDays); try c.encode(pendingUnbonds, forKey: .pendingUnbonds)
-        try c.encode(nextOtagCounter, forKey: .nextOtagCounter); try c.encode(stakeNext, forKey: .stakeNext)
+        try c.encode(groundworksSplit, forKey: .groundworksSplit); try c.encode(groundworksChosen, forKey: .groundworksChosen)
+        try c.encode(stakeNext, forKey: .stakeNext)
         try c.encode(stakeHeight, forKey: .stakeHeight); try c.encode(stakeNullifiersNext, forKey: .stakeNullifiersNext)
         try c.encode(stakeNotes, forKey: .stakeNotes); try c.encode(denoms, forKey: .denoms)
-        try c.encodeIfPresent(closedOtagMax, forKey: .closedOtagMax); try c.encode(syncGeneration, forKey: .syncGeneration)
+        try c.encode(groundworksExpiresAt, forKey: .groundworksExpiresAt); try c.encode(syncGeneration, forKey: .syncGeneration)
         try c.encodeIfPresent(verifiedGeneration, forKey: .verifiedGeneration); try c.encode(verifiedHeight, forKey: .verifiedHeight)
         try c.encode(stakeVotes, forKey: .stakeVotes); try c.encode(identityHeights, forKey: .identityHeights)
         try c.encode(identityRowsSeen, forKey: .identityRowsSeen); try c.encode(voidRecordHeights, forKey: .voidRecordHeights)
         try c.encode(labelWindowSeconds, forKey: .labelWindowSeconds); try c.encode(carriedMarks, forKey: .carriedMarks)
-        try c.encode(registrationKeepUntil, forKey: .registrationKeepUntil); try c.encode(positionLeases, forKey: .positionLeases)
+        try c.encode(registrationKeepUntil, forKey: .registrationKeepUntil)
         try c.encode(generation, forKey: .generation); try c.encode(generationFloor, forKey: .generationFloor)
         try c.encodeIfPresent(unmatchedRecordFrom, forKey: .unmatchedRecordFrom); try c.encode(unmatchedRecordWindow, forKey: .unmatchedRecordWindow)
         try c.encode(activity, forKey: .activity)
@@ -548,9 +541,9 @@ public struct PrivacyState: Codable, Sendable {
             identities[0] = try IdentitySlot(from: decoder)
         }
         claimedDays = try v(.claimedDays, []); pendingUnbonds = try v(.pendingUnbonds, [])
-        nextOtagCounter = try v(.nextOtagCounter, 0); stakeNext = try v(.stakeNext, 0); stakeHeight = try v(.stakeHeight, 0)
+        groundworksSplit = try v(.groundworksSplit, [:]); groundworksChosen = try v(.groundworksChosen, false); stakeNext = try v(.stakeNext, 0); stakeHeight = try v(.stakeHeight, 0)
         stakeNullifiersNext = try v(.stakeNullifiersNext, 0); stakeNotes = try v(.stakeNotes, []); denoms = try v(.denoms, [])
-        closedOtagMax = try c.decodeIfPresent(UInt32.self, forKey: .closedOtagMax)
+        groundworksExpiresAt = try v(.groundworksExpiresAt, 0)
         stakeVotes = try v(.stakeVotes, [])
         syncGeneration = try v(.syncGeneration, 0)
         verifiedGeneration = try c.decodeIfPresent(UInt64.self, forKey: .verifiedGeneration)
@@ -560,7 +553,6 @@ public struct PrivacyState: Codable, Sendable {
         labelWindowSeconds = try v(.labelWindowSeconds, 0)
         carriedMarks = try v(.carriedMarks, [:])
         registrationKeepUntil = try v(.registrationKeepUntil, 0)
-        positionLeases = try v(.positionLeases, [:])
         unmatchedRecordFrom = try c.decodeIfPresent(UInt64.self, forKey: .unmatchedRecordFrom)
         unmatchedRecordWindow = try v(.unmatchedRecordWindow, 0)
         activity = try v(.activity, ActivityLog())
@@ -796,8 +788,8 @@ public final class PrivacyStore {
         var s = PrivacyState()
         s.chainID = chainID
         s.genesis = genesis
-        s.nextOtagCounter = old.nextOtagCounter
-        s.closedOtagMax = old.closedOtagMax
+        s.groundworksSplit = old.groundworksSplit
+        s.groundworksChosen = old.groundworksChosen
         if old.chainID == chainID && old.genesis == genesis {
             s.pendingUnbonds = old.pendingUnbonds
             // Every generation's slot: registrations (verified ones), handles, splits, moves.
@@ -805,7 +797,7 @@ public final class PrivacyStore {
             s.pendingRegistration = old.pendingRegistration
             s.registrationKeepUntil = old.registrationKeepUntil
             s.stakeVotes = old.stakeVotes
-            s.positionLeases = old.positionLeases
+            s.groundworksExpiresAt = old.groundworksExpiresAt
             s.labelWindowSeconds = old.labelWindowSeconds
             s.claimedDays = old.claimedDays
             // What it sent and expects: the resync finds the notes again and folds them in.
@@ -860,8 +852,8 @@ public final class PrivacyStore {
         var s = PrivacyState()
         s.chainID = old.chainID
         s.genesis = genesis
-        s.nextOtagCounter = old.nextOtagCounter
-        s.closedOtagMax = old.closedOtagMax
+        s.groundworksSplit = old.groundworksSplit
+        s.groundworksChosen = old.groundworksChosen
         // The registration stays: every generation's, and which the wallet acts as.
         s.generation = old.generation
         s.generationFloor = old.generationFloor

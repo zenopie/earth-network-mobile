@@ -5,8 +5,8 @@ import network.erth.wallet.privacy.handles.Handles
 
 /**
  * What the wallet reminds its owner to do, in place of doing it unasked: the
- * day's ANML claim, the caretaker vote's refresh before it lapses, each
- * Groundworks position's split before its lease ends, and the handle's
+ * day's ANML claim, the caretaker vote's refresh before it lapses, the
+ * Groundworks vote's before its lease ends, and the handle's
  * renewal before (and through) its renewal period. Each costs a fee, so each
  * is the owner's decision; nothing here broadcasts anything.
  *
@@ -16,7 +16,7 @@ object Reminders {
     /** How long before a caretaker vote or handle lapses the reminder starts. */
     const val LEAD_SECONDS = Handles.REMINDER_LEAD_SECONDS
 
-    /** How long after a caretaker vote or a position's split lapsed the reminder to cast it again stays. */
+    /** How long after a caretaker vote or the Groundworks vote lapsed the reminder to cast it again stays. */
     const val LAPSED_SECONDS = 30L * 86_400
 
     sealed interface Reminder {
@@ -26,8 +26,8 @@ object Reminders {
         /** The caretaker vote lapses at [expiresAt] (lapsed when in the past): cast it again to keep it counted. */
         data class CaretakerExpiring(val expiresAt: Long, val lapsed: Boolean) : Reminder
 
-        /** Position [positionId]'s Groundworks split lapses at [expiresAt] ([lapsed]: it has): renew or re-cast it. */
-        data class GroundworksExpiring(val positionId: Long, val expiresAt: Long, val lapsed: Boolean) : Reminder
+        /** The Groundworks vote lapses at [expiresAt] ([lapsed]: it has): renew or re-cast it. */
+        data class GroundworksExpiring(val expiresAt: Long, val lapsed: Boolean) : Reminder
 
         /**
          * The handle's lease ends at [expiresAt]; until [renewalUntil] only
@@ -64,17 +64,16 @@ object Reminders {
     }
 
     /**
-     * One of this wallet's positions as its Groundworks split's lease stands,
-     * from the wallet's own position read and what it last saw
-     * (PrivacyWallet.groundworksLeases).
+     * This wallet's Groundworks vote as its lease stands: the earliest lease
+     * end of its votes on chain, or the last one seen once they lapsed
+     * (PrivacyWallet.groundworksLease).
      */
     data class GroundworksLease(
-        val positionId: Long,
-        /** When the split stops (or stopped) counting; 0 unknown (a node before leases, a lapse never seen). */
+        /** When the vote stops (or stopped) counting; 0 unknown. */
         val expiresAt: Long,
-        /** The chain still holds the split (it clears it at the lapse). */
+        /** The chain still holds a vote of ours (it deletes one at its lapse). */
         val held: Boolean,
-        /** The split a renewal casts again: the chain's, else the last one seen (empty: unknown). */
+        /** The split a renewal casts again. */
         val split: Map<Long, Long>,
     ) {
         /** The split no longer counts: cleared, or past its lease end and not yet cleared. */
@@ -103,8 +102,8 @@ object Reminders {
         val addressed: List<HandleEntry> = emptyList(),
         /** This wallet's shielded address ("" unknown): a held handle paying another is pointed out. */
         val ownAddress: String = "",
-        /** This wallet's Groundworks positions' leases (stake, so not tied to a live identity). */
-        val groundworks: List<GroundworksLease> = emptyList(),
+        /** This wallet's Groundworks vote's lease (stake, so not tied to a live identity; null: none). */
+        val groundworks: GroundworksLease? = null,
         /** PrivacyWallet.moveSuggestionDue: the suggested move time once it has come (0: none). */
         val moveSuggestedAt: Long = 0,
         /** PrivacyWallet.moveDeadline: when what is to move stops being movable (0: unknown). */
@@ -123,7 +122,7 @@ object Reminders {
         if (i.identityLive && c > 0 && i.now >= Handles.satSub(c, LEAD_SECONDS) && i.now < Handles.satAdd(c, LAPSED_SECONDS)) {
             out.add(Reminder.CaretakerExpiring(c, lapsed = i.now >= c))
         }
-        i.groundworks.mapNotNullTo(out) { groundworks(it, i.now) }
+        i.groundworks?.let { groundworks(it, i.now) }?.let { out.add(it) }
         if (!i.identityLive) return out
         // Until what is to move stops being movable; past that a move cannot bring it.
         if (i.moveSuggestedAt in 1..i.now && (i.moveDeadline <= 0 || i.now < i.moveDeadline)) out.add(Reminder.MoveSuggested(i.moveSuggestedAt, i.moveDeadline))
@@ -167,7 +166,7 @@ object Reminders {
         if (e <= 0) return null
         val lapsed = g.lapsed(now)
         val due = if (lapsed) now < Handles.satAdd(e, LAPSED_SECONDS) else g.renewalDue(now)
-        return if (due) Reminder.GroundworksExpiring(g.positionId, e, lapsed) else null
+        return if (due) Reminder.GroundworksExpiring(e, lapsed) else null
     }
 
     /** The reminder's line for a banner. */
@@ -177,8 +176,8 @@ object Reminders {
             if (r.lapsed) "Your caretaker vote has lapsed and no longer counts. Cast it again to keep directing emissions."
             else "Your caretaker vote expires in ${days(Handles.satSub(r.expiresAt, now))}. Renew it to keep it counted."
         is Reminder.GroundworksExpiring ->
-            if (r.lapsed) "Your Groundworks split on position #${r.positionId} has lapsed and no longer counts. Choose a split again to keep directing emissions."
-            else "Your Groundworks split on position #${r.positionId} expires in ${days(Handles.satSub(r.expiresAt, now))}. Renew it to keep it counted."
+            if (r.lapsed) "Your Groundworks vote has lapsed and no longer counts. Vote again to keep directing emissions."
+            else "Your Groundworks vote expires in ${days(Handles.satSub(r.expiresAt, now))}. Renew it to keep it counted."
         is Reminder.HandleExpiring ->
             if (r.inRenewal) "@${r.handle} has expired and no longer receives payments. Renew it within ${days(Handles.satSub(r.renewalUntil, now))} or anyone may claim it."
             else "@${r.handle} expires in ${days(Handles.satSub(r.expiresAt, now))}. Renew it to keep it."

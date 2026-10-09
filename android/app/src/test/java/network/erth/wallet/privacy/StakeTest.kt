@@ -280,7 +280,6 @@ class StakeTest : WalletTest() {
         for (block in listOf<() -> Unit>(
             { a.undelegate(vB, n.amount) },
             { a.quoteMove(vB, vC, n.amount) },
-            { a.lockPosition(vB, n.amount, mapOf(1L to 100L)) },
         )) {
             val e = assertThrows(NoteSelection.Insufficient::class.java) { block() }
             assertTrue(e.message!!, "moved stake can move again after $until" in e.message!!)
@@ -380,16 +379,19 @@ class StakeTest : WalletTest() {
         assertNull(ChainErrors.explain(1103, "shieldedstaking", "amount converts to nothing"))
     }
 
-    /** The proof's owner tag is fresh on every msg that is not a position's. */
+    /** Every lane A input publishes its Groundworks tag, padding its own; with no split chosen, nothing votes. */
     @Test
-    fun ownerTagsAreFreshOffPositions() {
+    fun inputsPublishTheirGroundworksTags() {
         val chain = FakeChain()
         val a = staked(chain)
         a.delegate(vA, 500_000); a.sync()
         a.undelegate(vA, 100_000); a.sync()
         a.redelegate(a.quoteMove(vA, vB, 500_000)); a.sync()
-        val tags = chain.prover.allStakes.map { it.otag }
-        assertEquals(tags.size, tags.toSet().size)
+        for (w in chain.prover.allStakes) {
+            assertEquals(w.ins.map { network.erth.wallet.privacy.zk.Privacy.stakeGw(w.nk, it.rho) }, w.gw)
+            assertEquals(0L, w.wOut + w.crWOut)
+        }
+        assertTrue(chain.gwVotes.isEmpty())
     }
 
     /**

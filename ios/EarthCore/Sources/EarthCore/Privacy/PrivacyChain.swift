@@ -11,7 +11,12 @@ public protocol PrivacyChainReads: Sendable {
     func ballotInputs(proposalID: UInt64, optionID: UInt64) async throws -> PrivacyReads.BallotInputs
     func epochNumber() async throws -> UInt64
     func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot
-    func positions() async throws -> [PrivacyReads.Position]
+    /// Every Groundworks vote (chain-wide: a wallet finds its own by its notes' tags).
+    func groundworksVotes() async throws -> [PrivacyReads.GroundworksVote]
+    /// x/shieldedstaking params.min_position: the least weight (uerth) a Groundworks vote carries.
+    func minGroundworksVote() async throws -> UInt64
+    /// The Groundworks fund's options a split may name now (not removed); nil: unknown.
+    func groundworksOptions() async throws -> Set<UInt64>?
     /// x/shieldedstaking Query/StakeNullifierTree{start, limit} (at most 1000 a page).
     func stakeNullifierTree(start: UInt64, limit: Int) async throws -> PrivacyReads.NfTreePage
     /// x/shieldedstaking Query/DebtTree{start, limit} (at most 1000 a page).
@@ -30,6 +35,8 @@ public protocol PrivacyChainReads: Sendable {
 
 public extension PrivacyChainReads {
     func unbondDueBy(epoch: UInt64) async -> Int64? { nil }
+    func minGroundworksVote() async throws -> UInt64 { 1_000_000 }
+    func groundworksOptions() async throws -> Set<UInt64>? { nil }
 }
 
 public enum PrivacyReads {
@@ -120,21 +127,22 @@ public enum PrivacyReads {
         public init(values: [Fr], size: UInt64) { self.values = values; self.size = size }
     }
 
-    /// A Groundworks position (public), its owner known only by `ownerTag`.
-    public struct Position: Sendable, Equatable, Identifiable {
+    /// A Groundworks vote (public): a stake note's derth at `validator`
+    /// voting `splits`, stored under the note's tag H(TAG_GW, nk, rho); its
+    /// owner is not known. `weight`: derth x the validator's epoch rate (0
+    /// when a reset made it stale).
+    public struct GroundworksVote: Sendable, Equatable, Identifiable {
         public let id: UInt64
         public let validator: String
         public let derth: UInt64
-        public let ownerTag: Fr
+        public let weight: UInt64
+        public let tag: Fr
         public let splits: [UInt64: UInt64]
-        public let createdHeight: UInt64
-        /// When the split stops counting (x/allocation groundworks_lease_seconds after it was cast or
-        /// renewed; 0 without a split, or on a node before leases).
+        /// When the vote stops counting (x/allocation groundworks_lease_seconds after it was cast).
         public let splitExpiresAt: Int64
-        public init(id: UInt64, validator: String, derth: UInt64, ownerTag: Fr, splits: [UInt64: UInt64] = [:], createdHeight: UInt64 = 0,
-                    splitExpiresAt: Int64 = 0) {
-            self.id = id; self.validator = validator; self.derth = derth; self.ownerTag = ownerTag
-            self.splits = splits; self.createdHeight = createdHeight; self.splitExpiresAt = splitExpiresAt
+        public init(id: UInt64, validator: String, derth: UInt64, weight: UInt64 = 0, tag: Fr, splits: [UInt64: UInt64], splitExpiresAt: Int64) {
+            self.id = id; self.validator = validator; self.derth = derth; self.weight = weight; self.tag = tag
+            self.splits = splits; self.splitExpiresAt = splitExpiresAt
         }
     }
 
@@ -185,6 +193,8 @@ public enum PrivacyReads {
         public var delegation: BigUInt
         public var rewards: BigUInt
         public var rate: Decimal
+        /// The rate at the last epoch end (book.epoch_rate): what a Groundworks vote weighs at.
+        public var epochRate: Decimal
         public var status: String
         public var jailed: Bool
         public var tombstoned: Bool
@@ -198,7 +208,8 @@ public enum PrivacyReads {
         public var redelegations: [String: RedelegationLoad]
 
         public init(validator: String, backing: BigUInt, supply: BigUInt, pendingDelegation: BigUInt = 0, pendingUndelegation: BigUInt = 0,
-                    delegation: BigUInt? = nil, rewards: BigUInt = 0, rate: Decimal? = nil, status: String = PrivacyReads.bondStatusBonded,
+                    delegation: BigUInt? = nil, rewards: BigUInt = 0, rate: Decimal? = nil, epochRate: Decimal? = nil,
+                    status: String = PrivacyReads.bondStatusBonded,
                     jailed: Bool = false, tombstoned: Bool = false, delegatable: Bool = true, refusal: String = "", moniker: String = "",
                     commission: Double = 0, tokens: BigUInt = 0, redelegations: [String: RedelegationLoad] = [:]) {
             self.validator = validator; self.backing = backing; self.supply = supply
@@ -206,6 +217,7 @@ public enum PrivacyReads {
             self.delegation = delegation ?? (backing + pendingUndelegation > pendingDelegation ? backing + pendingUndelegation - pendingDelegation : 0)
             self.rewards = rewards
             self.rate = rate ?? (supply == 0 ? 1 : (Decimal(string: String(backing)) ?? 0) / (Decimal(string: String(supply)) ?? 1))
+            self.epochRate = epochRate ?? self.rate
             self.status = status; self.jailed = jailed; self.tombstoned = tombstoned; self.delegatable = delegatable
             self.refusal = refusal; self.moniker = moniker; self.commission = commission; self.tokens = tokens
             self.redelegations = redelegations
@@ -475,29 +487,54 @@ public struct PrivacyQueries: PrivacyChainReads {
         return PrivacyReads.StakingTiming(epochSeconds: es > 0 ? min(es, Self.maxDurationSeconds) : 86_400, unbondingSeconds: seconds)
     }
 
-    /// Every Groundworks position (public); the wallet finds its own by owner
-    /// tag. Each id once (the first served): a page repeated by a proxy or a
-    /// node must not count a position twice.
-    public func positions() async throws -> [PrivacyReads.Position] {
-        var out: [PrivacyReads.Position] = []
+    /// x/shieldedstaking params.min_position (uerth).
+    /// Every page (the chain serves at most 100 options a page).
+    public func groundworksOptions() async throws -> Set<UInt64>? {
+        var out = Set<UInt64>()
+        var key: String?
+        var keys = Set<String>()
+        repeat {
+            // Capped: a node serving new keys forever is not followed.
+            guard keys.count < 10_000 else { throw PrivacyError("the node's listing does not end") }
+            let path = "/earth/allocation/v1/options/STREAM_ID_GROUNDWORKS" +
+                (key.map { "?pagination.key=" + ($0.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0) } ?? "")
+            let j = try await rest.get(path)
+            for o in j.options.array where !o.removed.bool(default: false) { out.insert(o.id.uint64(default: 0)) }
+            key = j.pagination.next_key.string.flatMap { $0.isEmpty || $0 == "null" ? nil : $0 }
+            if let k = key, !keys.insert(k).inserted { throw PrivacyError("the node's options listing repeats a page") }
+        } while key != nil
+        return out
+    }
+
+    public func minGroundworksVote() async throws -> UInt64 {
+        try await rest.get("/earth/shieldedstaking/v1/params").params.min_position.uint64(default: 1_000_000)
+    }
+
+    /// Every Groundworks vote (public); the wallet finds its own by its
+    /// notes' tags. Each id once (the first served): a page repeated by a
+    /// proxy or a node must not count a vote twice.
+    public func groundworksVotes() async throws -> [PrivacyReads.GroundworksVote] {
+        var out: [PrivacyReads.GroundworksVote] = []
         var seen = Set<UInt64>()
         var keys = Set<String>()
         var key: String?
         repeat {
-            let path = "/earth/shieldedstaking/v1/positions" +
+            // Capped: a node serving new keys forever is not followed.
+            guard keys.count < 10_000 else { throw PrivacyError("the node's listing does not end") }
+            let path = "/earth/shieldedstaking/v1/groundworks_votes" +
                 (key.map { "?pagination.key=" + ($0.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0) } ?? "")
             let j = try await rest.get(path)
-            for p in j.positions.array {
+            for v in j.votes.array {
                 var splits: [UInt64: UInt64] = [:]
-                for s in p.splits.array { splits[s.option_id.uint64(default: 0)] = s.percent.uint64(default: 0) }
-                guard seen.insert(p.id.uint64(default: 0)).inserted else { continue }
-                out.append(PrivacyReads.Position(id: p.id.uint64(default: 0), validator: p.validator.string(default: ""),
-                                                 derth: p.derth.uint64(default: 0), ownerTag: try field(p.owner_tag),
-                                                 splits: splits, createdHeight: p.created_height.uint64(default: 0),
-                                                 splitExpiresAt: max(0, p.split_expires_at.int64(default: 0))))
+                for s in v.splits.array { splits[s.option_id.uint64(default: 0)] = s.percent.uint64(default: 0) }
+                guard seen.insert(v.id.uint64(default: 0)).inserted else { continue }
+                out.append(PrivacyReads.GroundworksVote(id: v.id.uint64(default: 0), validator: v.validator.string(default: ""),
+                                                        derth: v.derth.uint64(default: 0), weight: v.weight.uint64(default: 0),
+                                                        tag: try field(v.tag), splits: splits,
+                                                        splitExpiresAt: max(0, v.split_expires_at.int64(default: 0))))
             }
             key = j.pagination.next_key.string.flatMap { $0.isEmpty || $0 == "null" ? nil : $0 }
-            if let k = key, !keys.insert(k).inserted { throw PrivacyError("the node's positions listing repeats a page") }
+            if let k = key, !keys.insert(k).inserted { throw PrivacyError("the node's groundworks votes listing repeats a page") }
         } while key != nil
         return out
     }

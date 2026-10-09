@@ -17,8 +17,8 @@ public enum Reminders {
         case anmlReady
         /// The caretaker vote lapses at `expiresAt` (lapsed when in the past): cast it again to keep it counted.
         case caretakerExpiring(expiresAt: Int64, lapsed: Bool)
-        /// Position `positionID`'s Groundworks split lapses at `expiresAt` (`lapsed`: it has): renew or re-cast it.
-        case groundworksExpiring(positionID: UInt64, expiresAt: Int64, lapsed: Bool)
+        /// The Groundworks vote lapses at `expiresAt` (`lapsed`: it has): renew or re-cast it.
+        case groundworksExpiring(expiresAt: Int64, lapsed: Bool)
         /// The handle's lease ends at `expiresAt`; until `renewalUntil` only its owner may renew it (`inRenewal`: it no longer resolves).
         case handleExpiring(handle: String, expiresAt: Int64, renewalUntil: Int64, inRenewal: Bool)
         /// The live handle this identity holds pays another address (a handle moved here keeps the old
@@ -37,18 +37,18 @@ public enum Reminders {
         case renewBeforeLapse(registrationEndsAt: Int64, handle: String, handleExpiresAt: Int64, voteExpiresAt: Int64)
     }
 
-    /// One of this wallet's positions as its Groundworks split's lease stands, from the wallet's own
-    /// position read and what it last saw (PrivacyWallet.groundworksLeases).
+    /// This wallet's Groundworks vote as its lease stands: the earliest lease
+    /// end of its votes on chain, or the last one seen once they lapsed
+    /// (PrivacyWallet.groundworksLease).
     public struct GroundworksLease: Equatable, Sendable {
-        public let positionID: UInt64
-        /// When the split stops (or stopped) counting; 0 unknown (a node before leases, a lapse never seen).
+        /// When the vote stops (or stopped) counting; 0 unknown.
         public let expiresAt: Int64
-        /// The chain still holds the split (it clears it at the lapse).
+        /// The chain still holds a vote of ours (it deletes one at its lapse).
         public let held: Bool
-        /// The split a renewal casts again: the chain's, else the last one seen (empty: unknown).
+        /// The split a renewal casts again.
         public let split: [UInt64: UInt64]
-        public init(positionID: UInt64, expiresAt: Int64, held: Bool, split: [UInt64: UInt64]) {
-            self.positionID = positionID; self.expiresAt = expiresAt; self.held = held; self.split = split
+        public init(expiresAt: Int64, held: Bool, split: [UInt64: UInt64]) {
+            self.expiresAt = expiresAt; self.held = held; self.split = split
         }
         /// The split no longer counts: cleared, or past its lease end and not yet cleared.
         public func lapsed(_ now: Int64) -> Bool { !held || (expiresAt > 0 && expiresAt <= now) }
@@ -72,8 +72,8 @@ public enum Reminders {
         public var addressed: [HandleEntry]
         /// This wallet's shielded address ("" unknown): a held handle paying another is pointed out.
         public var ownAddress: String
-        /// This wallet's Groundworks positions' leases (stake, so not tied to a live identity).
-        public var groundworks: [GroundworksLease]
+        /// This wallet's Groundworks vote's lease (stake, so not tied to a live identity; nil: none).
+        public var groundworks: GroundworksLease?
         /// PrivacyWallet.moveSuggestionDue: the suggested move time once it has come (0: none).
         public var moveSuggestedAt: Int64
         /// PrivacyWallet.moveDeadline: when what is to move stops being movable (0: unknown).
@@ -85,7 +85,7 @@ public enum Reminders {
 
         public init(now: Int64, identityLive: Bool, claimOpensAt: Int64?, claimedToday: Bool, caretakerExpiresAt: Int64,
                     handle: String, handleEntry: HandleEntry?, addressed: [HandleEntry] = [], ownAddress: String = "",
-                    groundworks: [GroundworksLease] = [], moveSuggestedAt: Int64 = 0, moveDeadline: Int64 = 0,
+                    groundworks: GroundworksLease? = nil, moveSuggestedAt: Int64 = 0, moveDeadline: Int64 = 0,
                     registrationEndsAt: Int64 = 0, handleExpiresAt: Int64 = 0) {
             self.now = now; self.identityLive = identityLive; self.claimOpensAt = claimOpensAt; self.claimedToday = claimedToday
             self.caretakerExpiresAt = caretakerExpiresAt; self.handle = handle; self.handleEntry = handleEntry
@@ -103,7 +103,7 @@ public enum Reminders {
         if i.identityLive, c > 0, i.now >= Handles.satSub(c, leadSeconds), i.now < Handles.satAdd(c, lapsedSeconds) {
             out.append(.caretakerExpiring(expiresAt: c, lapsed: i.now >= c))
         }
-        out += i.groundworks.compactMap { groundworks($0, now: i.now) }
+        if let g = i.groundworks, let r = groundworks(g, now: i.now) { out.append(r) }
         guard i.identityLive else { return out }
         // Until what is to move stops being movable; past that a move cannot bring it.
         if i.moveSuggestedAt > 0, i.moveSuggestedAt <= i.now, i.moveDeadline <= 0 || i.now < i.moveDeadline {
@@ -143,7 +143,7 @@ public enum Reminders {
         guard e > 0 else { return nil }
         let lapsed = g.lapsed(now)
         let due = lapsed ? now < Handles.satAdd(e, lapsedSeconds) : g.renewalDue(now)
-        return due ? .groundworksExpiring(positionID: g.positionID, expiresAt: e, lapsed: lapsed) : nil
+        return due ? .groundworksExpiring(expiresAt: e, lapsed: lapsed) : nil
     }
 
     /// The reminder's line for a banner.
@@ -154,9 +154,9 @@ public enum Reminders {
         case let .caretakerExpiring(exp, lapsed):
             return lapsed ? "Your caretaker vote has lapsed and no longer counts. Cast it again to keep directing emissions."
                 : "Your caretaker vote expires in \(days(Handles.satSub(exp, now))). Renew it to keep it counted."
-        case let .groundworksExpiring(id, exp, lapsed):
-            return lapsed ? "Your Groundworks split on position #\(id) has lapsed and no longer counts. Choose a split again to keep directing emissions."
-                : "Your Groundworks split on position #\(id) expires in \(days(Handles.satSub(exp, now))). Renew it to keep it counted."
+        case let .groundworksExpiring(exp, lapsed):
+            return lapsed ? "Your Groundworks vote has lapsed and no longer counts. Vote again to keep directing emissions."
+                : "Your Groundworks vote expires in \(days(Handles.satSub(exp, now))). Renew it to keep it counted."
         case let .handleExpiring(h, exp, until, inRenewal):
             return inRenewal ? "@\(h) has expired and no longer receives payments. Renew it within \(days(Handles.satSub(until, now))) or anyone may claim it."
                 : "@\(h) expires in \(days(Handles.satSub(exp, now))). Renew it to keep it."

@@ -249,38 +249,6 @@ public final class WalletSync {
         return zip(a, b).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    /// Unlock memo: "EU", version 1 (PRIVACY_FORMATS.md 6).
-    static let unlockMagic = Data([0x45, 0x55, 0x01])
-
-    static func unlockTag(nk: Fr, counter: UInt32) -> Data {
-        PrivacyHash.h(PrivacyHash.tagUnlockTag, nk, PrivacyHash.u64(UInt64(counter))).bytes.prefix(regTagBytes)
-    }
-
-    /// The memo of an unlock's record (a value-0 pool note to ourselves in
-    /// the unlock's fee bundle): the owner-tag counter of the position it
-    /// closed, so a wallet restored from the mnemonic knows the tags of
-    /// closed positions too and never locks under one again. Tagged like the
-    /// registration record (only nk makes one): a note carrying a huge
-    /// counter cannot stretch the owner-tag scan.
-    public static func unlockMemo(nk: Fr, counter: UInt32) -> Data {
-        var b = unlockMagic
-        b += Data((0 ..< 4).map { UInt8(truncatingIfNeeded: counter >> UInt32(24 - 8 * $0)) })
-        b += unlockTag(nk: nk, counter: counter)
-        return b + Data(count: NoteCipher.memoBytes - b.count)
-    }
-
-    /// The closed counter if `memo` is this wallet's unlock memo.
-    public static func parseUnlockMemo(nk: Fr, _ memo: Data) -> UInt32? {
-        guard memo.count <= NoteCipher.memoBytes else { return nil }
-        let m = [UInt8](memo) + [UInt8](repeating: 0, count: NoteCipher.memoBytes - memo.count)
-        guard Data(m[0 ..< 3]) == unlockMagic else { return nil }
-        let counter = m[3 ..< 7].reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
-        guard counter <= UInt32(Int32.max) else { return nil }
-        guard m[(7 + regTagBytes)...].allSatisfy({ $0 == 0 }) else { return nil }
-        guard constantTimeEqual(Data(m[7 ..< 7 + regTagBytes]), unlockTag(nk: nk, counter: counter)) else { return nil }
-        return counter
-    }
-
     // MARK: state records (PRIVACY_FORMATS.md 6)
 
     /// State records: value-0 notes whose memo says what this identity holds
@@ -1047,10 +1015,6 @@ public final class WalletSync {
             if let rec = state {
                 let t = now()
                 store.mutate { Self.applyStateRecord(&$0, position: r.position, height: r.height, rec.record, now: t, generation: rec.generation) }
-            }
-            // An unlock's record: the owner-tag counter of the position it closed.
-            if let c = Self.parseUnlockMemo(nk: keys.nk, note.memo), store.state.closedOtagMax.map({ c > $0 }) ?? true {
-                store.mutate { $0.closedOtagMax = c }
             }
             return nil
         }

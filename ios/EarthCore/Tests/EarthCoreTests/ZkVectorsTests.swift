@@ -54,7 +54,7 @@ final class ZkVectorsTests: XCTestCase {
             "id": PrivacyHash.tagID, "owner": PrivacyHash.tagOwner, "leaf": PrivacyHash.tagLeaf, "succ": PrivacyHash.tagSucc, "sn": PrivacyHash.tagSN,
             "pc": PrivacyHash.tagPC, "cm": PrivacyHash.tagCM, "nf": PrivacyHash.tagNF, "reg": PrivacyHash.tagReg,
             "asset": PrivacyHash.tagAsset, "signal": PrivacyHash.tagSignal, "bytes": PrivacyHash.tagBytes, "scope": PrivacyHash.tagScope, "affiliate": PrivacyHash.tagAffiliate, "referral": PrivacyHash.tagReferral,
-            "stake": PrivacyHash.tagStake, "spc": PrivacyHash.tagSPC, "snf": PrivacyHash.tagSNF, "otag": PrivacyHash.tagOTag,
+            "stake": PrivacyHash.tagStake, "spc": PrivacyHash.tagSPC, "snf": PrivacyHash.tagSNF, "otag": PrivacyHash.tagOTag, "gw": PrivacyHash.tagGW,
             "snfl": PrivacyHash.tagSNFL, "vnf": PrivacyHash.tagVNF, "slabel": PrivacyHash.tagSLabel, "debtl": PrivacyHash.tagDebtL,
             "gen": Grumpkin.tagGen, "cv_r": Grumpkin.tagCvR, "bsig": Grumpkin.tagBsig, "bundle": PrivateMsgs.tagBundle,
         ]
@@ -123,8 +123,8 @@ final class ZkVectorsTests: XCTestCase {
                        PrivacyHash.stakeCM(asset: Fr(UInt64(1)), amount: 2, spc: Fr(UInt64(3)), label: Fr(UInt64(4))).hex)
         XCTAssertEqual(s("stake_cm_1_2_3_4"), PrivacyHash.stakeCM(asset: Fr(UInt64(1)), amount: 2, spc: Fr(UInt64(3)), label: Fr(UInt64(4))).hex)
         XCTAssertEqual(s("stake_nf"), PrivacyHash.stakeNF(nk: nk, rho: rho, position: 4_000_000_000).hex)
-        XCTAssertEqual(Vectors.fe(1006), Vectors.fr(s("otag_salt")))
-        XCTAssertEqual(s("otag"), PrivacyHash.ownerTag(ownerPK: opk, salt: Vectors.fe(1006)).hex)
+        XCTAssertEqual(s("stake_gw"), PrivacyHash.stakeGW(nk: nk, rho: rho).hex)
+        XCTAssertEqual(s("stake_gw_1_2"), PrivacyHash.stakeGW(nk: Fr(UInt64(1)), rho: Fr(UInt64(2))).hex)
         // Stake votes (ORCHARD_DESIGN 8.5), and the design's golden values (= Noir test_go_parity).
         XCTAssertEqual(s("nf_leaf_1_2_3"), PrivacyHash.nfLeaf(value: Fr(UInt64(1)), nextValue: Fr(UInt64(2)), nextIndex: 3).hex)
         XCTAssertEqual("0cdc3a81748c6389efaa3a6c29b7f4609a8e9f860230b70413e8bef512978276", s("nf_leaf_1_2_3"))

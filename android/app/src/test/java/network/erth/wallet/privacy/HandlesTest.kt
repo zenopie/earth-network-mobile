@@ -35,7 +35,9 @@ class HandlesTest {
         override fun epochNumber() = chain.epoch
         override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
         override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
-        override fun positions() = chain.positionReads()
+        override fun groundworksVotes() = chain.gwVoteReads()
+        override fun minGroundworksVote(): Long = if (chain.failMinVoteRead) throw java.io.IOException("node unreachable") else chain.minGroundworksVote
+        override fun groundworksOptions() = chain.gwOptions
         override fun debtTree(start: Long, limit: Int) = chain.debtTreeRead(start, limit)
         override fun validators() = chain.validatorsRead()
         override fun minDelegation() = chain.minDelegation

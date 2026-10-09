@@ -289,8 +289,9 @@ class PrivateTxEngine(
             check(a.ciphertext.size() == network.erth.wallet.privacy.note.NoteCipher.CIPHERTEXT_BYTES) { "an action ciphertext is ${a.ciphertext.size()} bytes" }
         }
         PrivateMsgs.stake(msg)?.let { p ->
-            check(p.nullifiersCount == 2) { "a stake proof carries two nullifiers" }
-            for (f in p.nullifiersList + listOf(p.anchor, p.ownerTag, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot)) {
+            check(p.nullifiersCount == 2 && p.groundworksTagsCount == 2) { "a stake proof carries two nullifiers and two tags" }
+            for (f in p.nullifiersList + p.groundworksTagsList + listOf(p.anchor, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot,
+                    p.creditGroundworksTag, p.voteTag, p.creditVoteTag)) {
                 check(f.size() == 32) { "a stake proof field is ${f.size()} bytes" }
             }
             for ((cm, ct) in listOf(p.commitment to p.ciphertext, p.creditCommitment to p.creditCiphertext)) {
@@ -373,8 +374,15 @@ class PrivateTxEngine(
 
     /** A stake proof's nullifiers (lane A's and the credit lane's), each non-zero one replaced (a zero marks an unused slot and stays). */
     private fun randomNullifiers(p: StakeProof): StakeProof = p.toBuilder().apply {
-        for (i in 0 until nullifiersCount) if (!Fr.fromBytes(getNullifiers(i).toByteArray()).isZero) setNullifiers(i, randomField())
-        if (!Fr.fromBytes(creditNullifier.toByteArray()).isZero) setCreditNullifier(randomField())
+        fun zero(b: ByteString) = Fr.fromBytes(b.toByteArray()).isZero
+        for (i in 0 until nullifiersCount) if (!zero(getNullifiers(i))) setNullifiers(i, randomField())
+        if (!zero(creditNullifier)) setCreditNullifier(randomField())
+        // The Groundworks tags too: a quote never shows the node which stored
+        // vote a note holds (gas does not depend on them).
+        for (i in 0 until groundworksTagsCount) if (!zero(getGroundworksTags(i))) setGroundworksTags(i, randomField())
+        if (!zero(creditGroundworksTag)) setCreditGroundworksTag(randomField())
+        if (!zero(voteTag)) setVoteTag(randomField())
+        if (!zero(creditVoteTag)) setCreditVoteTag(randomField())
     }.build()
 
     /** The membership's real root and nullifier (the chain checks both before any proof), a placeholder proof. */
@@ -428,12 +436,17 @@ class PrivateTxEngine(
         /**
          * A stake proof: its proof (2,000,000), two note writes per lane A
          * nullifier slot and one for its output (the indexed nullifier tree
-         * rewrites two paths an insert), and the msg's base (at most 400,000;
-         * the chain's PrivateActionGas).
+         * rewrites two paths an insert), the msg's base (at most 600,000, a
+         * delegation's; the chain's PrivateActionGas) and its Groundworks
+         * effect (300,000, voting or not).
          */
-        const val STAKE_GAS = 3_150_000L
-        /** A credit lane's (a redelegation's) writes, and MsgRedelegate's base beyond [STAKE_GAS]'s (700,000). */
-        const val CREDIT_GAS = 3 * 150_000L + 300_000L
+        const val STAKE_GAS = 3_650_000L
+        /**
+         * A credit lane (a redelegation's), 550,000: its three note writes, and
+         * the 100,000 by which MsgRedelegate's base (700,000) exceeds the
+         * 600,000 in [STAKE_GAS].
+         */
+        const val CREDIT_GAS = 3 * 150_000L + 100_000L
         /**
          * MsgRedelegate's gas for the (src, dst) pair's x/staking record at
          * its worst (the chain's redelegateGas): 2,500 an entry read and

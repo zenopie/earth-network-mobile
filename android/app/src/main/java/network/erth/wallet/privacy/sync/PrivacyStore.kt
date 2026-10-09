@@ -178,14 +178,6 @@ data class PendingMove(
 data class CarriedMark(val at: Long, val until: Long?, val tx: String?)
 
 /**
- * The last Groundworks split this wallet saw on one of its own positions and
- * when that split's lease ends. The chain clears a lapsed split (splits
- * empty, split_expires_at 0), so only this says when it lapsed and what it
- * was, for the reminder and a re-cast of the same split.
- */
-data class PositionLease(val expiresAt: Long, val split: Map<Long, Long>)
-
-/**
  * What one identity generation of the wallet holds (PrivacyKeys: one phrase,
  * an identity secret per generation): its registration, handle, caretaker
  * split and moves. The wallet acts as [PrivacyState.generation]; an earlier
@@ -451,10 +443,15 @@ class PrivacyState {
     /** A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it. */
     val identityHeights: MutableList<Long> = ArrayList()
     var identityRowsSeen: Long = 0
-    /** Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt). */
-    var nextOtagCounter: Int = 0
-    /** The highest owner-tag counter of a position this wallet closed, from its unlock memos (-1: none). */
-    var closedOtagMax: Int = -1
+    /**
+     * The Groundworks split this wallet votes with (empty: none): every stake
+     * tx carries it to the note it makes (PrivacyWallet.castGroundworks).
+     */
+    var groundworksSplit: Map<Long, Long> = emptyMap()
+    /** The split was chosen here (cast, changed or stopped): never replaced by one read off the chain's votes (PrivacyWallet.adopt). */
+    var groundworksChosen: Boolean = false
+    /** The latest lease end seen on this wallet's own votes (0: none seen): a lapsed vote is deleted on chain, so only this says when it lapsed. */
+    var groundworksExpiresAt: Long = 0
     /**
      * The earliest note position holding a value-0 note of ours with a
      * record's magic whose tag matched no generation tried (-1: none), and
@@ -463,8 +460,6 @@ class PrivacyState {
      */
     var unmatchedRecordFrom: Long = -1
     var unmatchedRecordWindow: Int = 0
-    /** Per position id of ours: its split's lease as last seen (PrivacyWallet.positions keeps it). */
-    val positionLeases: MutableMap<Long, PositionLease> = java.util.TreeMap()
     /** The stake tree's stream cursors and this wallet's stake notes. */
     var stakeNext: Long = 0
     var stakeHeight: Long = 0
@@ -527,11 +522,9 @@ class PrivacyState {
             }
         })
         put("identity_heights", JSONArray(identityHeights)); put("identity_rows_seen", identityRowsSeen)
-        put("next_otag_counter", nextOtagCounter); put("closed_otag_max", closedOtagMax)
+        put("groundworks_split", splitJson(groundworksSplit)); put("groundworks_chosen", groundworksChosen)
+        put("groundworks_expires_at", groundworksExpiresAt)
         put("unmatched_record_from", unmatchedRecordFrom); put("unmatched_record_window", unmatchedRecordWindow)
-        put("position_leases", JSONArray().apply {
-            positionLeases.forEach { (id, l) -> put(JSONObject().put("id", id).put("expires_at", l.expiresAt).put("split", splitJson(l.split))) }
-        })
         put("stake_next", stakeNext); put("stake_height", stakeHeight); put("stake_nullifiers_next", stakeNullifiersNext)
         put("label_window_seconds", labelWindowSeconds)
         put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
@@ -601,13 +594,9 @@ class PrivacyState {
                 }
             }
             identityHeights.addAll(longs(j.optJSONArray("identity_heights"))); identityRowsSeen = j.optLong("identity_rows_seen")
-            nextOtagCounter = j.optInt("next_otag_counter"); closedOtagMax = j.optInt("closed_otag_max", -1)
+            groundworksSplit = splitFromJson(j.optJSONObject("groundworks_split")); groundworksChosen = j.optBoolean("groundworks_chosen")
+            groundworksExpiresAt = j.optLong("groundworks_expires_at")
             unmatchedRecordFrom = j.optLong("unmatched_record_from", -1); unmatchedRecordWindow = j.optInt("unmatched_record_window")
-            j.optJSONArray("position_leases")?.let { a ->
-                for (i in 0 until a.length()) a.getJSONObject(i).let {
-                    positionLeases[it.getLong("id")] = PositionLease(it.optLong("expires_at"), splitFromJson(it.optJSONObject("split")))
-                }
-            }
             stakeNext = j.optLong("stake_next"); stakeHeight = j.optLong("stake_height"); stakeNullifiersNext = j.optLong("stake_nullifiers_next")
             labelWindowSeconds = j.optLong("label_window_seconds")
             j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
@@ -773,11 +762,11 @@ class PrivacyStore private constructor(
 
     /**
      * Forgets the synced data. On the same chain (an inconsistent sync, a
-     * root mismatch) it keeps the owner-tag counter, the registration (its
+     * root mismatch) it keeps the Groundworks split, the registration (its
      * leaf only when it was matched against a verified tree, or the one
      * pending) and what the wallet itself cast (claims, caretaker split,
      * handle, the moves, its stake votes); a different chain or genesis (a
-     * relaunch under the same chain id) keeps only the owner-tag counter.
+     * relaunch under the same chain id) keeps only the Groundworks split.
      */
     @Synchronized
     fun reset(chainId: String?, genesis: String? = state.genesis) {
@@ -788,8 +777,8 @@ class PrivacyStore private constructor(
         state = PrivacyState().apply {
             this.chainId = chainId
             this.genesis = genesis
-            nextOtagCounter = old.nextOtagCounter
-            closedOtagMax = old.closedOtagMax
+            groundworksSplit = old.groundworksSplit
+            groundworksChosen = old.groundworksChosen
             if (old.chainId == chainId && old.genesis == genesis) {
                 // Every generation's slot: registrations (verified ones), handles, splits, moves.
                 keepSlots(old, this) { it.verified }
@@ -801,7 +790,7 @@ class PrivacyStore private constructor(
                 stakeVotes.addAll(old.stakeVotes)
                 // What it sent and expects: the resync finds the notes again and folds them in.
                 activity = old.activity.copy()
-                positionLeases.putAll(old.positionLeases)
+                groundworksExpiresAt = old.groundworksExpiresAt
                 labelWindowSeconds = old.labelWindowSeconds
                 // Notes a tx in flight spends stay unspendable through the resync.
                 carriedMarks.putAll(old.carriedMarks)
@@ -844,7 +833,7 @@ class PrivacyStore private constructor(
      * A relaunch of the same chain id under a new genesis, confirmed by the
      * LCD: the synced data goes, but the registration stays (the
      * identity record, its passport nullifier, a pending registration) and
-     * so do the owner-tag counters; the old chain's bookkeeping does not.
+     * so does the Groundworks split; the old chain's bookkeeping does not.
      */
     @Synchronized
     fun switchGenesis(genesis: String) {
@@ -855,8 +844,8 @@ class PrivacyStore private constructor(
         state = PrivacyState().apply {
             chainId = old.chainId
             this.genesis = genesis
-            nextOtagCounter = old.nextOtagCounter
-            closedOtagMax = old.closedOtagMax
+            groundworksSplit = old.groundworksSplit
+            groundworksChosen = old.groundworksChosen
             // The registration stays: every generation's, and which the wallet acts as.
             generation = old.generation
             generationFloor = old.generationFloor

@@ -115,13 +115,4 @@ public final class PrivacyKeys: @unchecked Sendable {
         return try! Fr.fromWideBytes(Self.hmac(Data(label.utf8) + nk.bytes + c))
     }
 
-    /// Groundworks position `counter`'s owner-tag salt: a position stores
-    /// H(TAG_OTAG, owner_pk, salt) and its owner proves it again to update,
-    /// unlock or vote it. Found again from the mnemonic by recomputing the
-    /// tags of counters 0 ... last+gap against the public positions.
-    ///
-    ///     salt = HMAC-SHA512("earth.privacy.v1", "otag-salt" || nk (32) || counter u32 BE) mod p
-    public func otagSalt(_ counter: UInt32) -> Fr { counted("otag-salt", counter) }
-
-    public func ownerTag(_ counter: UInt32) -> Fr { PrivacyHash.ownerTag(ownerPK: ownerPK, salt: otagSalt(counter)) }
 }

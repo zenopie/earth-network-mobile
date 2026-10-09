@@ -255,7 +255,6 @@ final class StakeNoteTests: PrivacyTestCase {
         func held(_ e: Error) -> Bool { ((e as? NoteSelection.Insufficient)?.message ?? "").contains("moved stake can move again after \(until)") }
         await assertThrowsAsync({ try await a.undelegate(validator: self.vB, amount: n.amount) }, held)
         await assertThrowsAsync({ try await a.quoteMove(src: self.vB, dst: self.vC, amount: n.amount) }, held)
-        await assertThrowsAsync({ try await a.lockPosition(validator: self.vB, amount: n.amount, splits: [1: 100]) }, held)
         XCTAssertEqual(sims, chain.simulated)
         let h = await a.stakeHoldings().first { $0.validator == vB }!
         XCTAssertEqual(n.amount - l.exposed, h.free)
@@ -338,15 +337,19 @@ final class StakeNoteTests: PrivacyTestCase {
         XCTAssertGreaterThanOrEqual(chain.debtAsks.filter { $0.hasPrefix("chain:") }.count, 2)
     }
 
-    /// The proof's owner tag is fresh on every msg that is not a position's.
-    func testOwnerTagsAreFreshOffPositions() async throws {
+    /// Every lane A input publishes its Groundworks tag, padding its own;
+    /// with no split chosen, nothing votes.
+    func testInputsPublishTheirGroundworksTags() async throws {
         let chain = FakeChain()
         let a = try await staked(chain)
         _ = try await a.delegate(validator: vA, amount: 500_000); try await a.sync()
         _ = try await a.undelegate(validator: vA, amount: 100_000); try await a.sync()
         _ = try await a.redelegate(try await a.quoteMove(src: vA, dst: vB, amount: 500_000)); try await a.sync()
-        let tags = chain.prover.allStakes.map(\.otag)
-        XCTAssertEqual(tags.count, Set(tags).count)
+        for w in chain.prover.allStakes {
+            XCTAssertEqual(w.ins.map { PrivacyHash.stakeGW(nk: w.nk, rho: $0.rho) }, w.gw)
+            XCTAssertEqual(0, w.wOut + w.crWOut)
+        }
+        XCTAssertTrue(chain.gwVotes.isEmpty)
     }
 
     /// The value leaves the queue first, and arrives whole, wherever no slash

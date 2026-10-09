@@ -105,7 +105,6 @@ public struct StakeProof: ProtoMessage, Equatable, Sendable {
     public var anchor: Data
     /// Exactly two (lane A): the owner's note(s), or padding, or zero.
     public var nullifiers: [Data]
-    public var ownerTag: Data
     /// Lane A's output (the merged note, the change or a zero note) and its
     /// 201-byte wallet stake ciphertext (empty iff the commitment is zero).
     public var commitment: Data
@@ -119,12 +118,27 @@ public struct StakeProof: ProtoMessage, Equatable, Sendable {
     /// nothing); debt_root is then the current slash debt root, else zero.
     public var clearBefore: UInt64
     public var debtRoot: Data
+    /// Exactly two: lane A's inputs' Groundworks tags (padding its own);
+    /// the credit lane's input's tag (zero when unused). The chain cancels
+    /// the vote stored under each.
+    public var groundworksTags: [Data]
+    public var creditGroundworksTag: Data
+    /// Each output's Groundworks vote: its tag and weight (its unexposed
+    /// derth), zero and 0 when it does not vote.
+    public var voteTag: Data
+    public var voteWeight: UInt64
+    public var creditVoteTag: Data
+    public var creditVoteWeight: UInt64
 
-    public init(proof: Data, anchor: Data, nullifiers: [Data], ownerTag: Data, commitment: Data, ciphertext: Data,
-                creditNullifier: Data, creditCommitment: Data, creditCiphertext: Data, clearBefore: UInt64, debtRoot: Data) {
-        self.proof = proof; self.anchor = anchor; self.nullifiers = nullifiers; self.ownerTag = ownerTag
+    public init(proof: Data, anchor: Data, nullifiers: [Data], commitment: Data, ciphertext: Data,
+                creditNullifier: Data, creditCommitment: Data, creditCiphertext: Data, clearBefore: UInt64, debtRoot: Data,
+                groundworksTags: [Data], creditGroundworksTag: Data, voteTag: Data, voteWeight: UInt64,
+                creditVoteTag: Data, creditVoteWeight: UInt64) {
+        self.proof = proof; self.anchor = anchor; self.nullifiers = nullifiers
         self.commitment = commitment; self.ciphertext = ciphertext; self.creditNullifier = creditNullifier
         self.creditCommitment = creditCommitment; self.creditCiphertext = creditCiphertext; self.clearBefore = clearBefore; self.debtRoot = debtRoot
+        self.groundworksTags = groundworksTags; self.creditGroundworksTag = creditGroundworksTag
+        self.voteTag = voteTag; self.voteWeight = voteWeight; self.creditVoteTag = creditVoteTag; self.creditVoteWeight = creditVoteWeight
     }
 
     public func encoded() -> Data {
@@ -132,7 +146,6 @@ public struct StakeProof: ProtoMessage, Equatable, Sendable {
         w.bytes(1, proof)
         w.bytes(2, anchor)
         w.repeatedBytes(3, nullifiers)
-        w.bytes(7, ownerTag)
         w.bytes(9, commitment)
         w.bytes(10, ciphertext)
         w.bytes(11, creditNullifier)
@@ -140,14 +153,22 @@ public struct StakeProof: ProtoMessage, Equatable, Sendable {
         w.bytes(13, creditCiphertext)
         w.uint64(14, clearBefore)
         w.bytes(15, debtRoot)
+        w.repeatedBytes(16, groundworksTags)
+        w.bytes(17, creditGroundworksTag)
+        w.bytes(18, voteTag)
+        w.uint64(19, voteWeight)
+        w.bytes(20, creditVoteTag)
+        w.uint64(21, creditVoteWeight)
         return w.data
     }
 
     public static func decode(_ d: Data) throws -> StakeProof {
         let f = try ProtoFields(d)
-        return StakeProof(proof: f.bytes(1), anchor: f.bytes(2), nullifiers: f.repeatedBytes(3), ownerTag: f.bytes(7),
+        return StakeProof(proof: f.bytes(1), anchor: f.bytes(2), nullifiers: f.repeatedBytes(3),
                           commitment: f.bytes(9), ciphertext: f.bytes(10), creditNullifier: f.bytes(11), creditCommitment: f.bytes(12),
-                          creditCiphertext: f.bytes(13), clearBefore: f.uint64(14), debtRoot: f.bytes(15))
+                          creditCiphertext: f.bytes(13), clearBefore: f.uint64(14), debtRoot: f.bytes(15),
+                          groundworksTags: f.repeatedBytes(16), creditGroundworksTag: f.bytes(17), voteTag: f.bytes(18),
+                          voteWeight: f.uint64(19), creditVoteTag: f.bytes(20), creditVoteWeight: f.uint64(21))
     }
 }
 
@@ -365,7 +386,8 @@ public enum PrivateMsgs {
     }
 
     /// StakeFields: anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm,
-    /// Bytes(credit_ct), owner_tag, clear_before, debt_root (an absent
+    /// Bytes(credit_ct), clear_before, debt_root, gw_0, gw_1, credit_gw,
+    /// vote_tag, vote_weight, credit_vote_tag, credit_vote_weight (an absent
     /// ciphertext is Bytes of nothing).
     public static func stakeFields(_ p: StakeProof) throws -> [Fr] {
         func at(_ xs: [Data], _ i: Int) -> Data? { i < xs.count ? xs[i] : nil }
@@ -373,7 +395,9 @@ public enum PrivateMsgs {
             try fieldOrZero(p.anchor), try fieldOrZero(at(p.nullifiers, 0)), try fieldOrZero(at(p.nullifiers, 1)),
             try fieldOrZero(p.commitment), bytes(p.ciphertext),
             try fieldOrZero(p.creditNullifier), try fieldOrZero(p.creditCommitment), bytes(p.creditCiphertext),
-            try fieldOrZero(p.ownerTag), u(p.clearBefore), try fieldOrZero(p.debtRoot),
+            u(p.clearBefore), try fieldOrZero(p.debtRoot),
+            try fieldOrZero(at(p.groundworksTags, 0)), try fieldOrZero(at(p.groundworksTags, 1)), try fieldOrZero(p.creditGroundworksTag),
+            try fieldOrZero(p.voteTag), u(p.voteWeight), try fieldOrZero(p.creditVoteTag), u(p.creditVoteWeight),
         ]
     }
 
@@ -483,8 +507,7 @@ public enum PrivateMsgs {
             MsgSend.self, MsgRegisterPrivate.self, MsgClaimAnmlPrivate.self, MsgSetCaretaker.self, MsgMoveCaretaker.self,
             MsgBindHandle.self, MsgMoveHandle.self,
             MsgVoteProposalPrivate.self, MsgProposeRemoval.self, MsgVoteRemoval.self, MsgShieldedDelegate.self, MsgRestake.self,
-            MsgShieldedUndelegate.self, MsgStakeVote.self, MsgLockPosition.self, MsgUpdatePosition.self,
-            MsgUnlockPosition.self, MsgPositionVote.self, MsgRedelegate.self, MsgNoteSwap.self, MsgAddLiquidityShielded.self,
+            MsgShieldedUndelegate.self, MsgStakeVote.self, MsgRedelegate.self, MsgNoteSwap.self, MsgAddLiquidityShielded.self,
             MsgRemoveLiquidityShielded.self,
         ]
         guard let t = types.first(where: { $0.typeURL == typeURL }) else { throw Error.unknownType(typeURL) }
@@ -931,8 +954,10 @@ public extension StakingMsg {
 }
 
 /// The wallet names `derth` (the derth/<validator> credited to its note,
-/// v_in); the chain refuses it unless `amount` buys it at the live rate.
-/// sighash fields: StakeFields, Bytes(validator), amount, derth.
+/// v_in); the chain refuses it unless `amount` buys it at the live rate, and
+/// bonds the amount in the same block. `groundworksSplit`: the split the
+/// output votes with (empty: it does not vote). sighash fields: StakeFields,
+/// Bytes(validator), amount, derth, Bytes(SplitsBytes(groundworks_split)).
 public struct MsgShieldedDelegate: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgDelegate"
     public var bundle: ShieldedBundle
@@ -940,9 +965,12 @@ public struct MsgShieldedDelegate: DecodablePrivateMsg, StakingMsg, Equatable {
     public var stake: StakeProof
     public var amount: UInt64
     public var derth: UInt64
+    public var groundworksSplit: [Msg.AllocationWeight]
 
-    public init(bundle: ShieldedBundle, validator: String, amount: UInt64, derth: UInt64, stake: StakeProof) {
+    public init(bundle: ShieldedBundle, validator: String, amount: UInt64, derth: UInt64, stake: StakeProof,
+                groundworksSplit: [Msg.AllocationWeight] = []) {
         self.bundle = bundle; self.validator = validator; self.amount = amount; self.derth = derth; self.stake = stake
+        self.groundworksSplit = groundworksSplit
     }
 
     public var movedUerth: UInt64 { amount }
@@ -954,29 +982,34 @@ public struct MsgShieldedDelegate: DecodablePrivateMsg, StakingMsg, Equatable {
         w.message(4, stake)
         w.uint64(5, amount)
         w.uint64(6, derth)
+        w.repeatedMessage(7, groundworksSplit)
         return w.data
     }
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
         return Self(bundle: try f.message(1, ShieldedBundle.decode), validator: f.string(2), amount: f.uint64(5), derth: f.uint64(6),
-                    stake: try f.message(4, StakeProof.decode))
+                    stake: try f.message(4, StakeProof.decode), groundworksSplit: try f.repeatedMessage(7, Msg.AllocationWeight.decode))
     }
 
     public func sighashFields() throws -> [Fr] {
-        try PrivateMsgs.stakeFields(stake) + [PrivateMsgs.bytes(validator), PrivateMsgs.u(amount), PrivateMsgs.u(derth)]
+        try PrivateMsgs.stakeFields(stake) + [PrivateMsgs.bytes(validator), PrivateMsgs.u(amount), PrivateMsgs.u(derth),
+                                              PrivateMsgs.bytes(PrivateMsgs.splitsBytes(groundworksSplit))]
     }
 }
 
-/// sighash fields: StakeFields, Bytes(validator).
+/// Merges notes, or votes / changes / renews a note's Groundworks vote by
+/// respending it onto itself with `groundworksSplit`. sighash fields:
+/// StakeFields, Bytes(validator), Bytes(SplitsBytes(groundworks_split)).
 public struct MsgRestake: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgRestake"
     public var bundle: ShieldedBundle
     public var validator: String
     public var stake: StakeProof
+    public var groundworksSplit: [Msg.AllocationWeight]
 
-    public init(bundle: ShieldedBundle, validator: String, stake: StakeProof) {
-        self.bundle = bundle; self.validator = validator; self.stake = stake
+    public init(bundle: ShieldedBundle, validator: String, stake: StakeProof, groundworksSplit: [Msg.AllocationWeight] = []) {
+        self.bundle = bundle; self.validator = validator; self.stake = stake; self.groundworksSplit = groundworksSplit
     }
 
     public func encoded() -> Data {
@@ -984,23 +1017,26 @@ public struct MsgRestake: DecodablePrivateMsg, StakingMsg, Equatable {
         w.message(1, bundle)
         w.string(2, validator)
         w.message(4, stake)
+        w.repeatedMessage(5, groundworksSplit)
         return w.data
     }
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, ShieldedBundle.decode), validator: f.string(2), stake: try f.message(4, StakeProof.decode))
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), validator: f.string(2), stake: try f.message(4, StakeProof.decode),
+                    groundworksSplit: try f.repeatedMessage(5, Msg.AllocationWeight.decode))
     }
 
     public func sighashFields() throws -> [Fr] {
-        try PrivateMsgs.stakeFields(stake) + [PrivateMsgs.bytes(validator)]
+        try PrivateMsgs.stakeFields(stake) + [PrivateMsgs.bytes(validator), PrivateMsgs.bytes(PrivateMsgs.splitsBytes(groundworksSplit))]
     }
 }
 
 /// The chain pays the undelegation out by itself at maturity: value x
 /// payout / requested uerth as pool notes to `pc` with `ciphertext` (several notes sharing it past 2^63-1). The proof creates the
 /// change, or a zero note when nothing is left. sighash fields: StakeFields,
-/// Bytes(validator), amount, pc, Bytes(ciphertext).
+/// Bytes(validator), amount, pc, Bytes(ciphertext),
+/// Bytes(SplitsBytes(groundworks_split)).
 public struct MsgShieldedUndelegate: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgUndelegate"
     public var bundle: ShieldedBundle
@@ -1010,10 +1046,12 @@ public struct MsgShieldedUndelegate: DecodablePrivateMsg, StakingMsg, Equatable 
     /// The payout notes' pc (32 bytes) and v2 amount-blind ciphertext (177 bytes).
     public var pc: Data
     public var ciphertext: Data
+    public var groundworksSplit: [Msg.AllocationWeight]
 
-    public init(bundle: ShieldedBundle, validator: String, amount: UInt64, stake: StakeProof, pc: Data, ciphertext: Data) {
+    public init(bundle: ShieldedBundle, validator: String, amount: UInt64, stake: StakeProof, pc: Data, ciphertext: Data,
+                groundworksSplit: [Msg.AllocationWeight] = []) {
         self.bundle = bundle; self.validator = validator; self.amount = amount; self.stake = stake
-        self.pc = pc; self.ciphertext = ciphertext
+        self.pc = pc; self.ciphertext = ciphertext; self.groundworksSplit = groundworksSplit
     }
 
     public func encoded() -> Data {
@@ -1024,18 +1062,20 @@ public struct MsgShieldedUndelegate: DecodablePrivateMsg, StakingMsg, Equatable 
         w.message(5, stake)
         w.bytes(6, pc)
         w.bytes(7, ciphertext)
+        w.repeatedMessage(8, groundworksSplit)
         return w.data
     }
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
         return Self(bundle: try f.message(1, ShieldedBundle.decode), validator: f.string(2), amount: f.uint64(3),
-                    stake: try f.message(5, StakeProof.decode), pc: f.bytes(6), ciphertext: f.bytes(7))
+                    stake: try f.message(5, StakeProof.decode), pc: f.bytes(6), ciphertext: f.bytes(7),
+                    groundworksSplit: try f.repeatedMessage(8, Msg.AllocationWeight.decode))
     }
 
     public func sighashFields() throws -> [Fr] {
         try PrivateMsgs.stakeFields(stake) + [PrivateMsgs.bytes(validator), PrivateMsgs.u(amount), try PrivateMsgs.f(pc),
-                                              PrivateMsgs.bytes(ciphertext)]
+                                              PrivateMsgs.bytes(ciphertext), PrivateMsgs.bytes(PrivateMsgs.splitsBytes(groundworksSplit))]
     }
 }
 
@@ -1101,139 +1141,6 @@ public struct MsgStakeVote: DecodablePrivateMsg, Equatable {
     }
 }
 
-/// sighash fields: StakeFields, Bytes(validator), amount, Bytes(SplitsBytes(splits)).
-public struct MsgLockPosition: DecodablePrivateMsg, StakingMsg, Equatable {
-    public static let typeURL = "/earth.shieldedstaking.v1.MsgLockPosition"
-    public var bundle: ShieldedBundle
-    public var validator: String
-    public var amount: UInt64
-    public var splits: [Msg.AllocationWeight]
-    public var stake: StakeProof
-
-    public init(bundle: ShieldedBundle, validator: String, amount: UInt64, splits: [Msg.AllocationWeight], stake: StakeProof) {
-        self.bundle = bundle; self.validator = validator; self.amount = amount; self.splits = splits; self.stake = stake
-    }
-
-    public func encoded() -> Data {
-        var w = ProtoWriter()
-        w.message(1, bundle)
-        w.string(2, validator)
-        w.uint64(3, amount)
-        w.repeatedMessage(4, splits)
-        w.message(6, stake)
-        return w.data
-    }
-
-    public static func decodeMsg(_ d: Data) throws -> Self {
-        let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, ShieldedBundle.decode), validator: f.string(2), amount: f.uint64(3),
-                    splits: try f.repeatedMessage(4, Msg.AllocationWeight.decode), stake: try f.message(6, StakeProof.decode))
-    }
-
-    public func sighashFields() throws -> [Fr] {
-        try PrivateMsgs.stakeFields(stake) + [
-            PrivateMsgs.bytes(validator), PrivateMsgs.u(amount), PrivacyHash.bytes(PrivateMsgs.splitsBytes(splits)),
-        ]
-    }
-}
-
-/// sighash fields: StakeFields, position_id, Bytes(SplitsBytes(splits)).
-public struct MsgUpdatePosition: DecodablePrivateMsg, StakingMsg, Equatable {
-    public static let typeURL = "/earth.shieldedstaking.v1.MsgUpdatePosition"
-    public var bundle: ShieldedBundle
-    public var positionID: UInt64
-    public var splits: [Msg.AllocationWeight]
-    public var stake: StakeProof
-
-    public init(bundle: ShieldedBundle, positionID: UInt64, splits: [Msg.AllocationWeight], stake: StakeProof) {
-        self.bundle = bundle; self.positionID = positionID; self.splits = splits; self.stake = stake
-    }
-
-    public func encoded() -> Data {
-        var w = ProtoWriter()
-        w.message(1, bundle)
-        w.uint64(2, positionID)
-        w.repeatedMessage(3, splits)
-        w.message(5, stake)
-        return w.data
-    }
-
-    public static func decodeMsg(_ d: Data) throws -> Self {
-        let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, ShieldedBundle.decode), positionID: f.uint64(2),
-                    splits: try f.repeatedMessage(3, Msg.AllocationWeight.decode), stake: try f.message(5, StakeProof.decode))
-    }
-
-    public func sighashFields() throws -> [Fr] {
-        try PrivateMsgs.stakeFields(stake) + [PrivateMsgs.u(positionID), PrivacyHash.bytes(PrivateMsgs.splitsBytes(splits))]
-    }
-}
-
-/// sighash fields: StakeFields, position_id.
-public struct MsgUnlockPosition: DecodablePrivateMsg, StakingMsg, Equatable {
-    public static let typeURL = "/earth.shieldedstaking.v1.MsgUnlockPosition"
-    public var bundle: ShieldedBundle
-    public var positionID: UInt64
-    public var stake: StakeProof
-
-    public init(bundle: ShieldedBundle, positionID: UInt64, stake: StakeProof) {
-        self.bundle = bundle; self.positionID = positionID; self.stake = stake
-    }
-
-    public func encoded() -> Data {
-        var w = ProtoWriter()
-        w.message(1, bundle)
-        w.uint64(2, positionID)
-        w.message(4, stake)
-        return w.data
-    }
-
-    public static func decodeMsg(_ d: Data) throws -> Self {
-        let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, ShieldedBundle.decode), positionID: f.uint64(2), stake: try f.message(4, StakeProof.decode))
-    }
-
-    public func sighashFields() throws -> [Fr] {
-        try PrivateMsgs.stakeFields(stake) + [PrivateMsgs.u(positionID)]
-    }
-}
-
-/// sighash fields: StakeFields, position_id, proposal_id, Bytes(OptionsBytes(options)).
-public struct MsgPositionVote: DecodablePrivateMsg, StakingMsg, Equatable {
-    public static let typeURL = "/earth.shieldedstaking.v1.MsgPositionVote"
-    public var bundle: ShieldedBundle
-    public var positionID: UInt64
-    public var proposalID: UInt64
-    public var options: [WeightedVoteOption]
-    public var stake: StakeProof
-
-    public init(bundle: ShieldedBundle, positionID: UInt64, proposalID: UInt64, options: [WeightedVoteOption], stake: StakeProof) {
-        self.bundle = bundle; self.positionID = positionID; self.proposalID = proposalID; self.options = options; self.stake = stake
-    }
-
-    public func encoded() -> Data {
-        var w = ProtoWriter()
-        w.message(1, bundle)
-        w.uint64(2, positionID)
-        w.uint64(3, proposalID)
-        w.repeatedMessage(4, options)
-        w.message(6, stake)
-        return w.data
-    }
-
-    public static func decodeMsg(_ d: Data) throws -> Self {
-        let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, ShieldedBundle.decode), positionID: f.uint64(2), proposalID: f.uint64(3),
-                    options: try f.repeatedMessage(4, WeightedVoteOption.decode), stake: try f.message(6, StakeProof.decode))
-    }
-
-    public func sighashFields() throws -> [Fr] {
-        try PrivateMsgs.stakeFields(stake) + [
-            PrivateMsgs.u(positionID), PrivateMsgs.u(proposalID), PrivacyHash.bytes(try PrivateMsgs.optionsBytes(options)),
-        ]
-    }
-}
-
 /// Moves `amount` derth/<src> to `dstValidator` with no unbonding gap
 /// (ORCHARD_DESIGN 8.3, 8.7): lane A spends derth/<src> (v_out = amount,
 /// the change or a zero note back); the credit lane merges `dstDerth` into
@@ -1251,11 +1158,12 @@ public struct MsgRedelegate: DecodablePrivateMsg, StakingMsg, Equatable {
     public var stake: StakeProof
     public var dstDerth: UInt64
     public var moveTime: UInt64
+    public var groundworksSplit: [Msg.AllocationWeight]
 
     public init(bundle: ShieldedBundle, srcValidator: String, dstValidator: String, amount: UInt64, stake: StakeProof,
-                dstDerth: UInt64, moveTime: UInt64) {
+                dstDerth: UInt64, moveTime: UInt64, groundworksSplit: [Msg.AllocationWeight] = []) {
         self.bundle = bundle; self.srcValidator = srcValidator; self.dstValidator = dstValidator; self.amount = amount
-        self.stake = stake; self.dstDerth = dstDerth; self.moveTime = moveTime
+        self.stake = stake; self.dstDerth = dstDerth; self.moveTime = moveTime; self.groundworksSplit = groundworksSplit
     }
 
     public func encoded() -> Data {
@@ -1267,19 +1175,21 @@ public struct MsgRedelegate: DecodablePrivateMsg, StakingMsg, Equatable {
         w.message(5, stake)
         w.uint64(6, dstDerth)
         w.uint64(7, moveTime)
+        w.repeatedMessage(8, groundworksSplit)
         return w.data
     }
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
         return Self(bundle: try f.message(1, ShieldedBundle.decode), srcValidator: f.string(2), dstValidator: f.string(3),
-                    amount: f.uint64(4), stake: try f.message(5, StakeProof.decode), dstDerth: f.uint64(6), moveTime: f.uint64(7))
+                    amount: f.uint64(4), stake: try f.message(5, StakeProof.decode), dstDerth: f.uint64(6), moveTime: f.uint64(7),
+                    groundworksSplit: try f.repeatedMessage(8, Msg.AllocationWeight.decode))
     }
 
     public func sighashFields() throws -> [Fr] {
         try PrivateMsgs.stakeFields(stake) + [
             PrivateMsgs.bytes(srcValidator), PrivateMsgs.bytes(dstValidator), PrivateMsgs.u(amount),
-            PrivateMsgs.u(dstDerth), PrivateMsgs.u(moveTime),
+            PrivateMsgs.u(dstDerth), PrivateMsgs.u(moveTime), PrivateMsgs.bytes(PrivateMsgs.splitsBytes(groundworksSplit)),
         ]
     }
 }

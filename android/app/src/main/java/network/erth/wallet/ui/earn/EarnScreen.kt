@@ -70,9 +70,9 @@ import network.erth.wallet.ui.theme.EarthTheme
  * The stake half is private stake only: one big number, Stake and Unstake,
  * a row per validator (its Add / Move / Unstake in its own sheet), then what
  * is on its way back. There is no claim: private stake compounds into its
- * validator's rate. Stake notes and Groundworks positions both count (a
- * position is stake locked at its validator, earning the same); a validator
- * operator's public self-bond is not shown.
+ * validator's rate. A delegation bonds in its own block, so stake earns
+ * from then on while its validator does; a validator operator's public
+ * self-bond is not shown.
  */
 @Composable
 fun EarnScreen(
@@ -197,10 +197,6 @@ data class PrivateStakeRow(
     val lockedUntil: Long?,
     val notes: Int,
     val mergeable: Boolean,
-    /** The part locked in Groundworks positions, in ERTH. */
-    val groundworksUerth: Long = 0,
-    /** The part still waiting to join its validator, in ERTH; null when unknown (StakeRound.joining). */
-    val joiningUerth: Long? = null,
     /** Its validator's standing; null when the list lacks it. */
     val standing: StakeRound.Standing? = null,
     val commission: Double = 0.0,
@@ -223,23 +219,13 @@ private class StakeView(val state: EarnUiState?, val now: Long, val visible: Boo
     /** The validator's rate after its commission; null when unknown or it earns nothing now. */
     fun apr(p: PrivateStakeRow): Double? =
         if (p.standing?.earns == false) null else state?.let { StakingApr.forValidator(it.totalBondedUerth, p.commission) }
-
-    /** "6:00 AM" when the round's end is known. */
-    val startsAt: String get() = state?.roundEndsAt?.let { clock(it) } ?: "soon"
 }
 
-/** What earns now: all of it but what is waiting to join (rewards accrue only on what is delegated). */
-private val PrivateStakeRow.earningUerth: Long get() = valueUerth - minOf(valueUerth, joiningUerth ?: 0L)
+private enum class StakeStatus { EARNING, IDLE }
 
-private enum class StakeStatus { EARNING, WAITING, IDLE }
-
-/** The row's dot. Waiting only when all of it waits: a top-up still queued does not stop the rest earning. */
+/** The row's dot. */
 private val PrivateStakeRow.status: StakeStatus
-    get() = when {
-        standing?.earns == false -> StakeStatus.IDLE
-        (joiningUerth ?: 0L) > 0 && (joiningUerth ?: 0L) >= valueUerth -> StakeStatus.WAITING
-        else -> StakeStatus.EARNING
-    }
+    get() = if (standing?.earns == false) StakeStatus.IDLE else StakeStatus.EARNING
 
 /** The big number, "ERTH" under it, and at most one short line. */
 @Composable
@@ -259,16 +245,11 @@ private fun StakeHero(view: StakeView, rows: List<PrivateStakeRow>, empty: Boole
     }
 }
 
-/** What it earns a day, or, only while stake waits, when it starts. */
+/** What it earns a day. */
 @Composable
 private fun heroLine(view: StakeView, rows: List<PrivateStakeRow>, total: Long, empty: Boolean): Pair<String, Color>? {
     if (total == 0L) return if (empty) "Earn by staking ERTH" to EarthColors.Text.textTertiary else null
-    val waiting = Amounts.satSum(rows) { it.joiningUerth ?: 0L }
-    if (waiting > 0) {
-        val who = if (waiting >= total) "Starts" else "${if (view.visible) stakeAmount(waiting) else "••••"} starts"
-        return "$who earning ${view.startsAt}" to EarthAccent.warnInk
-    }
-    val daily = rows.sumOf { it.earningUerth.toDouble() * (view.apr(it) ?: 0.0) / 365 }
+    val daily = rows.sumOf { it.valueUerth.toDouble() * (view.apr(it) ?: 0.0) / 365 }
     if (daily <= 0) return "Not earning" to EarthColors.Text.textTertiary
     if (!view.visible) return null
     return "+${dailyText(daily)} ERTH / day" to EarthAccent.ink
@@ -310,14 +291,13 @@ internal fun PillButton(text: String, enabled: Boolean = true, primary: Boolean 
     )
 }
 
-/** Green earning, amber waiting to start, grey not earning. */
+/** Green earning, grey not earning. */
 @Composable
 private fun StatusDot(status: StakeStatus, size: Dp = 8.dp) {
     Box(
         Modifier.size(size).background(
             when (status) {
                 StakeStatus.EARNING -> Color(0xFF00C244)
-                StakeStatus.WAITING -> Color(0xFFFEC84B)
                 StakeStatus.IDLE -> Color(0xFFAAB4A5)
             },
             CircleShape,
@@ -389,9 +369,8 @@ private fun UnstakingListRow(u: UnstakingRow, view: StakeView) {
 }
 
 /**
- * One validator: the big amount and Add / Move / Unstake. A Groundworks part,
- * a window still closed, or notes to merge get one short line each, and only
- * when they apply.
+ * One validator: the big amount and Add / Move / Unstake. A window still
+ * closed, or notes to merge get one short line each, and only when they apply.
  */
 @Composable
 private fun ValidatorStakeSheet(
@@ -418,7 +397,6 @@ private fun ValidatorStakeSheet(
                 Text(
                     text = when (p.status) {
                         StakeStatus.EARNING -> "Earning"
-                        StakeStatus.WAITING -> "Starts ${view.startsAt}"
                         StakeStatus.IDLE -> p.standing?.label ?: "Not earning"
                     },
                     style = EarthTypography.textSm,
@@ -430,9 +408,6 @@ private fun ValidatorStakeSheet(
             else Text("-----", style = EarthTypography.header2.copy(fontWeight = FontWeight.SemiBold), color = EarthColors.Text.textPrimary)
             Text("ERTH", style = EarthTypography.textMd, color = EarthColors.Text.textTertiary)
             Spacer(Modifier.height(12.dp))
-            if (p.groundworksUerth > 0) {
-                ShortLine("${if (view.visible) "%,d".format(p.groundworksUerth / 1_000_000) else "••••"} in Groundworks")
-            }
             if (p.locked > 0 && p.free == 0L) {
                 ShortLine(p.lockedUntil?.let { "Can move ${day(it)}" } ?: "Recently moved here")
             }
@@ -476,22 +451,6 @@ private fun dailyText(uerth: Double): String {
         else -> "<0.001"
     }
 }
-
-/** When the round ends, as "6:00 AM" (today or tomorrow) or "Tue 6:00 AM". */
-internal fun clock(unix: Long): String {
-    val d = java.util.Date(unix * 1000)
-    val time = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(d)
-    val days = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(
-        startOfDay(unix * 1000) - startOfDay(System.currentTimeMillis()),
-    )
-    return if (days in 0..1) time else java.text.SimpleDateFormat("EEE", java.util.Locale.getDefault()).format(d) + " " + time
-}
-
-private fun startOfDay(ms: Long): Long = java.util.Calendar.getInstance().apply {
-    timeInMillis = ms
-    set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
-    set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
-}.timeInMillis
 
 /** A payout or window date: "Oct 28, 6:00 AM". */
 internal fun day(unix: Long): String {

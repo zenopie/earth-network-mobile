@@ -32,7 +32,8 @@ object Privacy {
     val TAG_STAKE = tag("earth.stake")
     val TAG_SPC = tag("earth.spc")
     val TAG_SNF = tag("earth.snf")
-    val TAG_OTAG = tag("earth.otag")
+    val TAG_OTAG = tag("earth.otag") // retired (Groundworks positions); never reuse
+    val TAG_GW = tag("earth.gw")
     // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 3.4, 8.5).
     val TAG_SNFL = tag("earth.snfl")
     val TAG_VNF = tag("earth.vnf")
@@ -43,7 +44,7 @@ object Privacy {
     // Wallet-defined (PRIVACY_FORMATS.md §6): the registration record note's tag.
     val TAG_RECTAG = tag("earth.rectag")
     // Wallet-defined (PRIVACY_FORMATS.md §6): an unlock's closed owner-tag counter.
-    val TAG_UNLOCKTAG = tag("earth.unlocktag")
+    val TAG_UNLOCKTAG = tag("earth.unlocktag") // retired (position unlock records); never reuse
     // Wallet-defined (PRIVACY_FORMATS.md §6): a handle or caretaker state record's tag.
     val TAG_STATETAG = tag("earth.statetag")
 
@@ -142,8 +143,11 @@ object Privacy {
      */
     fun votePadNf(nk: Fr, r: Fr, proposalId: Long): Fr = h(TAG_VPAD, nk, r, u64(proposalId))
 
-    /** A Groundworks position's owner tag: H(TAG_OTAG, owner_pk, salt). */
-    fun ownerTag(ownerPk: Fr, salt: Fr): Fr = h(TAG_OTAG, ownerPk, salt)
+    /**
+     * A stake note's Groundworks tag: H(TAG_GW, nk, rho), the key the chain
+     * stores its vote under (privacy_core::stake_gw).
+     */
+    fun stakeGw(nk: Fr, rho: Fr): Fr = h(TAG_GW, nk, rho)
 
     fun assetId(denom: String): Fr {
         val b = denom.toByteArray(Charsets.UTF_8)

@@ -43,7 +43,8 @@ pub global TAG_ASSET: Field = 0x65617274682e6173736574; // "earth.asset"
 pub global TAG_STAKE: Field = 0x65617274682e7374616b65; // "earth.stake"
 pub global TAG_SPC: Field = 0x65617274682e737063; // "earth.spc"
 pub global TAG_SNF: Field = 0x65617274682e736e66; // "earth.snf"
-pub global TAG_OTAG: Field = 0x65617274682e6f746167; // "earth.otag"
+pub global TAG_OTAG: Field = 0x65617274682e6f746167; // "earth.otag": retired (positions), never reuse
+pub global TAG_GW: Field = 0x65617274682e6777; // "earth.gw"
 // Stake nullifier indexed tree leaves and stake vote nullifiers (circuits/vote).
 pub global TAG_SNFL: Field = 0x65617274682e736e666c; // "earth.snfl"
 pub global TAG_VNF: Field = 0x65617274682e766e66; // "earth.vnf"
@@ -209,10 +210,12 @@ pub fn stake_nf(nk: Field, rho: Field, position: u32) -> Field {
     h4(TAG_SNF, nk, rho, position as Field)
 }
 
-/// Owner tag = H(TAG_OTAG, owner_pk, salt): a commitment to an owner that the
-/// chain stores (a Groundworks position) and the owner later proves again.
-pub fn owner_tag(owner_pk: Field, salt: Field) -> Field {
-    h3(TAG_OTAG, owner_pk, salt)
+/// Groundworks tag = H(TAG_GW, nk, rho): the key the chain stores a stake
+/// note's Groundworks vote under. It needs no tree position, so a proof can
+/// publish it for the note it creates; every spend of the note publishes it
+/// again, which cancels the vote. Only the owner (nk) can compute it.
+pub fn stake_gw(nk: Field, rho: Field) -> Field {
+    h3(TAG_GW, nk, rho)
 }
 
 /// Leaf of the stake nullifier indexed tree = H(TAG_SNFL, value, next_value,
