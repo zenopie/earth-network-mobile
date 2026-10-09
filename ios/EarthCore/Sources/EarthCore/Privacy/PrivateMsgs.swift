@@ -129,11 +129,19 @@ public struct StakeProof: ProtoMessage, Equatable, Sendable {
     public var voteWeight: UInt64
     public var creditVoteTag: Data
     public var creditVoteWeight: UInt64
+    /// Lane A's voting output keeps a label: its exposure votes pending
+    /// (the move's key and time, the exposed derth), counted by the chain
+    /// once the move's window closes; zero and 0 otherwise.
+    public var pendingKey: Data
+    public var pendingTime: UInt64
+    public var pendingExposed: UInt64
 
     public init(proof: Data, anchor: Data, nullifiers: [Data], commitment: Data, ciphertext: Data,
                 creditNullifier: Data, creditCommitment: Data, creditCiphertext: Data, clearBefore: UInt64, debtRoot: Data,
                 groundworksTags: [Data], creditGroundworksTag: Data, voteTag: Data, voteWeight: UInt64,
-                creditVoteTag: Data, creditVoteWeight: UInt64) {
+                creditVoteTag: Data, creditVoteWeight: UInt64,
+                pendingKey: Data = Data(count: 32), pendingTime: UInt64 = 0, pendingExposed: UInt64 = 0) {
+        self.pendingKey = pendingKey; self.pendingTime = pendingTime; self.pendingExposed = pendingExposed
         self.proof = proof; self.anchor = anchor; self.nullifiers = nullifiers
         self.commitment = commitment; self.ciphertext = ciphertext; self.creditNullifier = creditNullifier
         self.creditCommitment = creditCommitment; self.creditCiphertext = creditCiphertext; self.clearBefore = clearBefore; self.debtRoot = debtRoot
@@ -159,6 +167,9 @@ public struct StakeProof: ProtoMessage, Equatable, Sendable {
         w.uint64(19, voteWeight)
         w.bytes(20, creditVoteTag)
         w.uint64(21, creditVoteWeight)
+        w.bytes(22, pendingKey)
+        w.uint64(23, pendingTime)
+        w.uint64(24, pendingExposed)
         return w.data
     }
 
@@ -168,7 +179,8 @@ public struct StakeProof: ProtoMessage, Equatable, Sendable {
                           commitment: f.bytes(9), ciphertext: f.bytes(10), creditNullifier: f.bytes(11), creditCommitment: f.bytes(12),
                           creditCiphertext: f.bytes(13), clearBefore: f.uint64(14), debtRoot: f.bytes(15),
                           groundworksTags: f.repeatedBytes(16), creditGroundworksTag: f.bytes(17), voteTag: f.bytes(18),
-                          voteWeight: f.uint64(19), creditVoteTag: f.bytes(20), creditVoteWeight: f.uint64(21))
+                          voteWeight: f.uint64(19), creditVoteTag: f.bytes(20), creditVoteWeight: f.uint64(21),
+                          pendingKey: f.bytes(22), pendingTime: f.uint64(23), pendingExposed: f.uint64(24))
     }
 }
 
@@ -387,8 +399,9 @@ public enum PrivateMsgs {
 
     /// StakeFields: anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm,
     /// Bytes(credit_ct), clear_before, debt_root, gw_0, gw_1, credit_gw,
-    /// vote_tag, vote_weight, credit_vote_tag, credit_vote_weight (an absent
-    /// ciphertext is Bytes of nothing).
+    /// vote_tag, vote_weight, credit_vote_tag, credit_vote_weight,
+    /// pending_key, pending_time, pending_exposed (an absent ciphertext is
+    /// Bytes of nothing).
     public static func stakeFields(_ p: StakeProof) throws -> [Fr] {
         func at(_ xs: [Data], _ i: Int) -> Data? { i < xs.count ? xs[i] : nil }
         return [
@@ -398,6 +411,7 @@ public enum PrivateMsgs {
             u(p.clearBefore), try fieldOrZero(p.debtRoot),
             try fieldOrZero(at(p.groundworksTags, 0)), try fieldOrZero(at(p.groundworksTags, 1)), try fieldOrZero(p.creditGroundworksTag),
             try fieldOrZero(p.voteTag), u(p.voteWeight), try fieldOrZero(p.creditVoteTag), u(p.creditVoteWeight),
+            try fieldOrZero(p.pendingKey), u(p.pendingTime), u(p.pendingExposed),
         ]
     }
 

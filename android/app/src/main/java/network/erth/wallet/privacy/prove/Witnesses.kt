@@ -125,11 +125,12 @@ data class StakeIn(
  * Groundworks: every input publishes its tag H(TAG_GW, nk, rho) (as it
  * publishes its nullifier: a padding input its own, no input 0); an output
  * that votes ([vote], [crVote]) publishes its own tag and its unexposed
- * amount as the weight. Public inputs, in the chain's order
- * (StakeProof.PublicInputs): anchor, asset, nf_0, nf_1, cm_out, v_in,
- * v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in,
- * cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out,
- * sighash.
+ * amount as the weight; its exposure votes pending (lane A's kept label as
+ * p_key, p_time, p_ex; the credit lane's is the credit itself). Public
+ * inputs, in the chain's order (StakeProof.PublicInputs): anchor, asset,
+ * nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root, cr_asset,
+ * cr_nf, cr_cm, cr_v_in, cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out,
+ * cr_gw_out, cr_w_out, p_key, p_time, p_ex, sighash.
  */
 data class StakeWitness(
     val nk: Fr,
@@ -210,6 +211,12 @@ data class StakeWitness(
     /** A moved-in credit votes only its unexposed part (its input); the exposure votes once its window closes. */
     val crWOut: Long get() = if (!crVote) 0L else if (crMoveTime != 0L) crIn.amount else crOutAmount
 
+    /** Lane A's voting output's kept label, voting pending (p_key, p_time, p_ex); zero when it keeps none or does not vote. */
+    private val pending: StakeLabel? get() = if (vote) outLabel else null
+    val pKey: Fr get() = pending?.moveKey ?: Fr.ZERO
+    val pTime: Long get() = pending?.moveTime ?: 0L
+    val pEx: Long get() = pending?.exposed ?: 0L
+
     /** What the circuit asserts, checked before spending a second on a proof that cannot verify. */
     fun check() {
         require(ins.count { it.label != null } <= 1) { "two labelled inputs" }
@@ -241,7 +248,8 @@ data class StakeWitness(
     fun publicInputs(): List<Fr> = listOf(
         anchor, asset, nullifiers[0], nullifiers[1], commitment, Privacy.u64(vIn), Privacy.u64(vOut),
         Privacy.u64(clearBefore), debtRoot, crAsset, crNf, crCm, Privacy.u64(crVIn), Privacy.u64(crMoveTime),
-        gw[0], gw[1], crGw, gwOut, Privacy.u64(wOut), crGwOut, Privacy.u64(crWOut), sighash,
+        gw[0], gw[1], crGw, gwOut, Privacy.u64(wOut), crGwOut, Privacy.u64(crWOut),
+        pKey, Privacy.u64(pTime), Privacy.u64(pEx), sighash,
     )
 
     fun noirInputs(): Map<String, Any> = mapOf(
@@ -293,6 +301,9 @@ data class StakeWitness(
         "w_out" to hex(wOut),
         "cr_gw_out" to crGwOut.toNoir(),
         "cr_w_out" to hex(crWOut),
+        "p_key" to pKey.toNoir(),
+        "p_time" to hex(pTime),
+        "p_ex" to hex(pEx),
         "sighash" to sighash.toNoir(),
     )
 

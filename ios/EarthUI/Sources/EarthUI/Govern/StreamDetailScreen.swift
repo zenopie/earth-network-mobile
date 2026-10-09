@@ -162,6 +162,11 @@ struct GroundworksVoteControls: View {
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }
+            if !split.isEmpty, let until = pendingUntil {
+                Text("Moved stake counts from \(Date(timeIntervalSince1970: TimeInterval(until)).formatted(date: .abbreviated, time: .omitted))")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
             if let lease {
                 if lease.lapsed(now) {
                     Text("Your vote has lapsed")
@@ -190,12 +195,22 @@ struct GroundworksVoteControls: View {
     }
 
     /// What this wallet's live votes weigh, in ERTH at the live rates.
-    /// Only votes that count (weight > 0: not stale since a stream reset) on the split chosen now.
-    private var voting: UInt64 {
+    /// Votes on the split chosen now that count (not stale since a stream
+    /// reset), moved-in stake still pending included: the chain counts it by
+    /// itself when its window closes.
+    private var counted: [PrivacyWallet.GroundworksVoteView] {
         let split = model.groundworksSplit
-        return model.groundworksVotes.filter { $0.weight > 0 && $0.split == split }
-            .reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, model.derthValue($1.derth, validator: $1.validator)) }
+        return model.groundworksVotes.filter { ($0.weight > 0 || $0.pending > 0) && $0.split == split }
     }
+
+    private var voting: UInt64 {
+        counted.reduce(UInt64(0)) {
+            PrivateMsgs.saturatingAdd($0, model.derthValue(PrivateMsgs.saturatingAdd($1.derth, $1.pending), validator: $1.validator))
+        }
+    }
+
+    /// When the last moved-in stake starts counting (nil: none pending).
+    private var pendingUntil: Int64? { counted.filter { $0.pending > 0 }.map(\.maturesAt).max() }
 
     private func rows(_ split: [UInt64: UInt64]) -> [(String, String)] {
         split.sorted { $0.value > $1.value }.map { id, pct in

@@ -280,7 +280,8 @@ object PrivateMsgs {
     /**
      * StakeFields: anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm,
      * Bytes(credit_ct), clear_before, debt_root, gw_0, gw_1, credit_gw,
-     * vote_tag, vote_weight, credit_vote_tag, credit_vote_weight (an absent
+     * vote_tag, vote_weight, credit_vote_tag, credit_vote_weight,
+     * pending_key, pending_time, pending_exposed (an absent
      * ciphertext is Bytes of nothing).
      */
     fun stakeFields(p: StakeProof): List<Fr> = listOf(
@@ -290,6 +291,7 @@ object PrivateMsgs {
         u(p.clearBefore), fieldOrZero(p.debtRoot),
         fieldOrZero(p.groundworksTagsList.getOrNull(0)), fieldOrZero(p.groundworksTagsList.getOrNull(1)), fieldOrZero(p.creditGroundworksTag),
         fieldOrZero(p.voteTag), u(p.voteWeight), fieldOrZero(p.creditVoteTag), u(p.creditVoteWeight),
+        fieldOrZero(p.pendingKey), u(p.pendingTime), u(p.pendingExposed),
     )
 
     /** The bundles' summed uerth balance (shielded UerthBalance). */

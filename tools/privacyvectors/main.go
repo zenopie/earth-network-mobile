@@ -112,7 +112,7 @@ func stakeProof(seed uint64, spends int, creates, credits, clears bool) stakingt
 	p := stakingtypes.StakeProof{Proof: []byte{0x5e, byte(seed)}, Anchor: fb(seed),
 		GroundworksTags: [][]byte{fb(seed + 8), fb(seed + 9)},
 		Commitment: zero, CreditNullifier: zero, CreditCommitment: zero, DebtRoot: zero,
-		CreditGroundworksTag: zero, VoteTag: zero, CreditVoteTag: zero}
+		CreditGroundworksTag: zero, VoteTag: zero, CreditVoteTag: zero, PendingKey: zero}
 	for i := 0; i < 2; i++ {
 		nf := zero
 		if i < spends {
@@ -140,6 +140,13 @@ func voting(p stakingtypes.StakeProof, seed, w, cw uint64) stakingtypes.StakePro
 	if cw > 0 {
 		p.CreditVoteTag, p.CreditVoteWeight = fb(seed+12), cw
 	}
+	return p
+}
+
+// pending is p's lane A vote with a kept label's exposure voting pending:
+// the move key seed+13, its time and exposure.
+func pending(p stakingtypes.StakeProof, seed, time, ex uint64) stakingtypes.StakeProof {
+	p.PendingKey, p.PendingTime, p.PendingExposed = fb(seed+13), time, ex
 	return p
 }
 
@@ -664,6 +671,8 @@ func main() {
 	add("delegate_vote", &stakingtypes.MsgDelegate{Bundle: fee(140, 502000), Validator: val, Amount: 500000, Derth: 449_995,
 		Stake: voting(stakeProof(140, 1, true, false, true), 140, 849_995, 0), GroundworksSplit: splits})
 	add("restake_vote", &stakingtypes.MsgRestake{Bundle: fee(150, 2000), Validator: val, Stake: voting(stakeProof(150, 2, true, false, true), 150, 1_200_000, 0), GroundworksSplit: splits})
+	add("restake_vote_pending", &stakingtypes.MsgRestake{Bundle: fee(155, 2000), Validator: val,
+		Stake: pending(voting(stakeProof(155, 1, true, false, true), 155, 0, 0), 155, 1_790_000_100, 300_000), GroundworksSplit: splits})
 	add("undelegate_vote", &stakingtypes.MsgUndelegate{Bundle: fee(160, 2000), Validator: val, Amount: 400000,
 		Stake: voting(stakeProof(160, 1, true, false, true), 160, 600_000, 0), Pc: fb(161), Ciphertext: bct(161), GroundworksSplit: splits})
 	val2raw := make([]byte, 20)
@@ -693,6 +702,8 @@ func main() {
 			"redelegate": &stakingtypes.MsgRedelegate{SrcValidator: val, DstValidator: val2, Amount: 400000, Stake: stakeProof(175, 1, true, true, true), DstDerth: 380_000, MoveTime: 1_790_000_123},
 			"redelegate_vote": &stakingtypes.MsgRedelegate{SrcValidator: val, DstValidator: val2, Amount: 400000,
 				Stake: voting(stakeProof(170, 1, true, true, true), 170, 500_000, 380_000), DstDerth: 380_000, MoveTime: 1_790_000_123, GroundworksSplit: splits},
+			"restake_vote_pending": &stakingtypes.MsgRestake{Validator: val,
+				Stake: pending(voting(stakeProof(155, 1, true, false, true), 155, 0, 0), 155, 1_790_000_100, 300_000), GroundworksSplit: splits},
 		} {
 			p := m.StakeProofOf()
 			in := p.PublicInputs(m.StakeLanes(), fe(77))

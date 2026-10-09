@@ -44,7 +44,14 @@ final class PrivateMsgsTests: XCTestCase {
                    creditCiphertext: credits ? sct(Int(seed) + 1) : Data(),
                    clearBefore: clears ? 1_790_000_000 + seed : 0, debtRoot: clears ? fb(seed + 6) : zero32,
                    groundworksTags: [fb(seed + 8), fb(seed + 9)], creditGroundworksTag: credits ? fb(seed + 10) : zero32,
-                   voteTag: zero32, voteWeight: 0, creditVoteTag: zero32, creditVoteWeight: 0)
+                   voteTag: zero32, voteWeight: 0, creditVoteTag: zero32, creditVoteWeight: 0, pendingKey: zero32)
+    }
+
+    /// main.go pending: lane A's vote with a kept label's exposure pending (key seed+13).
+    func pending(_ p: StakeProof, _ seed: UInt64, _ time: UInt64, _ ex: UInt64) -> StakeProof {
+        var p = p
+        p.pendingKey = fb(seed + 13); p.pendingTime = time; p.pendingExposed = ex
+        return p
     }
 
     /// main.go voting: lane A's output votes (tag seed+11, weight w), and the credit lane's (seed+12, cw) when cw > 0.
@@ -115,6 +122,9 @@ final class PrivateMsgsTests: XCTestCase {
                                              stake: voting(stake(140, 1, true), 140, 849_995), groundworksSplit: [w(2, 100)]),
         "restake_vote": MsgRestake(bundle: fee(150, 2000), validator: validator, stake: voting(stake(150, 2, true), 150, 1_200_000),
                                    groundworksSplit: [w(2, 100)]),
+        "restake_vote_pending": MsgRestake(bundle: fee(155, 2000), validator: validator,
+                                           stake: pending(voting(stake(155, 1, true), 155, 0), 155, 1_790_000_100, 300_000),
+                                           groundworksSplit: [w(2, 100)]),
         "undelegate_vote": MsgShieldedUndelegate(bundle: fee(160, 2000), validator: validator, amount: 400_000,
                                                  stake: voting(stake(160, 1, true), 160, 600_000), pc: fb(161), ciphertext: bct(161),
                                                  groundworksSplit: [w(2, 100)]),
@@ -170,11 +180,11 @@ final class PrivateMsgsTests: XCTestCase {
     /// The stake and vote circuits' public inputs, as the chain lays them out per msg (FakeChain checks every witness against this layout).
     func testPublicInputLayoutsMatchTheChain() throws {
         let want = Vectors.obj("public_inputs")
-        for name in ["delegate", "undelegate", "redelegate", "redelegate_vote"] {
+        for name in ["delegate", "undelegate", "redelegate", "redelegate_vote", "restake_vote_pending"] {
             let m = msgs[name] as! any PrivateMsg
             let got = try ChainLayout.stakePublicInputs(m.stakeProof!, ChainLayout.lanes(m), Vectors.fe(77))
             XCTAssertEqual(want[name] as? [String], got.map(\.hex), name)
-            XCTAssertEqual(22, got.count)
+            XCTAssertEqual(25, got.count)
         }
         let vote = msgs["stake_vote_two"] as! MsgStakeVote
         let got = try ChainLayout.votePublicInputs(vote, noteRoot: Vectors.fe(131), nfRoot: Vectors.fe(132), sighash: Vectors.fe(77))

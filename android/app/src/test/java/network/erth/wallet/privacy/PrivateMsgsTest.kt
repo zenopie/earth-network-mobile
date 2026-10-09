@@ -87,7 +87,7 @@ class PrivateMsgsTest {
             .setAnchor(fb(seed))
             .setCommitment(zero32).setCreditNullifier(zero32).setCreditCommitment(zero32).setDebtRoot(zero32)
             .addAllGroundworksTags(listOf(fb(seed + 8), fb(seed + 9))).setCreditGroundworksTag(zero32)
-            .setVoteTag(zero32).setCreditVoteTag(zero32)
+            .setVoteTag(zero32).setCreditVoteTag(zero32).setPendingKey(zero32)
         for (i in 0 until 2) p.addNullifiers(if (i < spends) fb(seed + 1 + i) else zero32)
         if (creates) p.setCommitment(fb(seed + 3)).setCiphertext(sct(seed.toInt()))
         if (credits) {
@@ -104,6 +104,10 @@ class PrivateMsgsTest {
         if (cw > 0) b.setCreditVoteTag(fb(seed + 12)).setCreditVoteWeight(cw)
         return b.build()
     }
+
+    /** main.go pending: lane A's vote with a kept label's exposure pending (key seed+13). */
+    private fun pending(p: StakeProof, seed: Long, time: Long, ex: Long): StakeProof =
+        p.toBuilder().setPendingKey(fb(seed + 13)).setPendingTime(time).setPendingExposed(ex).build()
 
     private fun membership(seed: Long): Membership = Membership.newBuilder()
         .setProof(ByteString.copyFrom(byteArrayOf(0xbe.toByte(), 0xef.toByte(), seed.toByte())))
@@ -183,6 +187,8 @@ class PrivateMsgsTest {
                 .setStake(voting(stake(140, 1, true), 140, 849_995)).addGroundworksSplit(w(2, 100)).build(),
             "restake_vote" to MsgRestake.newBuilder().setBundle(fee(150, 2000)).setValidator(validator)
                 .setStake(voting(stake(150, 2, true), 150, 1_200_000)).addGroundworksSplit(w(2, 100)).build(),
+            "restake_vote_pending" to MsgRestake.newBuilder().setBundle(fee(155, 2000)).setValidator(validator)
+                .setStake(pending(voting(stake(155, 1, true), 155, 0), 155, 1_790_000_100, 300_000)).addGroundworksSplit(w(2, 100)).build(),
             "undelegate_vote" to MsgUndelegate.newBuilder().setBundle(fee(160, 2000)).setValidator(validator).setAmount(400_000)
                 .setStake(voting(stake(160, 1, true), 160, 600_000)).setPc(fb(161)).setCiphertext(bct(161)).addGroundworksSplit(w(2, 100)).build(),
             "redelegate_vote" to MsgRedelegate.newBuilder().setBundle(fee(170, 2000)).setSrcValidator(validator)
@@ -242,7 +248,7 @@ class PrivateMsgsTest {
     @Test
     fun publicInputLayoutsMatchTheChain() {
         val want = json.getJSONObject("public_inputs")
-        for (name in listOf("delegate", "undelegate", "redelegate", "redelegate_vote")) {
+        for (name in listOf("delegate", "undelegate", "redelegate", "redelegate_vote", "restake_vote_pending")) {
             val m = msgs.getValue(name)
             val got = ChainLayout.stakePublicInputs(PrivateMsgs.stake(m)!!, ChainLayout.lanes(m), fe(77))
             val w = want.getJSONArray(name)

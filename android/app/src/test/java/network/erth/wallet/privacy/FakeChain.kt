@@ -142,7 +142,25 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     // x/shieldedstaking Groundworks votes, x/personhood handles and caretaker splits, x/assembly removal ballots.
     /** A Groundworks vote: a stake note's, stored under its tag (x/shieldedstaking GroundworksVote). */
-    data class GwVote(val id: Long, val validator: String, val derth: Long, val tag: Fr, val splits: Map<Long, Long>, val splitExpiresAt: Long)
+    data class GwVote(
+        val id: Long,
+        val validator: String,
+        val derth: Long,
+        val tag: Fr,
+        val splits: Map<Long, Long>,
+        val splitExpiresAt: Long,
+        /** Moved-in derth voting pending (its move's key), counted from [maturesAt]. */
+        val pending: Long = 0,
+        val pendingKey: Fr = Fr.ZERO,
+        val maturesAt: Long = 0,
+    )
+
+    /** The chain's BeginBlock maturity at [now]: every due pending exposure counts, at its debt row's retained if the move was slashed. */
+    fun matureVotes() {
+        for ((t, v) in gwVotes.entries.toList()) if (v.pending > 0 && v.maturesAt <= now) {
+            gwVotes[t] = v.copy(derth = v.derth + minOf(v.pending, debtRows[v.pendingKey] ?: v.pending), pending = 0, pendingKey = Fr.ZERO, maturesAt = 0)
+        }
+    }
     /** x/allocation groundworks_lease_seconds: a vote counts this long after it was cast. */
     var groundworksLease = 365L * 86_400
     /** min_position: a vote's least weight (derth x epoch rate). */
@@ -669,35 +687,54 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     private fun inputTags(p: StakeProof) = (p.groundworksTagsList + listOf(p.creditGroundworksTag)).map(::f).filter { !it.isZero }
 
+    /** One output's vote: tag, weight now, pending exposure (amount, key, move time), validator. */
+    private data class GwOut(val tag: Fr, val w: Long, val pend: Long, val key: Fr, val time: Long, val v: String)
+
+    /** A msg's two outputs' votes. */
+    private fun gwOutputs(m: MessageLite, p: StakeProof): List<GwOut> {
+        val (_, a, credit) = groundworks(m)
+        val cr = if (m is MsgRedelegate && !f(p.creditVoteTag).isZero) GwOut(f(p.creditVoteTag), p.creditVoteWeight, m.dstDerth, f(p.creditNullifier), m.moveTime, credit)
+        else GwOut(f(p.creditVoteTag), p.creditVoteWeight, 0, Fr.ZERO, 0, credit)
+        return listOf(GwOut(f(p.voteTag), p.voteWeight, p.pendingExposed, f(p.pendingKey), p.pendingTime, a), cr)
+    }
+
     /**
-     * The chain's checkGroundworks: a split only with a vote, each vote weighing
-     * at least min_position, under a tag no live vote holds unless this proof cancels it.
+     * The chain's checkGroundworks (and ValidateBasic's vote rules): a split
+     * only with a vote, each vote (its pending exposure included) weighing at
+     * least min_position, under a tag no live vote holds unless this proof cancels it.
      */
     private fun checkGroundworks(m: MessageLite, p: StakeProof) {
-        val (split, a, credit) = groundworks(m)
-        val outs = listOf(Triple(f(p.voteTag), p.voteWeight, a), Triple(f(p.creditVoteTag), p.creditVoteWeight, credit))
-        val voting = outs.any { it.second > 0 }
+        val split = groundworks(m).first
+        val outs = gwOutputs(m, p)
+        val pendingA = !f(p.pendingKey).isZero
+        require(pendingA == (p.pendingTime != 0L) && pendingA == (p.pendingExposed != 0L)) { "a pending exposure whole or none" }
+        require(outs[0].tag.isZero == (p.voteWeight == 0L && !pendingA)) { "a vote tag exactly with a weight or a pending exposure" }
+        require(!(outs[1].tag.isZero && p.creditVoteWeight != 0L)) { "a credit vote's weight without its tag" }
+        val voting = outs.any { !it.tag.isZero }
         require(voting == split.isNotEmpty()) { "a groundworks_split exactly when an output votes" }
-        for ((tag, w, _) in outs) require((w == 0L) == tag.isZero) { "a vote tag exactly with a vote weight" }
         if (!voting) return
         require(split.sumOf { it.percent } == 100L) { "a split sums to 100" }
         gwOptions?.let { o -> require(split.all { it.optionId in o }) { "option removed (ValidateSplit)" } }
         val cancelled = inputTags(p).toSet()
-        for ((tag, w, v) in outs) if (w > 0) {
-            require(PrivacyWallet.derthValue(w, quoteOf(v).epochRate) >= minGroundworksVote) { "a vote weighs at least $minGroundworksVote (code 1108)" }
-            require(tag !in gwVotes || tag in cancelled) { "a vote is already stored under this tag (code 1108)" }
+        for (o in outs) if (!o.tag.isZero) {
+            require(PrivacyWallet.derthValue(o.w + o.pend, quoteOf(o.v).epochRate) >= minGroundworksVote) { "a vote weighs at least $minGroundworksVote (code 1108)" }
+            require(o.tag !in gwVotes || o.tag in cancelled) { "a vote is already stored under this tag (code 1108)" }
         }
     }
 
     private fun applyGroundworks(m: MessageLite, p: StakeProof) {
         inputTags(p).forEach { gwVotes.remove(it) }
-        val (split, a, credit) = groundworks(m)
-        val splits = split.associate { it.optionId to it.percent }
-        for ((tag, w, v) in listOf(Triple(f(p.voteTag), p.voteWeight, a), Triple(f(p.creditVoteTag), p.creditVoteWeight, credit))) if (w > 0) {
-            gwVotes[tag] = GwVote(nextVoteId++, v, w, tag, splits, now + groundworksLease)
+        val splits = groundworks(m).first.associate { it.optionId to it.percent }
+        for (o in gwOutputs(m, p)) if (!o.tag.isZero) {
+            var v = GwVote(nextVoteId++, o.v, o.w, o.tag, splits, now + groundworksLease)
+            if (o.pend > 0) {
+                val at = o.time + labelWindow + 1
+                v = if (now >= at) v.copy(derth = v.derth + minOf(o.pend, debtRows[o.key] ?: o.pend))
+                else v.copy(pending = o.pend, pendingKey = o.key, maturesAt = at)
+            }
+            gwVotes[o.tag] = v
         }
     }
-
 
     private fun spent(p: StakeProof) = (p.nullifiersList + listOf(p.creditNullifier)).map(::f).filter { !it.isZero }
 
@@ -946,6 +983,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             for (
                 b in p.nullifiersList + p.groundworksTagsList + listOf(
                     p.anchor, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot, p.creditGroundworksTag, p.voteTag, p.creditVoteTag,
+                    p.pendingKey,
                 )
             ) require(b.size() == 32) { "a stake field of ${b.size()} bytes" }
             for ((cm, ct) in listOf(p.commitment to p.ciphertext, p.creditCommitment to p.creditCiphertext)) {
@@ -1396,6 +1434,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         gwVotes.values.sortedBy { it.id }.map {
             PrivacyChainReads.GroundworksVote(
                 it.id, it.validator, it.derth, PrivacyWallet.derthValue(it.derth, quoteOf(it.validator).epochRate), it.tag, it.splits, it.splitExpiresAt,
+                it.pending, it.maturesAt,
             )
         }
 
@@ -1427,7 +1466,8 @@ object ChainLayout {
         f(p.commitment), Privacy.u64(l.vIn), Privacy.u64(l.vOut), Privacy.u64(p.clearBefore), f(p.debtRoot),
         l.crDenom?.let(Privacy::assetId) ?: Fr.ZERO, f(p.creditNullifier), f(p.creditCommitment), Privacy.u64(l.crVIn),
         Privacy.u64(l.crMoveTime), f(p.getGroundworksTags(0)), f(p.getGroundworksTags(1)), f(p.creditGroundworksTag),
-        f(p.voteTag), Privacy.u64(p.voteWeight), f(p.creditVoteTag), Privacy.u64(p.creditVoteWeight), sighash,
+        f(p.voteTag), Privacy.u64(p.voteWeight), f(p.creditVoteTag), Privacy.u64(p.creditVoteWeight),
+        f(p.pendingKey), Privacy.u64(p.pendingTime), Privacy.u64(p.pendingExposed), sighash,
     )
 
     fun votePublicInputs(m: MsgStakeVote, noteRoot: Fr, nfRoot: Fr, sighash: Fr): List<Fr> =

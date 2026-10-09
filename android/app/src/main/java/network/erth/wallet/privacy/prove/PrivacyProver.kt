@@ -36,8 +36,8 @@ object PrivacyProver {
         ACTION("action", SRS_SIZE, 6),
         // anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before,
         // debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, gw_0, gw_1,
-        // cr_gw, gw_out, w_out, cr_gw_out, cr_w_out, sighash.
-        STAKE("stake", SRS_SIZE, 22),
+        // cr_gw, gw_out, w_out, cr_gw_out, cr_w_out, p_key, p_time, p_ex, sighash.
+        STAKE("stake", SRS_SIZE, 25),
         // note_root, nf_root, debt_root, asset, weight, proposal_id, vnf[0..1], sighash.
         VOTE("vote", SRS_SIZE, 9),
     }

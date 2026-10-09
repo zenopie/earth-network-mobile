@@ -120,6 +120,9 @@ interface PrivacyChainReads {
         val splits: Map<Long, Long>,
         /** When the vote stops counting (x/allocation groundworks_lease_seconds after it was cast). */
         val splitExpiresAt: Long,
+        /** Moved-in derth voting pending: counted from [maturesAt] (when its move's window closes). */
+        val pending: Long = 0,
+        val maturesAt: Long = 0,
     )
 
     /**
@@ -1856,9 +1859,11 @@ class PrivacyWallet(
         amount = Math.subtractExact(Math.addExact(amount, vIn), vOut)
         require(amount >= 0) { "insufficient stake" }
         val out = StakePlan.out(keys, denom, amount, if (clear.clears) null else l)
-        // A split chosen: each output votes with it, when it weighs enough.
-        val vote = votes(gw, denom, out.amount - (out.label?.exposed ?: 0L))
-        val creditVote = credit?.let { votes(gw, it.denom, it.out.amount - it.vIn) } ?: false
+        // A split chosen: each output votes with it, when it weighs enough
+        // (its exposure included: it votes pending and counts once its move's
+        // window closes, the chain needing nothing more from us).
+        val vote = votes(gw, denom, out.amount)
+        val creditVote = credit?.let { votes(gw, it.denom, it.out.amount) } ?: false
         return StakePlan(
             keys.nk, denom, spends, spends.map { store.stakeTree.path(it.position) }, out, vIn, vOut, clear, credit,
             vote = vote, creditVote = creditVote, anchor = stakeAnchor(),
@@ -2603,6 +2608,9 @@ class PrivacyWallet(
         val weight: Long,
         val split: Map<Long, Long>,
         val expiresAt: Long,
+        /** Moved-in derth voting pending, counted from [maturesAt] by the chain itself. */
+        val pending: Long = 0,
+        val maturesAt: Long = 0,
     )
 
     /**
@@ -2613,7 +2621,7 @@ class PrivacyWallet(
         val all = reads.groundworksVotes()
         adopt(all)
         val mine = myTags()
-        return all.filter { it.tag in mine }.map { GroundworksVoteView(it.validator, it.derth, it.weight, it.splits, it.splitExpiresAt) }
+        return all.filter { it.tag in mine }.map { GroundworksVoteView(it.validator, it.derth, it.weight, it.splits, it.splitExpiresAt, it.pending, it.maturesAt) }
     }
 
     private fun myTags(): Set<Fr> = synchronized(this) {

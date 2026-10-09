@@ -157,6 +157,9 @@ class StakePlan(
             .setVoteWeight(w.wOut)
             .setCreditVoteTag(b(w.crGwOut))
             .setCreditVoteWeight(w.crWOut)
+            .setPendingKey(b(w.pKey))
+            .setPendingTime(w.pTime)
+            .setPendingExposed(w.pEx)
             .build()
     }
 

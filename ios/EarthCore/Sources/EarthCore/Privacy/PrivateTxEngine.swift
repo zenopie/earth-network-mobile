@@ -479,6 +479,10 @@ public struct PrivateTxEngine: Sendable {
                 p.creditGroundworksTag = fresh(p.creditGroundworksTag)
                 p.voteTag = fresh(p.voteTag)
                 p.creditVoteTag = fresh(p.creditVoteTag)
+                // And the pending move: its key and time name the move this
+                // note came from (a time now keeps it pending, as gas needs not).
+                p.pendingKey = fresh(p.pendingKey)
+                if p.pendingTime != 0 { p.pendingTime = UInt64(max(1, Date().timeIntervalSince1970)) }
                 stake = p
             }
         }

@@ -150,7 +150,8 @@ public struct StakePlan: Sendable {
                           creditNullifier: w.crNF.bytes, creditCommitment: w.crCM.bytes, creditCiphertext: credit?.out.ciphertext ?? Data(),
                           clearBefore: clear.clearBefore, debtRoot: clear.debtRoot.bytes,
                           groundworksTags: w.gw.map(\.bytes), creditGroundworksTag: w.crGW.bytes,
-                          voteTag: w.gwOut.bytes, voteWeight: w.wOut, creditVoteTag: w.crGWOut.bytes, creditVoteWeight: w.crWOut)
+                          voteTag: w.gwOut.bytes, voteWeight: w.wOut, creditVoteTag: w.crGWOut.bytes, creditVoteWeight: w.crWOut,
+                          pendingKey: w.pKey.bytes, pendingTime: w.pTime, pendingExposed: w.pEx)
     }
 
     /// A created stake note of `amount` `denom` back to `keys` with `label`, and its stake ciphertext.

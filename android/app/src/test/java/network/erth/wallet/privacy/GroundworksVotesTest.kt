@@ -93,12 +93,24 @@ class GroundworksVotesTest : WalletTest() {
         assertEquals(1, chain.gwVotes.size)
         assertEquals(held(a, vA), mine[0].derth)
 
-        // A move: the change at A votes; the credit at B is exposed until its window closes, so it does not.
+        // A move: the change at A votes; the credit at B votes too, pending
+        // (exposed until its move's window closes), and then counts by
+        // itself: nothing to re-cast.
         a.redelegate(a.quoteMove(vA, vB, 500_000)); a.sync()
         mine = a.groundworksVotes()
-        assertEquals(listOf(vA), mine.map { it.validator })
-        assertEquals(held(a, vA), mine[0].derth)
-        assertTrue(held(a, vB) > 0)
+        assertEquals(setOf(vA, vB), mine.map { it.validator }.toSet())
+        assertEquals(held(a, vA), mine.first { it.validator == vA }.derth)
+        val atB = mine.first { it.validator == vB }
+        assertEquals(0L, atB.derth)
+        assertEquals(held(a, vB), atB.pending)
+        assertTrue(atB.maturesAt > chain.now)
+        val txs = chain.txs.size
+        chain.now = atB.maturesAt
+        chain.matureVotes()
+        val matured = a.groundworksVotes().first { it.validator == vB }
+        assertEquals(held(a, vB), matured.derth)
+        assertEquals(0L, matured.pending)
+        assertEquals("the chain counts it; the wallet sent nothing", txs, chain.txs.size)
 
         // Stop: the split cleared, the vote cancelled.
         a.castGroundworks(emptyMap())
@@ -107,6 +119,23 @@ class GroundworksVotesTest : WalletTest() {
         // And a later stake tx votes nothing.
         a.delegate(vA, 1_000_000); a.sync()
         assertTrue(chain.gwVotes.isEmpty())
+    }
+
+    /** A vote changed while moved stake is still exposed keeps its pending part: the restake keeps the label and publishes it (lane A's pending). */
+    @Test
+    fun changingTheVoteKeepsThePendingPart() {
+        val chain = FakeChain().apply { minGroundworksVote = 100_000 }
+        val a = staked(chain)
+        a.castGroundworks(mapOf(2L to 100L))
+        a.redelegate(a.quoteMove(vA, vB, 500_000)); a.sync()
+        a.castGroundworks(mapOf(3L to 100L))
+        val atB = a.groundworksVotes().first { it.validator == vB }
+        assertEquals(mapOf(3L to 100L), atB.split)
+        assertEquals(held(a, vB), atB.pending)
+        assertTrue("lane A published the kept label's exposure", chain.prover.allStakes.any { it.pEx > 0 })
+        chain.now = atB.maturesAt
+        chain.matureVotes()
+        assertEquals(held(a, vB), a.groundworksVotes().first { it.validator == vB }.derth)
     }
 
     /** Notes made apart (another device; delegations without a sync between) merge as the vote is cast, until all of the stake votes as one note. */

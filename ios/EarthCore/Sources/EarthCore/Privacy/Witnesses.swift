@@ -144,11 +144,12 @@ public struct StakeIn: Sendable, Equatable {
 /// Groundworks: every input publishes its tag H(TAG_GW, nk, rho) (as it
 /// publishes its nullifier: a padding input its own, no input 0); an output
 /// that votes (`vote`, `crVote`) publishes its own tag and its unexposed
-/// amount as the weight. Public inputs, in the chain's order
-/// (StakeProof.PublicInputs): anchor, asset, nf_0, nf_1, cm_out, v_in,
-/// v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in,
-/// cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out,
-/// sighash.
+/// amount as the weight; its exposure votes pending (lane A's kept label as
+/// p_key, p_time, p_ex; the credit lane's is the credit itself). Public
+/// inputs, in the chain's order (StakeProof.PublicInputs): anchor, asset,
+/// nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf,
+/// cr_cm, cr_v_in, cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out,
+/// cr_w_out, p_key, p_time, p_ex, sighash.
 public struct StakeWitness: Sendable {
     public let nk: Fr
     public let ins: [StakeIn]
@@ -187,6 +188,11 @@ public struct StakeWitness: Sendable {
     public let wOut: UInt64
     public let crGWOut: Fr
     public let crWOut: UInt64
+    /// Lane A's voting output's kept label, voting pending (p_key, p_time,
+    /// p_ex); zero when it keeps none or does not vote.
+    public let pKey: Fr
+    public let pTime: UInt64
+    public let pEx: UInt64
 
     public init(nk: Fr, ins: [StakeIn], outAmount: UInt64, outRho: Fr, outRcm: Fr, padOut: Bool, clear: Bool, debt: DebtTree.Witness,
                 crIn: StakeIn, crOutRho: Fr, crOutRcm: Fr, vote: Bool = false, crVote: Bool = false, anchor: Fr, asset: Fr,
@@ -224,6 +230,10 @@ public struct StakeWitness: Sendable {
         try require(!crVote || crOut != 0, "a padding output cannot vote")
         gwOut = vote ? PrivacyHash.stakeGW(nk: nk, rho: outRho) : .zero
         wOut = vote ? outAmount - (outLabel?.exposed ?? 0) : 0
+        let pending = vote ? outLabel : nil
+        pKey = pending?.moveKey ?? .zero
+        pTime = pending?.moveTime ?? 0
+        pEx = pending?.exposed ?? 0
         crGWOut = crVote ? PrivacyHash.stakeGW(nk: nk, rho: crOutRho) : .zero
         crWOut = crVote ? (crMoveTime != 0 ? crIn.amount : crOut) : 0
     }
@@ -269,7 +279,8 @@ public struct StakeWitness: Sendable {
     public func publicInputs() -> [Fr] {
         [anchor, asset, nullifiers[0], nullifiers[1], commitment, PrivacyHash.u64(vIn), PrivacyHash.u64(vOut),
          PrivacyHash.u64(clearBefore), debtRoot, crAsset, crNF, crCM, PrivacyHash.u64(crVIn), PrivacyHash.u64(crMoveTime),
-         gw[0], gw[1], crGW, gwOut, PrivacyHash.u64(wOut), crGWOut, PrivacyHash.u64(crWOut), sighash]
+         gw[0], gw[1], crGW, gwOut, PrivacyHash.u64(wOut), crGWOut, PrivacyHash.u64(crWOut),
+         pKey, PrivacyHash.u64(pTime), PrivacyHash.u64(pEx), sighash]
     }
 
     public func noirInputs() -> [String: Any] {
@@ -322,6 +333,9 @@ public struct StakeWitness: Sendable {
             "w_out": noirHex(wOut),
             "cr_gw_out": crGWOut.noir,
             "cr_w_out": noirHex(crWOut),
+            "p_key": pKey.noir,
+            "p_time": noirHex(pTime),
+            "p_ex": noirHex(pEx),
             "sighash": sighash.noir,
         ]
     }
@@ -331,7 +345,7 @@ public struct StakeWitness: Sendable {
                              "debt_low_retained", "debt_low_index", "debt_low_path", "cr_in_amount", "cr_in_rho", "cr_in_rcm", "cr_in_pos",
                              "cr_in_path", "cr_out_rho", "cr_out_rcm", "anchor", "asset", "nf_0", "nf_1", "cm_out", "v_in",
                              "v_out", "clear_before", "debt_root", "cr_asset", "cr_nf", "cr_cm", "cr_v_in", "cr_move_time",
-                             "gw_0", "gw_1", "cr_gw", "gw_out", "w_out", "cr_gw_out", "cr_w_out", "sighash"]
+                             "gw_0", "gw_1", "cr_gw", "gw_out", "w_out", "cr_gw_out", "cr_w_out", "p_key", "p_time", "p_ex", "sighash"]
 
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
 }

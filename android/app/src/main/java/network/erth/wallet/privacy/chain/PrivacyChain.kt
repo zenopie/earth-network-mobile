@@ -296,6 +296,9 @@ object PrivacyQueries {
         val splits: Map<Long, Long>,
         /** When the vote stops counting (unix seconds). */
         val splitExpiresAt: Long,
+        /** Moved-in derth voting pending, counted from [maturesAt] (unix seconds). */
+        val pending: Long = 0,
+        val maturesAt: Long = 0,
     )
 
     /** x/shieldedstaking params.min_position (uerth): the least weight a Groundworks vote carries. */
@@ -341,6 +344,8 @@ object PrivacyQueries {
                         id = v.long("id"), validator = v.optString("validator"), derth = v.long("derth"), weight = v.long("weight"),
                         tag = field(v.optString("tag")),
                         splitExpiresAt = v.long("split_expires_at").coerceAtLeast(0),
+                        pending = v.long("pending"),
+                        maturesAt = v.long("matures_at").coerceAtLeast(0),
                         splits = (0 until (splits?.length() ?: 0)).associate { s ->
                             splits!!.getJSONObject(s).let { it.long("option_id") to it.long("percent") }
                         },

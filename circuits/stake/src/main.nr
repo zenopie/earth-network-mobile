@@ -53,8 +53,13 @@
 //! which needs no tree position. Every input publishes its gw (a padding
 //! input: 0 or its own, as for nullifiers), so any spend of a voting note
 //! cancels its vote. Each output may vote: gw_out (cr_gw_out) is its tag and
-//! w_out (cr_w_out) its unexposed amount, the vote's weight; both 0 when it
-//! does not. An output of amount 0 cannot vote.
+//! w_out (cr_w_out) its unexposed amount, the vote's weight now; both 0 when
+//! it does not. An output of amount 0 cannot vote. A voting output's exposure
+//! votes too, pending: the chain adds it (what the debt tree says it is worth)
+//! once its move's window closes. Lane A's is published as (p_key, p_time,
+//! p_ex), its kept label's move key, move time and exposure (all 0 when it
+//! holds none or does not vote); the credit lane's is the credit itself
+//! (cr_nf, cr_move_time, cr_v_in), public already.
 //!
 //! Every note amount is at most 2^63 - 1 (stake_cm); v_in, v_out, cr_v_in are
 //! public u64 amounts. Binding: the msg's sighash. The chain fixes, per msg,
@@ -64,7 +69,8 @@
 //! Public input order:
 //!   anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root,
 //!   cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time,
-//!   gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out, sighash
+//!   gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out,
+//!   p_key, p_time, p_ex, sighash
 
 use privacy_core::{bind, debt_retained, DEPTH, merkle_root, owner_pk};
 use privacy_core::{stake_cm, stake_gw, stake_label, stake_nf, stake_pc};
@@ -166,6 +172,9 @@ fn main(
     w_out: pub u64,
     cr_gw_out: pub Field,
     cr_w_out: pub u64,
+    p_key: pub Field,
+    p_time: pub u64,
+    p_ex: pub u64,
     sighash: pub Field,
 ) {
     let opk = owner_pk(nk);
@@ -221,6 +230,12 @@ fn main(
     assert(out_amount >= out_ex, "the exposure stays in the note");
     create(opk, asset, out_amount, out_rho, out_rcm, out_label, cm_out);
     vote(nk, out_amount, out_amount - out_ex, out_rho, gw_out, w_out);
+    // The kept exposure votes pending, named exactly; nothing when not voting.
+    if (gw_out != 0) & (out_ex != 0) {
+        assert((p_key == mk) & (p_time == mt) & (p_ex == out_ex), "the pending exposure is the kept label's");
+    } else {
+        assert((p_key == 0) & (p_time == 0) & (p_ex == 0), "no pending exposure");
+    }
     // Unexposed value in == unexposed value out. Each side is at most
     // 2 * (2^63 - 1) + 2 * (2^64 - 1): no wrap in the field.
     let unexposed_in = total - ex as Field + retained;
@@ -311,6 +326,9 @@ struct St {
     w_out: u64,
     cr_gw_out: Field,
     cr_w_out: u64,
+    p_key: Field,
+    p_time: u64,
+    p_ex: u64,
 }
 
 fn none_in() -> In {
@@ -463,6 +481,9 @@ fn honest(ins: [In; 2], o: Out, anchor: Field, v_in: u64, v_out: u64) -> St {
         w_out: 0,
         cr_gw_out: 0,
         cr_w_out: 0,
+        p_key: 0,
+        p_time: 0,
+        p_ex: 0,
     }
 }
 
@@ -544,6 +565,9 @@ fn prove(s: St) {
         s.w_out,
         s.cr_gw_out,
         s.cr_w_out,
+        s.p_key,
+        s.p_time,
+        s.p_ex,
         SIGHASH,
     );
 }
@@ -986,6 +1010,9 @@ fn voting(s: St) -> St {
         for i in 0..2 {
             if t.ins[i].mk != 0 {
                 ex = t.ins[i].ex;
+                t.p_key = t.ins[i].mk;
+                t.p_time = t.ins[i].mt;
+                t.p_ex = ex;
             }
         }
     }
@@ -1018,6 +1045,92 @@ fn test_labelled_note_votes_its_unexposed_part() {
     let (n, root) = tree(300, 500, 100);
     let s = voting(honest([n[1], none_in()], out(1500, 0xe1), root, 1000, 0));
     assert(s.w_out == 1300);
+    prove(s);
+}
+
+#[test]
+fn test_labelled_note_votes_its_exposure_pending() {
+    let (n, root) = tree(300, 500, 100);
+    let s = voting(honest([n[1], none_in()], out(1500, 0xe1), root, 1000, 0));
+    assert((s.p_key == MK) & (s.p_time == MT) & (s.p_ex == EX));
+    prove(s);
+}
+
+#[test(should_fail_with = "the pending exposure is the kept label's")]
+fn test_pending_exposure_overstated() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = voting(honest([n[1], none_in()], out(1500, 0xe1), root, 1000, 0));
+    s.p_ex = EX + 1;
+    prove(s);
+}
+
+#[test(should_fail_with = "the pending exposure is the kept label's")]
+fn test_pending_exposure_under_another_move() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = voting(honest([n[1], none_in()], out(1500, 0xe1), root, 1000, 0));
+    s.p_key = 0x4d4c;
+    prove(s);
+}
+
+#[test(should_fail_with = "the pending exposure is the kept label's")]
+fn test_pending_exposure_hidden() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = voting(honest([n[1], none_in()], out(1500, 0xe1), root, 1000, 0));
+    s.p_key = 0;
+    s.p_time = 0;
+    s.p_ex = 0;
+    prove(s);
+}
+
+#[test(should_fail_with = "no pending exposure")]
+fn test_pending_exposure_without_a_vote() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = honest([n[1], none_in()], out(1500, 0xe1), root, 1000, 0);
+    s.p_key = MK;
+    s.p_time = MT;
+    s.p_ex = EX;
+    prove(s);
+}
+
+#[test(should_fail_with = "no pending exposure")]
+fn test_pending_exposure_on_an_unlabelled_note() {
+    let (n, root) = tree(300, 500, 100);
+    let mut s = voting(honest([n[0], none_in()], out(500, 0xe1), root, 200, 0));
+    s.p_key = MK;
+    s.p_time = MT;
+    s.p_ex = 1;
+    prove(s);
+}
+
+#[test(should_fail_with = "no pending exposure")]
+fn test_cleared_note_has_no_pending_exposure() {
+    let (n, root) = tree(300, 500, 100);
+    let s = clearing(honest([n[1], none_in()], out(490, 0xe1), root, 0, 0), debt(MK, 190, MK));
+    let mut s = voting(s);
+    s.p_key = MK;
+    s.p_time = MT;
+    s.p_ex = EX;
+    prove(s);
+}
+
+#[test]
+fn test_fully_exposed_note_votes_pending_only() {
+    // All 200 of the note exposed: weight 0 now, the exposure pending.
+    let (n, root) = tree(300, 200, 100);
+    let s = voting(honest([n[1], none_in()], out(200, 0xe1), root, 0, 0));
+    assert((s.w_out == 0) & (s.p_ex == EX));
+    prove(s);
+}
+
+#[test]
+fn test_credit_into_an_empty_validator_votes_pending_only() {
+    // No note at the destination: the credit votes, weight 0 now (its whole
+    // amount pending, named by the credit's public move).
+    let (n, root) = tree(300, 500, 100);
+    let s = honest([n[0], none_in()], out(50, 0xe1), root, 0, 250);
+    let mut s = with_credit(s, dummy_in(0xc7), out(240, 0xf1), 240, 7000);
+    s.cr_gw_out = stake_gw(NK, 0xf1);
+    s.cr_w_out = 0;
     prove(s);
 }
 

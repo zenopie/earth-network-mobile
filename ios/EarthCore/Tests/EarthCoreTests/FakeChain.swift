@@ -77,7 +77,24 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     /// A Groundworks vote: a stake note's, stored under its tag (x/shieldedstaking GroundworksVote).
     struct GwVote: Equatable {
-        let id: UInt64, validator: String, derth: UInt64, tag: Fr, splits: [UInt64: UInt64], splitExpiresAt: Int64
+        let id: UInt64, validator: String
+        var derth: UInt64
+        let tag: Fr, splits: [UInt64: UInt64], splitExpiresAt: Int64
+        /// Moved-in derth voting pending (its move's key), counted from maturesAt.
+        var pending: UInt64 = 0
+        var pendingKey: Fr = .zero
+        var maturesAt: Int64 = 0
+    }
+
+    /// The chain's BeginBlock maturity at `now`: every due pending exposure
+    /// counts, at its debt row's retained if the move was slashed.
+    func matureVotes() {
+        for (t, v) in gwVotes where v.pending > 0 && v.maturesAt <= now {
+            var u = v
+            u.derth += min(v.pending, debtRetained[v.pendingKey] ?? v.pending)
+            u.pending = 0; u.pendingKey = .zero; u.maturesAt = 0
+            gwVotes[t] = u
+        }
     }
     /// x/allocation groundworks_lease_seconds: a vote counts this long after it was cast.
     var groundworksLease: Int64 = 365 * 86400
@@ -623,21 +640,35 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         try (p.groundworksTags + [p.creditGroundworksTag]).map(f).filter { !$0.isZero }
     }
 
-    /// The chain's checkGroundworks: a split only with a vote, each vote weighing
-    /// at least min_position, under a tag no live vote holds unless this proof cancels it.
+    /// A msg's two outputs' votes: tag, weight now, pending exposure (amount, key, move time), validator.
+    private func gwOutputs(_ m: any PrivateMsg, _ p: StakeProof) throws -> [(tag: Fr, w: UInt64, pend: UInt64, key: Fr, time: UInt64, val: String)] {
+        let g = groundworks(m)
+        var credit: (UInt64, Fr, UInt64) = (0, .zero, 0)
+        if let r = m as? MsgRedelegate, !(try f(p.creditVoteTag)).isZero { credit = (r.dstDerth, try f(p.creditNullifier), r.moveTime) }
+        return [(try f(p.voteTag), p.voteWeight, p.pendingExposed, try f(p.pendingKey), p.pendingTime, g.a),
+                (try f(p.creditVoteTag), p.creditVoteWeight, credit.0, credit.1, credit.2, g.credit)]
+    }
+
+    /// The chain's checkGroundworks (and ValidateBasic's vote rules): a split
+    /// only with a vote, each vote (its pending exposure included) weighing at
+    /// least min_position, under a tag no live vote holds unless this proof cancels it.
     private func checkGroundworks(_ m: any PrivateMsg, _ p: StakeProof) throws {
         let g = groundworks(m)
-        let outs = [(try f(p.voteTag), p.voteWeight, g.a), (try f(p.creditVoteTag), p.creditVoteWeight, g.credit)]
-        let voting = outs.contains { $0.1 > 0 }
+        let outs = try gwOutputs(m, p)
+        let pendingA = !(try f(p.pendingKey)).isZero
+        try need(pendingA == (p.pendingTime != 0) && pendingA == (p.pendingExposed != 0), "a pending exposure whole or none")
+        try need(outs[0].tag.isZero == (p.voteWeight == 0 && !pendingA), "a vote tag exactly with a weight or a pending exposure")
+        try need(!(outs[1].tag.isZero && p.creditVoteWeight != 0), "a credit vote's weight without its tag")
+        let voting = outs.contains { !$0.tag.isZero }
         try need(voting == !g.split.isEmpty, "a groundworks_split exactly when an output votes")
-        for (tag, w, _) in outs { try need((w == 0) == tag.isZero, "a vote tag exactly with a vote weight") }
         guard voting else { return }
         try need(g.split.reduce(UInt64(0)) { $0 + $1.percent } == 100, "a split sums to 100")
         if let o = gwOptions { try need(g.split.allSatisfy { o.contains($0.optionID) }, "option removed (ValidateSplit)") }
         let cancelled = Set(try inputTags(p))
-        for (tag, w, v) in outs where w > 0 {
-            try need(PrivacyWallet.derthValue(w, rate: quoteOf(v).epochRate) >= minGroundworksVote, "a vote weighs at least \(minGroundworksVote) (code 1108)")
-            try need(gwVotes[tag] == nil || cancelled.contains(tag), "a vote is already stored under this tag (code 1108)")
+        for o in outs where !o.tag.isZero {
+            try need(PrivacyWallet.derthValue(o.w + o.pend, rate: quoteOf(o.val).epochRate) >= minGroundworksVote,
+                     "a vote weighs at least \(minGroundworksVote) (code 1108)")
+            try need(gwVotes[o.tag] == nil || cancelled.contains(o.tag), "a vote is already stored under this tag (code 1108)")
         }
     }
 
@@ -645,8 +676,14 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         for t in try inputTags(p) { gwVotes[t] = nil }
         let g = groundworks(m)
         let splits = Dictionary(uniqueKeysWithValues: g.split.map { ($0.optionID, $0.percent) })
-        for (tag, w, v) in [(try f(p.voteTag), p.voteWeight, g.a), (try f(p.creditVoteTag), p.creditVoteWeight, g.credit)] where w > 0 {
-            gwVotes[tag] = GwVote(id: nextVoteID, validator: v, derth: w, tag: tag, splits: splits, splitExpiresAt: now + groundworksLease)
+        for o in try gwOutputs(m, p) where !o.tag.isZero {
+            var v = GwVote(id: nextVoteID, validator: o.val, derth: o.w, tag: o.tag, splits: splits, splitExpiresAt: now + groundworksLease)
+            if o.pend > 0 {
+                let at = Int64(o.time + labelWindow + 1)
+                if now >= at { v.derth += min(o.pend, debtRetained[o.key] ?? o.pend) }
+                else { v.pending = o.pend; v.pendingKey = o.key; v.maturesAt = at }
+            }
+            gwVotes[o.tag] = v
             nextVoteID += 1
         }
     }
@@ -862,7 +899,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         if let p = m.stakeProof {
             try need(p.nullifiers.count == 2 && p.groundworksTags.count == 2, "a stake proof carries exactly two nullifiers and two tags")
             for b in p.nullifiers + p.groundworksTags + [p.anchor, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot,
-                                                         p.creditGroundworksTag, p.voteTag, p.creditVoteTag] {
+                                                         p.creditGroundworksTag, p.voteTag, p.creditVoteTag, p.pendingKey] {
                 try need(b.count == 32, "a stake field of \(b.count) bytes")
             }
             for (cm, ct) in [(p.commitment, p.ciphertext), (p.creditCommitment, p.creditCiphertext)] {
@@ -1315,7 +1352,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         gwVotes.values.sorted { $0.id < $1.id }.map {
             PrivacyReads.GroundworksVote(id: $0.id, validator: $0.validator, derth: $0.derth,
                                          weight: PrivacyWallet.derthValue($0.derth, rate: quoteOf($0.validator).epochRate),
-                                         tag: $0.tag, splits: $0.splits, splitExpiresAt: $0.splitExpiresAt)
+                                         tag: $0.tag, splits: $0.splits, splitExpiresAt: $0.splitExpiresAt,
+                                         pending: $0.pending, maturesAt: $0.maturesAt)
         }
     }
 
@@ -1450,7 +1488,8 @@ enum ChainLayout {
                 try f(p.commitment), PrivacyHash.u64(l.vIn), PrivacyHash.u64(l.vOut), PrivacyHash.u64(p.clearBefore), try f(p.debtRoot),
                 l.crDenom.map(PrivacyHash.assetID) ?? .zero, try f(p.creditNullifier), try f(p.creditCommitment), PrivacyHash.u64(l.crVIn),
                 PrivacyHash.u64(l.crMoveTime), try f(p.groundworksTags[0]), try f(p.groundworksTags[1]), try f(p.creditGroundworksTag),
-                try f(p.voteTag), PrivacyHash.u64(p.voteWeight), try f(p.creditVoteTag), PrivacyHash.u64(p.creditVoteWeight), sighash]
+                try f(p.voteTag), PrivacyHash.u64(p.voteWeight), try f(p.creditVoteTag), PrivacyHash.u64(p.creditVoteWeight),
+                try f(p.pendingKey), PrivacyHash.u64(p.pendingTime), PrivacyHash.u64(p.pendingExposed), sighash]
     }
 
     static func votePublicInputs(_ m: MsgStakeVote, noteRoot: Fr, nfRoot: Fr, sighash: Fr) throws -> [Fr] {

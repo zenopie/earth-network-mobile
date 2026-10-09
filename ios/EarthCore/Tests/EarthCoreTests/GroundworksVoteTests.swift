@@ -86,12 +86,24 @@ final class GroundworksVoteTests: PrivacyTestCase {
         XCTAssertEqual(1, chain.gwVotes.count)
         XCTAssertEqual(held(a, vA), mine[0].derth)
 
-        // A move: the change at A votes; the credit at B is exposed until its window closes, so it does not.
+        // A move: the change at A votes; the credit at B votes too, pending
+        // (exposed until its move's window closes), and then counts by
+        // itself: nothing to re-cast.
         _ = try await a.redelegate(try await a.quoteMove(src: vA, dst: vB, amount: 500_000)); try await a.sync()
         mine = try await a.groundworksVotes()
-        XCTAssertEqual([vA], mine.map(\.validator))
-        XCTAssertEqual(held(a, vA), mine[0].derth)
-        XCTAssertGreaterThan(held(a, vB), 0)
+        XCTAssertEqual(Set([vA, vB]), Set(mine.map(\.validator)))
+        XCTAssertEqual(held(a, vA), mine.first { $0.validator == vA }!.derth)
+        let atB = mine.first { $0.validator == vB }!
+        XCTAssertEqual(0, atB.derth)
+        XCTAssertEqual(held(a, vB), atB.pending)
+        XCTAssertGreaterThan(atB.maturesAt, chain.now)
+        let txs = chain.txs.count
+        chain.now = atB.maturesAt
+        chain.matureVotes()
+        let matured = try await a.groundworksVotes().first { $0.validator == vB }!
+        XCTAssertEqual(held(a, vB), matured.derth)
+        XCTAssertEqual(0, matured.pending)
+        XCTAssertEqual(txs, chain.txs.count, "the chain counts it; the wallet sent nothing")
 
         // Stop: the split cleared, the vote cancelled.
         _ = try await a.castGroundworks(split: [:])
@@ -100,6 +112,25 @@ final class GroundworksVoteTests: PrivacyTestCase {
         // And a later stake tx votes nothing.
         _ = try await a.delegate(validator: vA, amount: 1_000_000); try await a.sync()
         XCTAssertTrue(chain.gwVotes.isEmpty)
+    }
+
+    /// A vote changed while moved stake is still exposed keeps its pending
+    /// part: the restake keeps the label and publishes it (lane A's pending).
+    func testChangingTheVoteKeepsThePendingPart() async throws {
+        let chain = FakeChain()
+        chain.minGroundworksVote = 100_000
+        let a = try await staked(chain)
+        _ = try await a.castGroundworks(split: [2: 100])
+        _ = try await a.redelegate(try await a.quoteMove(src: vA, dst: vB, amount: 500_000)); try await a.sync()
+        _ = try await a.castGroundworks(split: [3: 100])
+        let atB = try await a.groundworksVotes().first { $0.validator == self.vB }!
+        XCTAssertEqual([3: 100], atB.split)
+        XCTAssertEqual(held(a, vB), atB.pending)
+        XCTAssertNotNil(chain.prover.allStakes.last { $0.pEx > 0 }, "lane A published the kept label's exposure")
+        chain.now = atB.maturesAt
+        chain.matureVotes()
+        let matured = try await a.groundworksVotes().first { $0.validator == self.vB }!
+        XCTAssertEqual(held(a, vB), matured.derth)
     }
 
     /// Notes made apart (another device; delegations without a sync between)

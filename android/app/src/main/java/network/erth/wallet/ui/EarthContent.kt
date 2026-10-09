@@ -803,18 +803,20 @@ internal fun EarthContent(
                 groundworks = if (route.human) null else {
                     {
                         LaunchedEffect(Unit) { privacy.refresh() }
+                        // Only votes that count on the split chosen now: weight > 0 (not stale
+                        // since a stream reset) or moved-in stake voting pending.
+                        val countedVotes = privacyState?.groundworksVotes.orEmpty()
+                            .filter { (it.weight > 0 || it.pending > 0) && it.split == privacyState?.groundworksSplit }
                         GroundworksVoteControls(
                             split = privacyState?.groundworksSplit.orEmpty(),
                             lease = privacyState?.groundworksLease,
                             options = allocationState?.capital?.options.orEmpty(),
                             now = now,
                             voting = if (!balancesVisible) null else {
-                                // Only votes that count (weight > 0: not stale since a stream reset) on the split chosen now.
-                                Amounts.satSum(
-                                    privacyState?.groundworksVotes.orEmpty().filter { it.weight > 0 && it.split == privacyState?.groundworksSplit },
-                                ) { derthValue(it.derth, it.validator) } to
+                                Amounts.satSum(countedVotes) { derthValue(Amounts.satAdd(it.derth, it.pending), it.validator) } to
                                     Amounts.satSum(derthHeld.entries.toList()) { (d, v) -> derthValue(v, d.removePrefix("derth/")) }
                             },
+                            pendingUntil = countedVotes.filter { it.pending > 0 }.maxOfOrNull { it.maturesAt },
                             onVote = { editing = id },
                             onRenew = { split -> castGroundworks(split, "Renew Groundworks vote") },
                             onStop = { castGroundworks(emptyMap(), "Stop Groundworks vote") },

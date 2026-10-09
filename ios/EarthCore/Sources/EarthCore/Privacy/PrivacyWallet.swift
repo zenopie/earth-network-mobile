@@ -2140,9 +2140,11 @@ public final class PrivacyWallet: @unchecked Sendable {
         amount -= BigUInt(vOut)
         try require(amount <= BigUInt(Int64.max), "a stake note holds at most 2^63-1")
         let out = try StakePlan.out(keys, denom: denom, amount: UInt64(amount), label: clear.clears ? nil : l)
-        // A split chosen: each output votes with it, when it weighs enough.
-        let vote = Self.votes(gw, denom: denom, unexposed: out.amount - (out.label?.exposed ?? 0))
-        let creditVote = credit.map { Self.votes(gw, denom: $0.denom, unexposed: $0.out.amount - $0.vIn) } ?? false
+        // A split chosen: each output votes with it, when it weighs enough
+        // (its exposure included: it votes pending and counts once its move's
+        // window closes, the chain needing nothing more from us).
+        let vote = Self.votes(gw, denom: denom, unexposed: out.amount)
+        let creditVote = credit.map { Self.votes(gw, denom: $0.denom, unexposed: $0.out.amount) } ?? false
         return try StakePlan(nk: keys.nk, denom: denom, spends: spends, paths: spends.map { store.stakeTree.path($0.position) }, out: out,
                              vIn: vIn, vOut: vOut, clear: clear, credit: credit, vote: vote, creditVote: creditVote, anchor: stakeAnchor())
     }
@@ -3181,6 +3183,9 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let weight: UInt64
         public let split: [UInt64: UInt64]
         public let expiresAt: Int64
+        /// Moved-in derth voting pending, counted from `maturesAt` by the chain itself.
+        public var pending: UInt64 = 0
+        public var maturesAt: Int64 = 0
     }
 
     /// This wallet's live Groundworks votes: the chain's whole list (never a
@@ -3190,7 +3195,8 @@ public final class PrivacyWallet: @unchecked Sendable {
         _ = await adopt(all)
         let mine = await myTags()
         return all.filter { mine.contains($0.tag) }.map {
-            GroundworksVoteView(validator: $0.validator, derth: $0.derth, weight: $0.weight, split: $0.splits, expiresAt: $0.splitExpiresAt)
+            GroundworksVoteView(validator: $0.validator, derth: $0.derth, weight: $0.weight, split: $0.splits, expiresAt: $0.splitExpiresAt,
+                                pending: $0.pending, maturesAt: $0.maturesAt)
         }
     }
 

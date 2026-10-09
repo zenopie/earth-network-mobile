@@ -383,6 +383,10 @@ class PrivateTxEngine(
         if (!zero(creditGroundworksTag)) setCreditGroundworksTag(randomField())
         if (!zero(voteTag)) setVoteTag(randomField())
         if (!zero(creditVoteTag)) setCreditVoteTag(randomField())
+        // And the pending move: its key and time name the move this note came
+        // from (a time now keeps it pending, as gas needs not).
+        if (!zero(pendingKey)) setPendingKey(randomField())
+        if (pendingTime != 0L) setPendingTime(maxOf(1L, System.currentTimeMillis() / 1000))
     }.build()
 
     /** The membership's real root and nullifier (the chain checks both before any proof), a placeholder proof. */

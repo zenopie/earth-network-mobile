@@ -140,9 +140,13 @@ public enum PrivacyReads {
         public let splits: [UInt64: UInt64]
         /// When the vote stops counting (x/allocation groundworks_lease_seconds after it was cast).
         public let splitExpiresAt: Int64
-        public init(id: UInt64, validator: String, derth: UInt64, weight: UInt64 = 0, tag: Fr, splits: [UInt64: UInt64], splitExpiresAt: Int64) {
+        /// Moved-in derth voting pending: counted from `maturesAt` (when its move's window closes).
+        public let pending: UInt64
+        public let maturesAt: Int64
+        public init(id: UInt64, validator: String, derth: UInt64, weight: UInt64 = 0, tag: Fr, splits: [UInt64: UInt64], splitExpiresAt: Int64,
+                    pending: UInt64 = 0, maturesAt: Int64 = 0) {
             self.id = id; self.validator = validator; self.derth = derth; self.weight = weight; self.tag = tag
-            self.splits = splits; self.splitExpiresAt = splitExpiresAt
+            self.splits = splits; self.splitExpiresAt = splitExpiresAt; self.pending = pending; self.maturesAt = maturesAt
         }
     }
 
@@ -531,7 +535,8 @@ public struct PrivacyQueries: PrivacyChainReads {
                 out.append(PrivacyReads.GroundworksVote(id: v.id.uint64(default: 0), validator: v.validator.string(default: ""),
                                                         derth: v.derth.uint64(default: 0), weight: v.weight.uint64(default: 0),
                                                         tag: try field(v.tag), splits: splits,
-                                                        splitExpiresAt: max(0, v.split_expires_at.int64(default: 0))))
+                                                        splitExpiresAt: max(0, v.split_expires_at.int64(default: 0)),
+                                                        pending: v.pending.uint64(default: 0), maturesAt: max(0, v.matures_at.int64(default: 0))))
             }
             key = j.pagination.next_key.string.flatMap { $0.isEmpty || $0 == "null" ? nil : $0 }
             if let k = key, !keys.insert(k).inserted { throw PrivacyError("the node's groundworks votes listing repeats a page") }

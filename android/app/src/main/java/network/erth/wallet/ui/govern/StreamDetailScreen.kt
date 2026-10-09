@@ -208,6 +208,8 @@ fun GroundworksVoteControls(
     now: Long,
     /** What this wallet's live votes weigh and its private stake, in uerth at the live rates; null when balances are hidden. */
     voting: Pair<Long, Long>?,
+    /** When the last moved-in stake voting pending starts counting (null: none pending). */
+    pendingUntil: Long?,
     onVote: () -> Unit,
     onRenew: (Map<Long, Long>) -> Unit,
     onStop: () -> Unit,
@@ -235,6 +237,14 @@ fun GroundworksVoteControls(
             Spacer(Modifier.height(dimens.space12))
             Text(
                 text = "Voting ${"%,d".format(voting.first / 1_000_000)} of ${"%,d".format(voting.second / 1_000_000)} ERTH",
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textTertiary,
+            )
+        }
+        if (split.isNotEmpty() && pendingUntil != null) {
+            Spacer(Modifier.height(dimens.space12))
+            Text(
+                text = "Moved stake counts from ${countsUntil(pendingUntil)}",
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
             )

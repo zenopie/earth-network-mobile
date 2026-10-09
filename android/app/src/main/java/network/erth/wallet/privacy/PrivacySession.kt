@@ -420,7 +420,7 @@ object PrivacySession {
         }
 
         override fun groundworksVotes() = PrivacyQueries.groundworksVotes().map {
-            PrivacyChainReads.GroundworksVote(it.id, it.validator, it.derth, it.weight, it.tag, it.splits, it.splitExpiresAt)
+            PrivacyChainReads.GroundworksVote(it.id, it.validator, it.derth, it.weight, it.tag, it.splits, it.splitExpiresAt, it.pending, it.maturesAt)
         }
 
         override fun minGroundworksVote(): Long = PrivacyQueries.minGroundworksVote()

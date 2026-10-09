@@ -25,7 +25,7 @@ import "earth/shielded/v1/tx.proto";
 // sighash. Public input order: anchor, asset, nf_0, nf_1, cm_out, v_in,
 // v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm, cr_v_in,
 // cr_move_time, gw_0, gw_1, cr_gw, gw_out, w_out, cr_gw_out, cr_w_out,
-// sighash. Every byte field is exactly 32 bytes (zero for none) but the
+// p_key, p_time, p_ex, sighash. Every byte field is exactly 32 bytes (zero for none) but the
 // proof and the ciphertexts.
 message StakeProof {
   bytes proof = 1;
@@ -61,6 +61,12 @@ message StakeProof {
   // credit_vote_tag and credit_vote_weight: the same for the credit lane's output.
   bytes credit_vote_tag = 20;
   uint64 credit_vote_weight = 21;
+  // Lane A's voting output keeps a label: its exposure votes pending (the
+  // label's move key, move time and exposed), counted by the chain once the
+  // move's window closes; 32 zero bytes, 0 and 0 when none.
+  bytes pending_key = 22;
+  uint64 pending_time = 23;
+  uint64 pending_exposed = 24;
 }
 
 // The wallet names derth (the derth/<validator> credited to its note, v_in);
