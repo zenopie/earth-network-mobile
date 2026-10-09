@@ -143,7 +143,8 @@ object AprMath {
  */
 object StakingApr {
 
-    private const val EMISSION_UERTH_PER_SEC = 1_000_000L
+    /** x/earth's staking emission (EmissionPerSecondPerPillar), paid pro rata to bonded stake. */
+    const val EMISSION_UERTH_PER_SEC = 1_000_000L
     private const val SECONDS_PER_YEAR = 86_400L * 365L
 
     /**

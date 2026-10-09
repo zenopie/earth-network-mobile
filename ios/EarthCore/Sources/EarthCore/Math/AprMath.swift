@@ -116,7 +116,8 @@ public enum AprMath {
 /// with very little bonded it is enormous and means very little.
 public enum StakingApr {
 
-    private static let emissionUerthPerSecond: Double = 1_000_000
+    /// x/earth's staking emission (EmissionPerSecondPerPillar), paid pro rata to bonded stake.
+    public static let emissionUerthPerSecond: UInt64 = 1_000_000
     private static let secondsPerYear: Double = 86_400 * 365
 
     /// The rate before any validator's commission, as a fraction.
@@ -125,7 +126,7 @@ public enum StakingApr {
     /// infinite-and-therefore-zero, and no honest number can be shown.
     public static func base(bondedUerth: Int64) -> Double? {
         guard bondedUerth > 0 else { return nil }
-        return emissionUerthPerSecond * secondsPerYear / Double(bondedUerth)
+        return Double(emissionUerthPerSecond) * secondsPerYear / Double(bondedUerth)
     }
 
     /// What a delegator to this validator actually earns, after their cut.

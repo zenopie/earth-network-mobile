@@ -26,6 +26,7 @@ import network.erth.earth.proto.shieldedstaking.MsgStakeVote
 import network.erth.earth.proto.shieldedstaking.MsgUndelegate
 import network.erth.earth.proto.shieldedstaking.MsgUnlockPosition
 import network.erth.earth.proto.shieldedstaking.MsgUpdatePosition
+import network.erth.wallet.chain.math.StakingApr
 import network.erth.wallet.privacy.keys.PrivacyKeys
 import network.erth.wallet.privacy.keys.ShieldedAddress
 import network.erth.wallet.privacy.note.OwnedNote
@@ -213,6 +214,9 @@ interface PrivacyChainReads {
 
         /** [valoper]'s entry; a validator the list does not carry has no book and no x/staking record. */
         fun of(valoper: String): ValidatorQuote = byOperator[valoper] ?: throw IllegalStateException("the chain lists no validator $valoper")
+
+        /** x/staking's bonded tokens, every bonded validator's: what the staking emission is shared over. */
+        val bondedTokens: java.math.BigInteger get() = validators.filter { it.bonded }.fold(java.math.BigInteger.ZERO) { acc, v -> acc + v.tokens }
     }
 
     fun personhoodParams(): PersonhoodParams
@@ -1858,17 +1862,23 @@ class PrivacyWallet(
     class QuoteChanged(message: String) : IllegalStateException(message)
 
     /**
-     * derth bought for [value] uerth at [book]'s live rate, less a margin for
-     * the rate's drift until the tx's block (ORCHARD_DESIGN 12.2): the
-     * chain refuses a credit the value does not buy, in its ante, at no cost.
+     * derth bought for [value] uerth at the rate [book] will have after
+     * [CREDIT_HORIZON_SECONDS] of rewards, less a margin (ORCHARD_DESIGN
+     * 12.2): the chain refuses a credit the value does not buy, in its ante,
+     * at no cost. The rewards are the module's part of the validator's
+     * pro-rata share of the emission over [bonded] (x/staking's bonded
+     * tokens), before commission: at most what accrues.
      */
-    private fun creditFor(value: java.math.BigInteger, book: PrivacyChainReads.ValidatorQuote): Long {
+    internal fun creditFor(value: java.math.BigInteger, book: PrivacyChainReads.ValidatorQuote, bonded: java.math.BigInteger): Long {
         if (book.supply.signum() == 0) {
             check(book.backing.signum() == 0) { "this validator's book is settling (no derth, some backing); try again after the epoch ends" }
             return value.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong()
         }
         check(book.backing.signum() > 0) { "this validator's stake is backed by nothing (slashed to zero)" }
-        val buys = value.multiply(book.supply).divide(book.backing)
+        val accrues = if (bonded.signum() > 0) {
+            java.math.BigInteger.valueOf(StakingApr.EMISSION_UERTH_PER_SEC * CREDIT_HORIZON_SECONDS).multiply(book.delegation).divide(bonded)
+        } else java.math.BigInteger.ZERO
+        val buys = value.multiply(book.supply).divide(book.backing + accrues)
         val margin = buys.multiply(java.math.BigInteger.valueOf(CREDIT_MARGIN_PPM)).add(java.math.BigInteger.valueOf(999_999)).divide(java.math.BigInteger.valueOf(1_000_000))
         val q = buys.subtract(margin)
         return if (q.signum() <= 0) 0L else q.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong()
@@ -1885,8 +1895,9 @@ class PrivacyWallet(
         require(amount > 0)
         val min = reads.minDelegation()
         if (amount < min) throw IllegalArgumentException("a private delegation is at least ${min}uerth")
-        val book = takesStake(reads.validators().of(validator))
-        val derth = creditFor(java.math.BigInteger.valueOf(amount), book)
+        val list = reads.validators()
+        val book = takesStake(list.of(validator))
+        val derth = creditFor(java.math.BigInteger.valueOf(amount), book, list.bondedTokens)
         if (derth < min || derth <= 0) throw IllegalArgumentException("${amount}uerth buys less than the least derth a delegation may credit; stake more")
         val d = debtView()
         val plan = laneA(derthDenom(validator), StakeSelection.merge(spendableStake(derthDenom(validator))) { freeOf(it, d) }, derth, 0, d)
@@ -2065,7 +2076,7 @@ class PrivacyWallet(
         check(a.supply.signum() > 0 && java.math.BigInteger.valueOf(amount) <= a.supply) { "more derth than this validator has" }
         val u = java.math.BigInteger.valueOf(amount).multiply(a.backing).divide(a.supply)
         if (u < java.math.BigInteger.valueOf(min)) throw IllegalArgumentException("this stake is worth ${u}uerth, less than the ${min}uerth a move must carry")
-        val credit = creditFor(arrives(a, u), b)
+        val credit = creditFor(arrives(a, u), b, list.bondedTokens)
         if (credit < min || credit <= 0) throw IllegalArgumentException("this move would credit less than the least derth a move may credit; move more")
         val load = a.redelegations[dst]
         return MoveQuote(
@@ -2941,12 +2952,21 @@ class PrivacyWallet(
         const val LCD_DEBT_PAGE = 1000
 
         /**
-         * The margin a credit is quoted with for the rate's drift until its
-         * block (ORCHARD_DESIGN 12.2: ~10 ppm covers minutes on a chain with
-         * real stake), in ppm of the derth the value buys. A quote the rate
-         * outran is refused in the ante at no cost, and retried.
+         * The margin a credit is quoted with beyond the rewards
+         * [CREDIT_HORIZON_SECONDS] adds (rounding, a reward the bound misses),
+         * in ppm of the derth the value buys.
          */
         const val CREDIT_MARGIN_PPM = 10L
+
+        /**
+         * How long a credit's quote must hold: its confirm sheet, the proof
+         * and the tx's timeout. Rewards raise the rate every block, and while
+         * little is bonded they raise it fast (3.6 ppm a second on launch
+         * week), so the quote prices the backing the validator will have by
+         * then. A quote the rate outran anyway is refused in the ante at no
+         * cost, and retried.
+         */
+        const val CREDIT_HORIZON_SECONDS = 600L
 
         /** What of a redelegation's value beyond the source's queue may stay in its book (chain bondedDust, 0.001 ERTH). */
         const val BONDED_DUST = 1_000L

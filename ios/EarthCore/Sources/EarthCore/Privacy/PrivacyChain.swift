@@ -246,6 +246,9 @@ public enum PrivacyReads {
 
         public subscript(_ valoper: String) -> ValidatorQuote? { byOperator[valoper].map { validators[$0] } }
 
+        /// x/staking's bonded tokens, every bonded validator's: what the staking emission is shared over.
+        public var bondedTokens: BigUInt { validators.filter(\.bonded).reduce(BigUInt(0)) { $0 + $1.tokens } }
+
         /// `valoper`'s entry; a validator the list does not carry has no book and no x/staking record.
         public func of(_ valoper: String) throws -> ValidatorQuote {
             guard let v = self[valoper] else { throw PrivacyError("the chain lists no validator \(valoper)") }

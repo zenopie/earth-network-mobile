@@ -2153,11 +2153,17 @@ public final class PrivacyWallet: @unchecked Sendable {
         public var errorDescription: String? { message }
     }
 
-    /// The margin a credit is quoted with for the rate's drift until its
-    /// block (ORCHARD_DESIGN 12.2: ~10 ppm covers minutes on a chain with
-    /// real stake), in ppm of the derth the value buys. A quote the rate
-    /// outran is refused in the ante at no cost, and retried.
+    /// The margin a credit is quoted with beyond the rewards `creditHorizonSeconds`
+    /// adds (rounding, a reward the bound misses), in ppm of the derth the value buys.
     public static let creditMarginPPM: UInt64 = 10
+
+    /// How long a credit's quote must hold: its confirm sheet, the proof and
+    /// the tx's timeout (`PrivateTxEngine.timeoutBlocks`). Rewards raise the
+    /// rate every block, and while little is bonded they raise it fast (3.6
+    /// ppm a second on launch week), so the quote prices the backing the
+    /// validator will have by then. A quote the rate outran anyway is refused
+    /// in the ante at no cost, and retried.
+    public static let creditHorizonSeconds: UInt64 = 600
 
     /// What of a redelegation's value beyond the source's queue may stay in its book (chain bondedDust, 0.001 ERTH).
     public static let bondedDust: UInt64 = 1_000
@@ -2191,16 +2197,20 @@ public final class PrivacyWallet: @unchecked Sendable {
         return (Swift.min(entries, maxEntryHeightsPerPair) + ahead) * 2_500 + 128 * 20_000
     }
 
-    /// derth bought for `value` uerth at `book`'s live rate, less a margin for
-    /// the rate's drift until the tx's block (ORCHARD_DESIGN 12.2): the chain
-    /// refuses a credit the value does not buy, in its ante, at no cost.
-    static func creditFor(_ value: BigUInt, _ book: PrivacyReads.ValidatorQuote) throws -> UInt64 {
+    /// derth bought for `value` uerth at the rate `book` will have after
+    /// `creditHorizonSeconds` of rewards, less a margin (ORCHARD_DESIGN 12.2):
+    /// the chain refuses a credit the value does not buy, in its ante, at no
+    /// cost. The rewards are the module's part of the validator's pro-rata
+    /// share of the emission over `bonded` (x/staking's bonded tokens), before
+    /// commission: at most what accrues.
+    static func creditFor(_ value: BigUInt, _ book: PrivacyReads.ValidatorQuote, bonded: BigUInt) throws -> UInt64 {
         if book.supply == 0 {
             try require(book.backing == 0, "this validator's book is settling (no derth, some backing); try again after the epoch ends")
             return UInt64(min(value, BigUInt(Int64.max)))
         }
         try require(book.backing > 0, "this validator's stake is backed by nothing (slashed to zero)")
-        let buys = value * book.supply / book.backing
+        let accrues = bonded > 0 ? BigUInt(StakingApr.emissionUerthPerSecond) * BigUInt(creditHorizonSeconds) * book.delegation / bonded : 0
+        let buys = value * book.supply / (book.backing + accrues)
         let margin = (buys * BigUInt(creditMarginPPM) + 999_999) / 1_000_000
         guard buys > margin else { return 0 }
         return UInt64(min(buys - margin, BigUInt(Int64.max)))
@@ -2220,8 +2230,9 @@ public final class PrivacyWallet: @unchecked Sendable {
         try require(amount > 0, "the amount must be positive")
         let min = try await reads.minDelegation()
         try require(amount >= min, "a private delegation is at least \(min)uerth")
-        let book = try Self.takesStake(try await reads.validators().of(validator))
-        let derth = try Self.creditFor(BigUInt(amount), book)
+        let list = try await reads.validators()
+        let book = try Self.takesStake(try list.of(validator))
+        let derth = try Self.creditFor(BigUInt(amount), book, bonded: list.bondedTokens)
         try require(derth >= min && derth > 0, "\(amount)uerth buys less than the least derth a delegation may credit; stake more")
         return try await locked {
             let denom = Self.derthDenom(validator)
@@ -2421,7 +2432,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         try require(a.supply > 0 && BigUInt(amount) <= a.supply, "more derth than this validator has")
         let u = BigUInt(amount) * a.backing / a.supply
         try require(u >= BigUInt(min), "this stake is worth \(u)uerth, less than the \(min)uerth a move must carry")
-        let credit = try Self.creditFor(Self.arrives(a, u), b)
+        let credit = try Self.creditFor(Self.arrives(a, u), b, bonded: list.bondedTokens)
         try require(credit >= min && credit > 0, "this move would credit less than the least derth a move may credit; move more")
         let merges = await locked { creditTarget(dst) != nil }
         let load = a.redelegations[dst]
