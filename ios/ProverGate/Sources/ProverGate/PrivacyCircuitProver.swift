@@ -109,8 +109,9 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
             case .move: 5
             case .action: 6
             // anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root,
-            // cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash.
-            case .stake: 16
+            // cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, gw_0, gw_1, cr_gw,
+            // gw_out, w_out, cr_gw_out, cr_w_out, p_key, p_time, p_ex, sighash.
+            case .stake: 25
             // note_root, nf_root, debt_root, asset, weight, proposal_id, vnf[0..1], sighash.
             case .vote: 9
             }
@@ -195,7 +196,11 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
         let t0 = Date()
         let raw = try l.circuit.prove(inputs, proof_type: LeanPoaProver.proofType, vkey: l.vk)
         lastMillis[k] = Int(Date().timeIntervalSince(t0) * 1000)
-        let (body, pub) = try Self.split(raw, numPublic: k.publicInputs)
+        // As many as the witness has: a circuit that grew public inputs
+        // cannot be split at a stale count (the witness and the circuit are
+        // checked against each other below, value by value).
+        guard expected.count == k.publicInputs else { throw Failure.publicInputsDiffer(k) }
+        let (body, pub) = try Self.split(raw, numPublic: expected.count)
         guard pub == expected.map({ $0.lowercased() }) else { throw Failure.publicInputsDiffer(k) }
         return body
     }

@@ -56,8 +56,15 @@ final class PrivacyProverTests: XCTestCase {
     }()
 
     /// The chain checkout beside this one, if any (privacy/orchard).
+    /// The key in force: an upgrade that replaced a circuit's launch key
+    /// installs its own (app/upgrades/<name>/<kind>.vk.b64), else genesis's.
     static func genesisVK(_ root: URL, _ kind: PrivacyCircuitProver.Kind) -> Data? {
+        let upgraded: [PrivacyCircuitProver.Kind: String] = [.stake: "app/upgrades/v1_2_1/stake.vk.b64"]
         for name in ["chain-orch", "chain-orchard", "chain-privacy", "earth-network-chain"] {
+            if let path = upgraded[kind],
+               let b64 = try? String(contentsOf: root.deletingLastPathComponent().appendingPathComponent("\(name)/\(path)"), encoding: .utf8) {
+                return Data(base64Encoded: b64.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
             let f = root.deletingLastPathComponent().appendingPathComponent("\(name)/networks/genesis/shielded-verifying-keys/\(kind.rawValue).vk.b64")
             if let b64 = try? String(contentsOf: f, encoding: .utf8) { return Data(base64Encoded: b64.trimmingCharacters(in: .whitespacesAndNewlines)) }
         }
@@ -116,7 +123,8 @@ final class PrivacyProverTests: XCTestCase {
         let order: [PrivacyCircuitProver.Kind: [String]] = [
             .action: ["anchor", "nf", "cm_out", "cv_x", "cv_y", "sighash"],
             .stake: ["anchor", "asset", "nf_0", "nf_1", "cm_out", "v_in", "v_out", "clear_before", "debt_root", "cr_asset", "cr_nf", "cr_cm",
-                     "cr_v_in", "cr_move_time", "otag", "sighash"],
+                     "cr_v_in", "cr_move_time", "gw_0", "gw_1", "cr_gw", "gw_out", "w_out", "cr_gw_out", "cr_w_out",
+                     "p_key", "p_time", "p_ex", "sighash"],
             .membership: ["root", "scope", "nullifier", "signal", "excluded_dsc", "excluded_country", "max_activation", "max_predecessor"],
             .move: ["root", "scope", "old_nullifier", "new_nullifier", "signal"],
             .vote: ["note_root", "nf_root", "debt_root", "asset", "weight", "proposal_id", "vnf", "sighash"],  // vnf: two slots

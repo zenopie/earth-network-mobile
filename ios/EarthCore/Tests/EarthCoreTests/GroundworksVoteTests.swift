@@ -104,6 +104,7 @@ final class GroundworksVoteTests: PrivacyTestCase {
         XCTAssertEqual(held(a, vB), matured.derth)
         XCTAssertEqual(0, matured.pending)
         XCTAssertEqual(txs, chain.txs.count, "the chain counts it; the wallet sent nothing")
+        dump(chain, "gwFollows")
 
         // Stop: the split cleared, the vote cancelled.
         _ = try await a.castGroundworks(split: [:])
@@ -131,6 +132,7 @@ final class GroundworksVoteTests: PrivacyTestCase {
         chain.matureVotes()
         let matured = try await a.groundworksVotes().first { $0.validator == self.vB }!
         XCTAssertEqual(held(a, vB), matured.derth)
+        dump(chain, "gwPending")
     }
 
     /// Notes made apart (another device; delegations without a sync between)
