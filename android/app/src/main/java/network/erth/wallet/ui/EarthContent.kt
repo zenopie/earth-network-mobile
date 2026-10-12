@@ -67,7 +67,6 @@ import network.erth.wallet.ui.privacy.PrivacyActionsViewModel
 import network.erth.wallet.ui.privacy.HandleScreen
 import network.erth.wallet.ui.privacy.PersonalState
 import network.erth.wallet.ui.privacy.SwitchIdentityScreen
-import network.erth.wallet.ui.privacy.SWITCH_TO_SELF
 import network.erth.wallet.privacy.Reminders
 import network.erth.wallet.privacy.handles.Handles
 import network.erth.wallet.ui.privacy.ProposeRemovalScreen
@@ -93,7 +92,6 @@ import network.erth.wallet.ui.wallet.Holding
 import network.erth.wallet.ui.wallet.ReceiveUiState
 import network.erth.wallet.ui.wallet.SendFlow
 import network.erth.wallet.ui.wallet.MoveDirection
-import network.erth.wallet.ui.wallet.MoveSheet
 import network.erth.wallet.ui.wallet.TransactionDetailScreen
 import network.erth.wallet.ui.wallet.WalletUiState
 import network.erth.wallet.ui.wallet.WalletsScreen
@@ -156,7 +154,6 @@ internal fun EarthContent(
     var deleteTarget by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var liquidity by remember { mutableStateOf<Pair<LiquidityAction, Dex.Pool>?>(null) }
     // Shield / Unshield from the wallet home.
-    var moving by remember { mutableStateOf<MoveDirection?>(null) }
     // The activity row whose detail sheet is open (by id: the live row is shown).
     var openActivity by remember { mutableStateOf<String?>(null) }
 
@@ -188,6 +185,55 @@ internal fun EarthContent(
     fun monikerOf(validator: String): String =
         earnState?.monikerOf(validator) ?: validator
     val activityView = ActivityView(visible = balancesVisible, name = ::monikerOf, now = now)
+
+    // ERTH between the public account and this wallet's own notes. Shield is
+    // MsgShield, signed by the account (the coins are its), its note to our
+    // own shielded address; unshield a private transfer to our own account,
+    // its fee from the same notes.
+    fun move(direction: MoveDirection, amount: Long) {
+        if (direction == MoveDirection.Shield) {
+            tx.request(
+                details = TxConfirmDetails(
+                    action = "Shield ERTH",
+                    msgTypeUrl = PrivateMsgs.SHIELD,
+                    balanceUerth = loaded.balanceUerth,
+                    amountLabel = "Amount",
+                    amountValue = "${formatUerth(amount)} ERTH",
+                    recipient = "your private balance",
+                    recipientLabel = "To",
+                ),
+                onSuccess = onRefresh,
+                build = { ctx ->
+                    val out = PrivacySession.wallet(ctx).shieldOutput(Constants.UERTH_DENOM, amount)
+                    val msg = MsgShield.newBuilder()
+                        .setSender(walletAddress(ctx))
+                        .setAmount(CoinOuterClass.Coin.newBuilder().setDenom(Constants.UERTH_DENOM).setAmount(amount.toString()))
+                        .setPc(ByteString.copyFrom(out.pc.toBytes()))
+                        .setCiphertext(ByteString.copyFrom(out.ciphertext))
+                        .build()
+                    listOf(EarthTx.anyOf(PrivateMsgs.SHIELD, msg))
+                },
+            )
+        } else {
+            // At Max the fee comes out of the amount: the bundle
+            // releases exactly what the notes hold.
+            val feeFromAmount = ShieldMove.feeFromAmount(amount, loaded.unshieldableErthUerth, TxController.feeFor(TxController.PRIVATE_GAS_ESTIMATE))
+            tx.requestPrivate(
+                details = TxConfirmDetails(
+                    action = "Unshield ERTH",
+                    msgTypeUrl = PrivateMsgs.SEND,
+                    balanceUerth = 0L,
+                    amountLabel = "Amount",
+                    amountValue = "${formatUerth(amount)} ERTH" + if (feeFromAmount) " less the fee" else "",
+                    recipient = "your public balance",
+                    recipientLabel = "To",
+                ),
+                shieldedErth = loaded.shieldedErthUerth,
+                onSuccess = onRefresh,
+                run = { ctx -> PrivacySession.wallet(ctx).unshield(walletAddress(ctx), Constants.UERTH_DENOM, amount, feeFromAmount).hash },
+            )
+        }
+    }
 
     // Removal ballots: a membership proof in the ballot's scope, so who
     // opened or voted is never known; a second vote replaces the first.
@@ -264,7 +310,7 @@ internal fun EarthContent(
             unshieldableUerth = state?.unshieldableErthUerth ?: 0L,
             shieldFee = TxController.DEFAULT_FEE_UERTH,
             unshieldFee = TxController.feeFor(TxController.PRIVATE_GAS_ESTIMATE),
-            onMove = { moving = it },
+            onMove = ::move,
             balancesVisible = balancesVisible,
             activity = activity,
             activityView = activityView,
@@ -646,7 +692,6 @@ internal fun EarthContent(
             }
             val walletList = walletsState?.wallets.orEmpty()
             fun check(idx: Int) {
-                if (idx == SWITCH_TO_SELF) { targetWarning = null; return }
                 scope.launch {
                     val info = withContext(Dispatchers.IO) { runCatching { PrivacySession.targetInfo(context, idx) }.getOrNull() }
                     // What a move after the switch could not bring there, said up front.
@@ -681,8 +726,8 @@ internal fun EarthContent(
                 onContinue = { target ->
                     // The target registers the same passport to its next
                     // identity: the chain treats it as a switch (the live
-                    // leaf is zeroed). A fresh identity stays in this wallet.
-                    if (target != SWITCH_TO_SELF) onSwitchWallet(target)
+                    // leaf is zeroed).
+                    onSwitchWallet(target)
                     nav.pop()
                     onRegister()
                 },
@@ -1201,67 +1246,6 @@ internal fun EarthContent(
         )
     }
 
-    // ERTH between the public account and this wallet's own notes. Shield is
-    // MsgShield, signed by the account (the coins are its), its note to our
-    // own shielded address; unshield a private transfer to our own account,
-    // its fee from the same notes.
-    moving?.let { initial ->
-        MoveSheet(
-            initial = initial,
-            publicUerth = loaded.balanceUerth,
-            privateUerth = loaded.shieldedErthUerth,
-            unshieldableUerth = loaded.unshieldableErthUerth,
-            shieldFee = TxController.DEFAULT_FEE_UERTH,
-            unshieldFee = TxController.feeFor(TxController.PRIVATE_GAS_ESTIMATE),
-            onDismiss = { moving = null },
-            onConfirm = { direction, amount ->
-                moving = null
-                if (direction == MoveDirection.Shield) {
-                    tx.request(
-                        details = TxConfirmDetails(
-                            action = "Shield ERTH",
-                            msgTypeUrl = PrivateMsgs.SHIELD,
-                            balanceUerth = loaded.balanceUerth,
-                            amountLabel = "Amount",
-                            amountValue = "${formatUerth(amount)} ERTH",
-                            recipient = "your private balance",
-                            recipientLabel = "To",
-                        ),
-                        onSuccess = onRefresh,
-                        build = { ctx ->
-                            val out = PrivacySession.wallet(ctx).shieldOutput(Constants.UERTH_DENOM, amount)
-                            val msg = MsgShield.newBuilder()
-                                .setSender(walletAddress(ctx))
-                                .setAmount(CoinOuterClass.Coin.newBuilder().setDenom(Constants.UERTH_DENOM).setAmount(amount.toString()))
-                                .setPc(ByteString.copyFrom(out.pc.toBytes()))
-                                .setCiphertext(ByteString.copyFrom(out.ciphertext))
-                                .build()
-                            listOf(EarthTx.anyOf(PrivateMsgs.SHIELD, msg))
-                        },
-                    )
-                } else {
-                    // At Max the fee comes out of the amount: the bundle
-                    // releases exactly what the notes hold.
-                    val feeFromAmount = ShieldMove.feeFromAmount(amount, loaded.unshieldableErthUerth, TxController.feeFor(TxController.PRIVATE_GAS_ESTIMATE))
-                    tx.requestPrivate(
-                        details = TxConfirmDetails(
-                            action = "Unshield ERTH",
-                            msgTypeUrl = PrivateMsgs.SEND,
-                            balanceUerth = 0L,
-                            amountLabel = "Amount",
-                            amountValue = "${formatUerth(amount)} ERTH" + if (feeFromAmount) " less the fee" else "",
-                            recipient = "your public balance",
-                            recipientLabel = "To",
-                        ),
-                        shieldedErth = loaded.shieldedErthUerth,
-                        onSuccess = onRefresh,
-                        run = { ctx -> PrivacySession.wallet(ctx).unshield(walletAddress(ctx), Constants.UERTH_DENOM, amount, feeFromAmount).hash },
-                    )
-                }
-            },
-        )
-    }
-
     liquidity?.let { (action, pool) ->
         LiquiditySheet(
             action = action,
@@ -1494,8 +1478,8 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState?, person
             onClick = { nav.push(EarthRoute.Handle) },
         ),
         SettingsItem(
-            title = "Shielded notes",
-            subtitle = "Merge small notes",
+            title = "Merge notes",
+            subtitle = "Combine small private notes",
             icon = R.drawable.ic_shield_check,
             onClick = { nav.push(EarthRoute.Notes) },
         ),

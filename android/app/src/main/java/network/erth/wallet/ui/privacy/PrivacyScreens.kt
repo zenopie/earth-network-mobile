@@ -123,10 +123,14 @@ fun NotesScreen(
     modifier: Modifier = Modifier,
 ) = Page(modifier) {
     val dimens = EarthTheme.dimens
+    val total = state?.mergeable?.values?.sum() ?: 0
     HeroColumn {
-        HeroAmount(formatUerth(shielded["uerth"] ?: 0L))
-        Text("ERTH", style = EarthTypography.textMd, color = EarthColors.Text.textTertiary)
-        HeroLine("Private", color = network.erth.wallet.ui.theme.EarthAccent.ink, icon = network.erth.wallet.R.drawable.ic_lock)
+        Text(
+            if (state == null) "–" else "%,d".format(total),
+            style = EarthTypography.header2.copy(fontWeight = FontWeight.SemiBold),
+            color = EarthColors.Text.textPrimary,
+        )
+        HeroLine(if (total > 0) "Notes to merge" else "Nothing to merge")
     }
     Spacer(Modifier.height(dimens.space24))
     shielded.filterValues { it > 0 }.toSortedMap().forEach { (denom, amount) ->

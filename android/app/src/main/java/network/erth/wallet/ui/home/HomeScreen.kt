@@ -92,8 +92,8 @@ fun HomeScreen(
     unshieldableUerth: Long,
     shieldFee: Long,
     unshieldFee: Long,
-    /** Opens the Shield / Unshield sheet, from a coin's sheet. */
-    onMove: (MoveDirection) -> Unit,
+    /** Raises a Shield / Unshield confirmation, from a coin's sheet. */
+    onMove: (MoveDirection, amountUerth: Long) -> Unit,
     balancesVisible: Boolean,
     activity: List<ActivityEntry>?,
     activityView: ActivityView,
@@ -189,7 +189,7 @@ fun HomeScreen(
             unshieldableUerth = unshieldableUerth,
             shieldFee = shieldFee,
             unshieldFee = unshieldFee,
-            onMove = { coinOpen = null; onMove(it) },
+            onMove = { d, amount -> coinOpen = null; onMove(d, amount) },
             onDismiss = { coinOpen = null },
         )
     }

@@ -424,7 +424,7 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.Explore -> "Explorer"
     EarthRoute.Personhood -> "Identity"
     EarthRoute.RemovalBallots -> "Propose removal"
-    EarthRoute.Notes -> "Shielded notes"
+    EarthRoute.Notes -> "Merge notes"
     EarthRoute.Handle -> "Handle"
     EarthRoute.SwitchIdentity -> "Switch identity"
     EarthRoute.Wallets -> "Wallets"

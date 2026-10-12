@@ -191,27 +191,24 @@ fun HandleScreen(
     }
 }
 
-/** [SwitchIdentityScreen]'s target for a fresh identity in this wallet (its next generation). */
-const val SWITCH_TO_SELF = -1
-
 /**
- * A voluntary switch of identity: the same passport registered to a fresh
- * identity, another of this phone's wallets' or this wallet's next one
- * (PrivacyKeys generations). The chain zeroes the live leaf and makes a new
- * one. Once the switch has landed, the new identity can bring this one's
+ * A voluntary switch of identity: the same passport registered to another
+ * of this phone's wallets' next identity. The chain zeroes the live leaf and
+ * makes a new one. Once the switch has landed, the new identity can bring this one's
  * handle and caretaker vote over ([MoveOfferCard], on Identity where it
  * registered): a move proves knowledge of both identities' secrets, so it
- * comes after the switch and needs both on this phone (one phrase, for a
- * fresh identity here). A wallet whose phrase is lost can move nothing.
+ * comes after the switch and needs both on this phone. A wallet whose
+ * phrase is lost can move nothing.
  *
- * A fresh identity here helps only when this identity's secret leaked by
- * itself, off the phone: the wallet holds in memory the key every
- * generation derives from, so a phone or phrase compromise calls for a new
- * wallet instead.
+ * A fresh identity in this wallet is not offered: it derives from the same
+ * phrase, so it helps only when an identity secret leaked by itself off the
+ * phone, never for a lost phone or an exposed phrase (the wallet holds the
+ * key every generation derives from). Renewal (Identity) still registers
+ * this wallet's next identity.
  *
  * Another wallet's recovery phrase is shown only after a fresh unlock and
  * is dropped when the screen is paused or left; the backup box needs the
- * phrase shown first. A fresh identity here needs no new phrase.
+ * phrase shown first.
  */
 @Composable
 fun SwitchIdentityScreen(
@@ -270,7 +267,7 @@ fun SwitchIdentityScreen(
             HeroIcon(R.drawable.ic_swap_vertical)
             HeroGap()
             HeroTitle("Switch identity")
-            HeroLine("Register your passport elsewhere")
+            HeroLine("Move your passport to another wallet")
         }
         Spacer(Modifier.height(dimens.space24))
         if (renewFirst != null) {
@@ -306,7 +303,7 @@ fun SwitchIdentityScreen(
                 }
             }
         }
-        Choice(SWITCH_TO_SELF, "Fresh identity here", "Only if its secret leaked off-phone")
+        if (others.isEmpty()) Note("No other wallets on this phone")
         others.forEach { w -> Choice(w.index, w.name, Handles.truncate(w.address, 10, 6)) }
         targetWarning?.let { Text(it, style = EarthTypography.textSm, color = red) }
         Text(
@@ -316,9 +313,8 @@ fun SwitchIdentityScreen(
             color = EarthAccent.ink,
             modifier = Modifier.clickable(onClick = onCreateWallet).padding(vertical = dimens.space12),
         )
-        val self = target == SWITCH_TO_SELF
         val shown = phrase
-        if (shown != null && !self) {
+        if (shown != null) {
             // Kept out of screenshots and the recents thumbnail while shown.
             network.erth.wallet.ui.components.SecureScreen()
             Spacer(Modifier.height(dimens.space8))
@@ -326,10 +322,9 @@ fun SwitchIdentityScreen(
             Spacer(Modifier.height(dimens.space8))
             Note("Anyone with this phrase can take your funds.")
         }
-        // Ticked only once the phrase was shown for this target. A fresh
-        // identity here is this wallet's own phrase: nothing new to back up.
+        // Ticked only once the phrase was shown for this target.
         val canTick = target != null && revealedFor == target
-        if (!self) {
+        run {
             Spacer(Modifier.height(dimens.space8))
             PillButton(if (shown == null) "Show its phrase" else "Hide phrase", enabled = target != null, primary = false) {
                 if (shown == null) confirming = true else phrase = null
@@ -346,7 +341,7 @@ fun SwitchIdentityScreen(
         val t = target
         PillButton(
             text = "Switch",
-            enabled = t != null && (self || (backedUp && canTick)) && (unmoved == null || strandAccepted),
+            enabled = t != null && backedUp && canTick && (unmoved == null || strandAccepted),
         ) { if (t != null) onContinue(t) }
     }
 }

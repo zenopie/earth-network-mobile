@@ -34,7 +34,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import network.erth.wallet.R
 import network.erth.wallet.privacy.tx.ShieldMove
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import network.erth.wallet.ui.components.EarthSheet
+import network.erth.wallet.ui.components.asAmountInput
+import network.erth.wallet.ui.components.doneKeyboard
+import network.erth.wallet.ui.components.fromBaseUnits
+import network.erth.wallet.ui.components.toUerthOrNull
 import network.erth.wallet.ui.components.HeroAmount
 import network.erth.wallet.ui.components.HeroLine
 import network.erth.wallet.ui.earn.PillButton
@@ -154,10 +169,19 @@ private fun AmountLine(amount: Long, locked: Boolean, visible: Boolean) {
     }
 }
 
+/** Which way ERTH moves between the public account and this wallet's private notes. */
+enum class MoveDirection { Shield, Unshield }
+
 /**
  * One coin, laid out like a validator's stake sheet: the private amount big,
- * the public one a line under it, Shield and Unshield. The moves themselves
- * are [MoveSheet]'s. ANML has no public side, so no moves.
+ * the public one a line under it, Shield and Unshield. ANML has no public
+ * side, so no moves.
+ *
+ * Shield or Unshield turns the big number into the amount, in place: the
+ * move needs only an amount, and a second screen for one field was a detour.
+ * Shield is MsgShield, signed by the account (the coins are its), its note to
+ * this wallet's own shielded address; Unshield is a private transfer out of
+ * the notes to this wallet's own account, its fee from the same notes.
  */
 @Composable
 fun CoinSheet(
@@ -165,12 +189,17 @@ fun CoinSheet(
     visible: Boolean,
     /** What one ERTH unshield can spend (ShieldMove.maxUnshield). */
     unshieldableUerth: Long,
+    /** The signed MsgShield's fee. */
     shieldFee: Long,
+    /** The private transfer's estimated fee, as its confirm sheet shows it. */
     unshieldFee: Long,
-    onMove: (MoveDirection) -> Unit,
+    /** Raises the move's confirmation; the sheet closes. */
+    onMove: (MoveDirection, amountUerth: Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val anml = coin.denom == "uanml"
+    var moving by remember { mutableStateOf<MoveDirection?>(null) }
+    var amount by remember { mutableStateOf("") }
     EarthSheet(onDismiss = onDismiss, bottomPadding = 24.dp, fitContent = true) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.height(8.dp))
@@ -179,6 +208,20 @@ fun CoinSheet(
             Text(coin.symbol, style = EarthTypography.textMd.copy(fontSize = 17.sp), fontWeight = FontWeight.SemiBold,
                 color = EarthColors.Text.textPrimary, maxLines = 1)
             Spacer(Modifier.height(24.dp))
+            val direction = moving
+            if (direction != null) {
+                MoveAmount(
+                    direction = direction,
+                    coin = coin,
+                    amount = amount,
+                    onAmount = { amount = it },
+                    cap = if (direction == MoveDirection.Shield) ShieldMove.maxShield(coin.public, shieldFee) else unshieldableUerth,
+                    unshieldable = unshieldableUerth,
+                    onCancel = { moving = null; amount = "" },
+                    onConfirm = { onMove(direction, it) },
+                )
+                return@Column
+            }
             HeroAmount(formatUerth(coin.private), visible)
             HeroLine(if (anml) "Always private" else "Private", color = EarthAccent.ink, icon = R.drawable.ic_lock)
             if (anml) return@Column
@@ -194,7 +237,7 @@ fun CoinSheet(
                     "Shield",
                     enabled = ShieldMove.shieldBlocked(coin.denom, coin.public, shieldFee) == null,
                     modifier = Modifier.weight(1f),
-                ) { onMove(MoveDirection.Shield) }
+                ) { moving = MoveDirection.Shield }
                 PillButton(
                     "Unshield",
                     enabled = ShieldMove.unshieldBlocked(
@@ -202,8 +245,90 @@ fun CoinSheet(
                     ) == null,
                     primary = false,
                     modifier = Modifier.weight(1f),
-                ) { onMove(MoveDirection.Unshield) }
+                ) { moving = MoveDirection.Unshield }
             }
         }
+    }
+}
+
+/** The amount in the big number's place: the balance it comes out of, Max, then Cancel and the move. */
+@Composable
+private fun MoveAmount(
+    direction: MoveDirection,
+    coin: ShieldMove.Coin,
+    amount: String,
+    onAmount: (String) -> Unit,
+    /** The most this can move after its fee. */
+    cap: Long,
+    unshieldable: Long,
+    onCancel: () -> Unit,
+    onConfirm: (Long) -> Unit,
+) {
+    val shielding = direction == MoveDirection.Shield
+    val keys = doneKeyboard(keyboardType = KeyboardType.Decimal)
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    val amountUerth = amount.toUerthOrNull()
+    val error = when {
+        amount.isEmpty() -> null
+        amountUerth == null -> "Enter an amount"
+        amountUerth <= 0 -> "Enter more than zero"
+        amountUerth > cap -> "Max ${formatUerth(cap)} after the fee"
+        else -> null
+    }
+    BasicTextField(
+        value = amount,
+        onValueChange = { onAmount(it.asAmountInput(amount)) },
+        singleLine = true,
+        textStyle = EarthTypography.header2.copy(
+            fontSize = if (amount.length > 9) 40.sp else 56.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+            color = EarthColors.Text.textPrimary,
+        ),
+        cursorBrush = SolidColor(EarthAccent.ink),
+        keyboardOptions = keys.first,
+        keyboardActions = keys.second,
+        modifier = Modifier.fillMaxWidth().focusRequester(focus),
+        decorationBox = { inner ->
+            if (amount.isEmpty()) {
+                Text(
+                    "0",
+                    style = EarthTypography.header2.copy(fontSize = 56.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center),
+                    color = EarthColors.Text.textTertiary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            inner()
+        },
+    )
+    Spacer(Modifier.height(8.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (shielding) "Public ${formatUerth(coin.public)}" else "Private ${formatUerth(coin.private)}",
+            style = EarthTypography.textSm,
+            color = EarthColors.Text.textTertiary,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "Max",
+            style = EarthTypography.textSm.copy(fontWeight = FontWeight.SemiBold),
+            color = EarthAccent.ink,
+            modifier = Modifier.clickable { onAmount(cap.fromBaseUnits()) }.padding(4.dp),
+        )
+    }
+    error?.let { Text(it, style = EarthTypography.textSm, color = EarthColors.Utility.ErrorRed.utilityError700) }
+    // Only when ERTH is spread over more notes than one bundle carries.
+    if (!shielding && unshieldable < coin.private) {
+        Text("Merge notes in Settings to move it all", style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
+    }
+    Spacer(Modifier.height(24.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        PillButton("Cancel", primary = false, modifier = Modifier.weight(1f), onClick = onCancel)
+        PillButton(
+            if (shielding) "Shield" else "Unshield",
+            enabled = amountUerth != null && amountUerth > 0 && error == null,
+            modifier = Modifier.weight(1f),
+        ) { if (amountUerth != null && error == null) onConfirm(amountUerth) }
     }
 }
