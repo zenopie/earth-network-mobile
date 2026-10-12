@@ -113,13 +113,22 @@ struct CoinRow: View {
 /// One coin, as the stake page shows a validator: its mark, the private
 /// amount large, the public amount on one line beneath, and Shield /
 /// Unshield. ANML is only ever private, so it is the number and nothing to do.
+///
+/// Shield and Unshield happen here, not on a second screen: the big number
+/// turns into the amount being moved, with Max under it, and Review raises
+/// the confirmation.
 struct CoinSheet: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
+    @Environment(TxController.self) private var tx
     @Environment(\.dismiss) private var dismiss
 
     let denom: String
-    let onMove: (MoveSheet.Direction) -> Void
+
+    /// Which way an amount is being entered; nil while just looking.
+    @State private var moving: ShieldDirection?
+    @State private var amount = ""
+    @FocusState private var amountFocused: Bool
 
     /// Live from the model, so a refresh behind the sheet shows in it.
     private var coin: ShieldMove.Coin {
@@ -145,6 +154,32 @@ struct CoinSheet: View {
                 .foregroundStyle(theme.colors.textPrimary)
 
             Spacer().frame(height: theme.space.x24)
+            if let moving {
+                entry(moving, token: token)
+            } else {
+                overview(coin, token: token)
+            }
+        }
+        .padding(.horizontal, theme.space.gutter)
+        .padding(.bottom, theme.space.x24)
+        .frame(maxWidth: .infinity)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(GeometryReader { g in
+            Color.clear.preference(key: SheetHeight.self, value: g.size.height)
+        })
+        .onPreferenceChange(SheetHeight.self) { if $0 > 0 { height = $0 } }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .earthBackground()
+        .presentationDetents([.height(height)])
+        .presentationDragIndicator(.visible)
+        #if targetEnvironment(simulator)
+        // `-demoMove unshield` opens straight into an amount, as `-demoCoin` opens this sheet.
+        .task { if let d = UserDefaults.standard.string(forKey: "demoMove") { start(d == "unshield" ? .unshield : .shield) } }
+        #endif
+    }
+
+    @ViewBuilder
+    private func overview(_ coin: ShieldMove.Coin, token: Token) -> some View {
             if model.balancesVisible {
                 SplitAmount(amount: Figures.plain(coin.privateAmount, decimals: token.decimals))
                     .lineLimit(1)
@@ -170,32 +205,131 @@ struct CoinSheet: View {
             if !privateOnly {
                 Spacer().frame(height: theme.space.x32)
                 HStack(spacing: theme.space.x8) {
-                    EarthPillButton(title: "Shield") { move(.shield) }
+                    EarthPillButton(title: "Shield") { start(.shield) }
                         .disabled(ShieldMove.shieldBlocked(denom: coin.denom, public: coin.publicAmount, fee: shieldFee) != nil)
-                    EarthPillButton(title: "Unshield", role: .secondary) { move(.unshield) }
+                    EarthPillButton(title: "Unshield", role: .secondary) { start(.unshield) }
                         .disabled(ShieldMove.unshieldBlocked(denom: coin.denom, private: coin.privateAmount,
                                                              spendable: coin.denom == Token.erth.denom ? model.unshieldableErth : 0,
                                                              fee: unshieldFee) != nil)
                 }
             }
-        }
-        .padding(.horizontal, theme.space.gutter)
-        .padding(.bottom, theme.space.x24)
-        .frame(maxWidth: .infinity)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(GeometryReader { g in
-            Color.clear.preference(key: SheetHeight.self, value: g.size.height)
-        })
-        .onPreferenceChange(SheetHeight.self) { if $0 > 0 { height = $0 } }
-        .frame(maxHeight: .infinity, alignment: .top)
-        .earthBackground()
-        .presentationDetents([.height(height)])
-        .presentationDragIndicator(.visible)
     }
 
-    private func move(_ direction: MoveSheet.Direction) {
-        onMove(direction)
-        dismiss()
+    /// The amount being moved, in the hero's place.
+    @ViewBuilder
+    private func entry(_ direction: ShieldDirection, token: Token) -> some View {
+        let flow = ShieldFlow(direction: direction, model: model)
+        TextField("0", text: $amount)
+            .font(EarthType.header2).fontWeight(.semibold)
+            .multilineTextAlignment(.center)
+            .keyboardType(.decimalPad)
+            .focused($amountFocused)
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+            .onChange(of: amount) { previous, new in amount = Amounts.filterAmountInput(new, previous: previous) }
+        HStack(spacing: 6) {
+            Text("\(direction == .shield ? "Public" : "Private") \(Figures.balance(flow.available))")
+                .font(EarthType.body)
+                .foregroundStyle(theme.colors.textTertiary)
+            Button("Max") { amount = Token.erth.format(flow.max) }
+                .font(EarthType.body).fontWeight(.semibold)
+                .foregroundStyle(theme.colors.accentInk)
+        }
+        .padding(.top, theme.space.x4)
+        if direction == .unshield, model.unshieldableErth < model.shieldedErth {
+            // More notes than one transaction carries: Max is short of the balance.
+            Text("Merge notes in Settings to move it all")
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textTertiary)
+                .padding(.top, theme.space.x4)
+        }
+
+        Spacer().frame(height: theme.space.x32)
+        HStack(spacing: theme.space.x8) {
+            EarthPillButton(title: "Cancel", role: .secondary) { moving = nil; amount = "" }
+            EarthPillButton(title: direction == .shield ? "Shield" : "Unshield") {
+                if flow.submit(amount, tx: tx) { dismiss() }
+            }
+            .disabled(flow.parse(amount) == nil)
+        }
+    }
+
+    private func start(_ direction: ShieldDirection) {
+        amount = ""
+        moving = direction
+        amountFocused = true
+    }
+}
+
+enum ShieldDirection: Hashable { case shield, unshield }
+
+/// Moves ERTH between this wallet's public account and its private notes.
+///
+/// Shield is MsgShield, signed by the account (the coins are its), the note
+/// to this wallet's own shielded address. Unshield is a private send out of
+/// the notes to this wallet's own account, its fee from the same bundle (at
+/// Max, out of the amount).
+@MainActor
+struct ShieldFlow {
+    let direction: ShieldDirection
+    let model: AppModel
+
+    private var shieldFee: BigInt { BigInt(TransactionSigner.defaultFeeUerth) ?? 0 }
+    private var unshieldFee: UInt64 { UInt64(Fees.forGas(PrivacyWallet.privateGasEstimate)) ?? 0 }
+
+    /// The side the amount comes out of.
+    var available: BigInt { direction == .shield ? model.balance(.erth) : BigInt(model.shieldedErth) }
+
+    /// The most one transaction can move. A shield leaves its fee behind; an
+    /// unshield at Max releases every note one bundle carries and pays its fee
+    /// out of the amount.
+    var max: BigInt {
+        switch direction {
+        case .shield: return ShieldMove.maxShield(public: model.balance(.erth), fee: shieldFee)
+        case .unshield: return BigInt(model.unshieldableErth)
+        }
+    }
+
+    /// Whether this unshield pays its fee from the amount: when the amount and
+    /// the estimated fee would not both fit what one bundle can spend.
+    private func feeFromAmount(_ amount: UInt64) -> Bool {
+        ShieldMove.feeFromAmount(amount: amount, spendable: model.unshieldableErth, fee: unshieldFee)
+    }
+
+    func parse(_ text: String) -> BigInt? {
+        guard let v = Token.erth.parse(text), v > 0, v <= max else { return nil }
+        if direction == .shield, model.privacy == nil { return nil }
+        // Fee from the amount: the amount must still exceed the fee.
+        if direction == .unshield, let u = UInt64(v.description), feeFromAmount(u), u <= unshieldFee { return nil }
+        return v
+    }
+
+    /// Raises the confirmation; false when the amount does not parse.
+    func submit(_ text: String, tx: TxController) -> Bool {
+        guard let value = parse(text), let amount = UInt64(value.description) else { return false }
+        let display = "\(Token.erth.format(value)) ERTH"
+        let model = self.model
+        switch direction {
+        case .shield:
+            guard let w = model.privacy, let out = try? w.shieldOutput(denom: Constants.gasDenom, amount: amount) else { return false }
+            tx.request(.init(action: "Shield ERTH", rows: [("Amount", display), ("From", "your public balance"), ("To", "your private balance")]),
+                       onSuccess: { await model.syncPrivacy() }) { key in
+                [MsgShield(sender: key.address, amount: Coin(denom: Constants.gasDenom, amount: String(value)),
+                           pc: out.pc.bytes, ciphertext: out.ciphertext).asAny(typeURL: MsgShield.typeURL)]
+            }
+        case .unshield:
+            let to = model.address
+            let fromAmount = feeFromAmount(amount)
+            tx.requestPrivate(.private(action: "Unshield ERTH", rows: [
+                ("Amount", fromAmount ? display + " less the fee" : display),
+                ("From", "your private balance"),
+                ("To", "your public balance"),
+                ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, private"),
+            ]), onSuccess: { await model.syncPrivacy() }) { w in
+                try await w.unshield(receiver: to, denom: Constants.gasDenom, amount: amount, feeFromAmount: fromAmount)
+            }
+        }
+        return true
     }
 }
 

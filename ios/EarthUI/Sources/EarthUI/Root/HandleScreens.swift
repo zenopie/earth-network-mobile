@@ -259,18 +259,22 @@ struct HandleScreen: View {
     }
 }
 
-/// A voluntary switch of identity: the same passport registered to a fresh
-/// identity, another of this phone's wallets' or this wallet's next one
-/// (PrivacyKeys generations). The chain zeroes the live leaf and makes a new
-/// one. Once the switch has landed, the new identity can bring this one's
-/// handle and caretaker vote over (`MoveOfferCard`, on Identity where it
-/// registered): a move proves knowledge of both identities' secrets, so it
-/// comes after the switch and needs both on this phone (one phrase, for a
-/// fresh identity here).
+/// A voluntary switch of identity: the same passport registered to another
+/// of this phone's wallets (its next identity). The chain zeroes the live leaf
+/// and makes a new one. Once the switch has landed, the new identity can bring
+/// this one's handle and caretaker vote over (`MoveOfferCard`, on Identity
+/// where it registered): a move proves knowledge of both identities' secrets,
+/// so it comes after the switch and needs both on this phone.
+///
+/// Not offered: a fresh identity in this same wallet. It derives from the same
+/// phrase, so it helps only if an identity secret leaked by itself off the
+/// phone, never for a lost phone or an exposed phrase, which is what anyone
+/// reaching for this screen is afraid of. Renewal still registers the next
+/// identity here; that path is Identity's, not this one.
 ///
 /// Another wallet's recovery phrase is shown after a fresh unlock and dropped
 /// when the app leaves the foreground or the screen closes; the backup box
-/// needs the phrase shown first. A fresh identity here needs no new phrase.
+/// needs the phrase shown first.
 struct SwitchIdentityScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
@@ -345,12 +349,9 @@ struct SwitchIdentityScreen: View {
         return "Renew \(what.joined(separator: " and ")) before switching"
     }
 
-    /// The target for a fresh identity in this wallet (its next generation).
-    static let switchToSelf = -1
-
     private func pick(_ index: Int) {
         target = index; phrase = nil; backedUp = false
-        guard index != Self.switchToSelf, let info = model.switchTargetInfo(ofWallet: index) else { targetWarning = nil; return }
+        guard let info = model.switchTargetInfo(ofWallet: index) else { targetWarning = nil; return }
         // What a move after the switch could not bring there, said up front.
         // Any wallet can be a target: it registers its next unused identity.
         if info.handleRefusal != nil || info.voteRefusal != nil {
@@ -369,7 +370,7 @@ struct SwitchIdentityScreen: View {
     private var form: some View {
         ScrollView {
             VStack(spacing: 0) {
-                Hero(title: "New identity", line: ("Same passport, fresh identity", theme.colors.textTertiary))
+                Hero(title: "New identity", line: ("Move your passport to another wallet", theme.colors.textTertiary))
                 VStack(alignment: .leading, spacing: theme.space.x12) { options }
                     .padding(.top, theme.space.x32)
             }
@@ -397,17 +398,6 @@ struct SwitchIdentityScreen: View {
         }
         EarthLabel("Switch to")
         let others = model.wallets.enumerated().filter { $0.offset != model.selected }
-        let isSelf = target == Self.switchToSelf
-        choice(title: "Fresh identity here", subtitle: "Same recovery phrase", selected: isSelf) {
-            if !isSelf { pick(Self.switchToSelf) }
-        }
-        if isSelf {
-            // Which fresh identity a compromise calls for: the next generation only for a secret
-            // that leaked by itself, outside the phone. The wallet holds the key every generation
-            // derives from in memory, so a memory compromise exposes them all, and so does the
-            // phrase: a new wallet then. As Android's FRESH_IDENTITY_NOTE.
-            Caption("Phone or phrase exposed? Use a new wallet.", error: true)
-        }
         ForEach(others, id: \.offset) { index, w in
             choice(title: w.name, subtitle: w.address, selected: target == index) {
                 if target != index { pick(index) }
@@ -420,28 +410,25 @@ struct SwitchIdentityScreen: View {
             Caption(targetWarning)
         }
         EarthPillButton(title: "Create a new wallet", role: .secondary) { adding = true }
-        // Ticked only once the phrase was shown for this target. A fresh
-        // identity here is this wallet's own phrase: nothing new to back up.
+        // Ticked only once the phrase was shown for this target.
         let canTick = target != nil && revealedFor == target
-        if !isSelf {
-            if let phrase {
-                SeedGrid(words: phrase.split(separator: " ").map(String.init))
-                Caption("Write down in order. Keep offline.")
-            }
-            EarthPillButton(title: phrase == nil ? "Show recovery phrase" : "Hide recovery phrase", role: .secondary) {
-                if phrase == nil { confirming = true } else { phrase = nil }
-            }
-            .disabled(target == nil)
-            Toggle(canTick ? "I backed up the phrase" : "Show the phrase first",
-                   isOn: Binding(get: { backedUp && canTick }, set: { backedUp = $0 }))
-                .disabled(!canTick)
+        if let phrase {
+            SeedGrid(words: phrase.split(separator: " ").map(String.init))
+            Caption("Write down in order. Keep offline.")
         }
+        EarthPillButton(title: phrase == nil ? "Show recovery phrase" : "Hide recovery phrase", role: .secondary) {
+            if phrase == nil { confirming = true } else { phrase = nil }
+        }
+        .disabled(target == nil)
+        Toggle(canTick ? "I backed up the phrase" : "Show the phrase first",
+               isOn: Binding(get: { backedUp && canTick }, set: { backedUp = $0 }))
+            .disabled(!canTick)
         EarthPillButton(title: "Switch") {
             guard let t = target else { return }
-            // The target registers the same passport to its next identity; a fresh identity stays in this wallet.
-            if t == Self.switchToSelf { registering = true } else { Task { await model.select(t); registering = true } }
+            // The target registers the same passport to its next identity.
+            Task { await model.select(t); registering = true }
         }
-        .disabled(!(target != nil && (isSelf || (backedUp && canTick)) && (unmoved == nil || strandAccepted)))
+        .disabled(!(target != nil && backedUp && canTick && (unmoved == nil || strandAccepted)))
         .padding(.top, theme.space.x8)
         // The old identity no longer counts once registered elsewhere; a lost
         // phrase leaves its handle and vote to wait out their leases.

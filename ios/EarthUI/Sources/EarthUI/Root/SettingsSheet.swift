@@ -33,7 +33,7 @@ struct SettingsSheet: View {
                         divider
                         row("Handle", "at", subtitle: model.handle.isEmpty ? "Claim a name others can pay" : "@\(model.handle)", route: .handle)
                         divider
-                        row("Shielded notes", "lock.shield", subtitle: "Shield, merge small notes", route: .notes)
+                        row("Merge notes", "square.stack.3d.down.right", subtitle: "Combine small private notes", route: .notes)
                         divider
                         row("Wallets", "wallet.bifold", subtitle: model.walletName, route: .wallets)
                         divider

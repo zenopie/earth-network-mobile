@@ -17,12 +17,8 @@ struct WalletScreen: View {
     @State private var sending = false
     @State private var receiving = false
     @State private var registering = false
-    @State private var moving = false
-    @State private var moveDirection = MoveSheet.Direction.shield
-    /// The coin whose sheet is open, and the move it asked for: opened once
-    /// its sheet is gone, as one sheet cannot present over another closing.
+    /// The coin whose sheet is open.
     @State private var coin: CoinPick?
-    @State private var pendingMove: MoveSheet.Direction?
     /// Which list is under the cards. The third action toggles it.
     @State private var panel = Panel.activity
     @State private var handleOpen = false
@@ -75,15 +71,7 @@ struct WalletScreen: View {
         .sheet(isPresented: $sending) { SendSheet().earthThemed() }
         .sheet(isPresented: $receiving) { ReceiveSheet().earthThemed() }
         .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
-        .sheet(item: $coin, onDismiss: {
-            guard let d = pendingMove else { return }
-            pendingMove = nil
-            moveDirection = d
-            moving = true
-        }) { pick in
-            CoinSheet(denom: pick.denom) { pendingMove = $0 }.earthThemed()
-        }
-        .sheet(isPresented: $moving) { MoveSheet(direction: moveDirection).earthThemed() }
+        .sheet(item: $coin) { CoinSheet(denom: $0.denom).earthThemed() }
         .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
         .sheet(isPresented: $identityOpen) { IdentityScreen().earthThemed() }
         .sheet(isPresented: $networkOpen) { NetworkScreen().earthThemed() }
