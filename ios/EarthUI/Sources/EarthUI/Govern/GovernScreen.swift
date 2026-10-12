@@ -212,9 +212,14 @@ final class StreamsModel {
         let mineCaretaker = caretakerSplit.sorted { $0.key < $1.key }.map { Allocation.Weight(optionID: $0.key, percent: $0.value) }
         let mineGroundworks = model.groundworksSplit
             .sorted { $0.key < $1.key }.map { Allocation.Weight(optionID: $0.key, percent: $0.value) }
-        caretaker = State(stream: await caretakerStream, mine: mineCaretaker)
-        groundworks = State(stream: await groundworksStream, mine: mineGroundworks)
-        self.proposals = await proposals
+        // A failed read comes back empty, and neither stream is ever really
+        // empty (each has built-in options) nor does a proposal list shrink to
+        // nothing: so an empty answer keeps what is on screen rather than
+        // blanking it. The next load replaces it.
+        let c = await caretakerStream, g = await groundworksStream, p = await proposals
+        caretaker = State(stream: c.options.isEmpty && loaded ? caretaker.stream : c, mine: mineCaretaker)
+        groundworks = State(stream: g.options.isEmpty && loaded ? groundworks.stream : g, mine: mineGroundworks)
+        if !(p.isEmpty && loaded) { self.proposals = p }
         loaded = true
     }
 }

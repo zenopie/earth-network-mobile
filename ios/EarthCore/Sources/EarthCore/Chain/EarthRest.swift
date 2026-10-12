@@ -88,6 +88,37 @@ public struct EarthRest: Sendable {
         return (Data(out), status, response as? HTTPURLResponse)
     }
 
+    /// How many times a read answered "busy" is tried again.
+    static let busyRetries = 4
+
+    /// Runs `fetch`, again after a short wait while the node answers busy.
+    ///
+    /// Earth's edge gives each client a few concurrent queries per class and
+    /// answers 503 at once past that (429 is Cloudflare's own rate limit). A
+    /// screen refreshing after a transaction fires a dozen reads together, and
+    /// the ones turned away came back as empty: the Govern tab went blank until
+    /// it was opened again. A 503 or 429 means the node never ran the request,
+    /// so a GET is simply sent again, with a growing, jittered wait so the
+    /// retries do not arrive together. Writes are never retried here.
+    static func retryingBusy<T>(_ request: URLRequest, _ fetch: () async throws -> T) async throws -> T where T: Sendable {
+        let read = (request.httpMethod ?? "GET") == "GET"
+        var attempt = 0
+        while true {
+            let result = try await fetch()
+            let status = statusOf(result)
+            guard read, status == 503 || status == 429, attempt < busyRetries else { return result }
+            attempt += 1
+            let ms = UInt64(250 * attempt) + UInt64.random(in: 0 ... 250)
+            try await Task.sleep(nanoseconds: ms * 1_000_000)
+        }
+    }
+
+    private static func statusOf<T>(_ result: T) -> Int {
+        if let r = result as? (Data, Int) { return r.1 }
+        if let r = result as? (Data, Int, HTTPURLResponse?) { return r.1 }
+        return 0
+    }
+
     /// A node fixed at init; nil follows `NodeSettings.current`, read per
     /// request, so a node chosen in Settings applies to every client at once.
     private let pinned: NodeSettings.Node?
@@ -143,7 +174,7 @@ public struct EarthRest: Sendable {
         guard let url = try checked(lcd).appendingPathChecked(path) else { throw Error.missing(path) }
         var r = URLRequest(url: url)
         r.setValue(String(height), forHTTPHeaderField: "x-cosmos-block-height")
-        let (data, status, resp) = try await Self.boundedResponse(session, r)
+        let (data, status, resp) = try await Self.retryingBusy(r) { try await Self.boundedResponse(session, r) }
         guard (200 ... 299).contains(status) else { throw Error.http(status: status, body: String(decoding: data, as: UTF8.self)) }
         let object = try Self.parseJSON(data)
         // The SDK's gateway sends gRPC response metadata with the
@@ -170,7 +201,7 @@ public struct EarthRest: Sendable {
     }
 
     private func request(_ request: URLRequest, maxBytes: Int = EarthRest.maxBodyBytes) async throws -> JSON {
-        let (data, status) = try await Self.boundedData(session, request, max: maxBytes)
+        let (data, status) = try await Self.retryingBusy(request) { try await Self.boundedData(session, request, max: maxBytes) }
         guard (200 ... 299).contains(status) else {
             throw Error.http(status: status, body: String(decoding: data, as: UTF8.self))
         }
