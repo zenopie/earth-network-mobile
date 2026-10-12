@@ -107,43 +107,28 @@ struct StakeOverview: View {
                     .foregroundStyle(line.color)
                     .padding(.top, theme.space.x12)
             }
-            // Shown with balances hidden too: a rate says nothing about what
-            // is held.
-            if let apr = aprLine(cards, total: total) {
-                Text(apr)
-                    .font(EarthType.bodySmall).fontWeight(.medium)
-                    .foregroundStyle(theme.colors.accentInk)
-                    .padding(.horizontal, theme.space.x12)
-                    .padding(.vertical, theme.space.x4)
-                    .background(theme.colors.accentTint, in: .capsule)
-                    .padding(.top, theme.space.x8)
-            }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, theme.space.x24)
     }
 
-    /// The hero's one line: what it earns a day.
+    /// The hero's one line: what it earns a day and at what rate. The rate
+    /// stays with balances hidden: it says nothing about what is held.
+    ///
+    /// Staked: the rate is weighted across its validators after each one's
+    /// commission. Before any stake: what the network pays before
+    /// commission, the most any validator can.
     private func heroLine(_ cards: [StakeCard], total: UInt64) -> (text: String, color: Color)? {
         if total == 0 {
-            return cards.isEmpty && model.pendingUnbonds.isEmpty ? ("Earn by staking ERTH", theme.colors.textTertiary) : nil
+            guard cards.isEmpty && model.pendingUnbonds.isEmpty else { return nil }
+            guard let base = StakingApr.base(bondedUerth: bonded) else { return ("Earn by staking ERTH", theme.colors.textTertiary) }
+            return ("Earn up to \(Figures.rate(base)) APR", theme.colors.accentInk)
         }
         let daily = perDay(cards)
         guard daily > 0 else { return ("Not earning", theme.colors.textTertiary) }
-        guard model.balancesVisible else { return nil }
-        return ("+\(dailyText(daily)) ERTH / day", theme.colors.accentInk)
-    }
-
-    /// What the stake earns a year, weighted across its validators after
-    /// each one's commission; before any stake, what the network pays
-    /// before commission, which is the most any validator can.
-    private func aprLine(_ cards: [StakeCard], total: UInt64) -> String? {
-        if total > 0 {
-            let daily = perDay(cards)
-            guard daily > 0 else { return nil }
-            return "\(Figures.rate(daily * 365 / Double(total))) APR"
-        }
-        return StakingApr.base(bondedUerth: bonded).map { "Up to \(Figures.rate($0)) APR" }
+        let apr = "\(Figures.rate(daily * 365 / Double(total))) APR"
+        guard model.balancesVisible else { return (apr, theme.colors.accentInk) }
+        return ("+\(dailyText(daily)) ERTH / day · \(apr)", theme.colors.accentInk)
     }
 
     private var bonded: Int64 { Int64(model.totalBonded.description) ?? 0 }

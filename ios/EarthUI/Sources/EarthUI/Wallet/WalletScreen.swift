@@ -146,12 +146,6 @@ struct BalanceWidget: View {
                     .foregroundStyle(theme.colors.textTertiary)
             }
 
-            if model.syncedHeight > 0 {
-                Spacer().frame(height: 4)
-                Text(syncLine)
-                    .font(EarthType.caption.monospacedDigit())
-                    .foregroundStyle(theme.colors.textTertiary)
-            }
 
             // Why the private side (notes, stake, registration) is not
             // verified against the chain: shown, never hidden.
@@ -167,12 +161,37 @@ struct BalanceWidget: View {
     }
 }
 
-extension BalanceWidget {
-    /// Where the private side is synced to, against the chain's latest block.
-    var syncLine: String {
+/// Whether the private side is caught up, as a dot and a word; a tap shows
+/// the block numbers behind it.
+struct SyncStatus: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+    @State private var detailed = false
+
+    /// A few blocks behind is a sync in flight, not a wallet out of date.
+    private static let slackBlocks: UInt64 = 3
+
+    var body: some View {
+        let behind = model.chainHeight > model.syncedHeight + Self.slackBlocks
+        Button { detailed.toggle() } label: {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(behind ? theme.colors.warnInk : Palette.Brand.b500)
+                    .frame(width: 7, height: 7)
+                Text(detailed ? numbers : (behind ? "Syncing…" : "Synced"))
+                    .font(EarthType.caption.monospacedDigit())
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
+            .padding(.vertical, 2)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var numbers: String {
         let synced = Figures.grouped(Int64(clamping: model.syncedHeight))
         guard model.chainHeight > 0 else { return "Synced to block \(synced)" }
-        return "Synced \(synced) / \(Figures.grouped(Int64(clamping: model.chainHeight)))"
+        return "Synced to \(synced) of \(Figures.grouped(Int64(clamping: model.chainHeight)))"
     }
 }
 

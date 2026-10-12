@@ -247,8 +247,6 @@ internal fun EarthContent(
             rewardsUerth = state?.rewardsUerth ?: 0L,
             unbondingUerth = earnState?.unbonding?.sumOf { it.amountUerth } ?: 0L,
             privateNotice = state?.privacySyncError,
-            syncedHeight = state?.syncedHeight,
-            tipHeight = state?.tipHeight,
             // What is due, never done unasked: each reminder opens where it is done.
             // A node that failed its recheck (or awaits it) leads: Earth's node is in use meanwhile.
             reminders = listOfNotNull(nodeNotice?.let { it to { nav.push(EarthRoute.Network) } }) + personal?.reminders.orEmpty().mapNotNull { r ->

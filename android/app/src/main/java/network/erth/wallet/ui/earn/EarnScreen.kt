@@ -261,24 +261,23 @@ private fun StakeHero(view: StakeView, rows: List<PrivateStakeRow>, empty: Boole
             Spacer(Modifier.height(12.dp))
             Text(text, style = EarthTypography.textMd.copy(fontSize = 15.sp), fontWeight = FontWeight.SemiBold, color = color)
         }
-        // A rate is not private, so it shows with balances hidden.
-        val apr = if (total > 0) view.blendedApr(rows)?.let { "${it.asPercent()} APR" }
-        else view.state?.let { StakingApr.base(it.totalBondedUerth) }?.let { "Up to ${it.asPercent()} APR" }
-        apr?.let {
-            Spacer(Modifier.height(4.dp))
-            Text(it, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
-        }
     }
 }
 
-/** What it earns a day. */
+/** What it earns a day, and at what rate. A rate is not private, so it stays with balances hidden. */
 @Composable
 private fun heroLine(view: StakeView, rows: List<PrivateStakeRow>, total: Long, empty: Boolean): Pair<String, Color>? {
-    if (total == 0L) return if (empty) "Earn by staking ERTH" to EarthColors.Text.textTertiary else null
+    if (total == 0L) {
+        if (!empty) return null
+        val base = view.state?.let { StakingApr.base(it.totalBondedUerth) }
+            ?: return "Earn by staking ERTH" to EarthColors.Text.textTertiary
+        return "Earn up to ${base.asPercent()} APR" to EarthAccent.ink
+    }
     val daily = rows.sumOf { it.valueUerth.toDouble() * (view.apr(it) ?: 0.0) / 365 }
-    if (daily <= 0) return "Not earning" to EarthColors.Text.textTertiary
-    if (!view.visible) return null
-    return "+${dailyText(daily)} ERTH / day" to EarthAccent.ink
+    val apr = view.blendedApr(rows)
+    if (daily <= 0 || apr == null) return "Not earning" to EarthColors.Text.textTertiary
+    val rate = "${apr.asPercent()} APR"
+    return (if (view.visible) "+${dailyText(daily)} ERTH / day · $rate" else rate) to EarthAccent.ink
 }
 
 /** The whole in display size, the fraction one step down: the wallet's balance. */

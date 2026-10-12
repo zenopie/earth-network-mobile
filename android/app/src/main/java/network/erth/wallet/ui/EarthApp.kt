@@ -269,6 +269,8 @@ fun EarthApp(
                     showsBalances = route == EarthRoute.Wallet,
                     // No tab carries an action (pools live on Earn, behind a selector).
                     tabAction = null,
+                    syncedHeight = state?.syncedHeight.takeIf { route == EarthRoute.Wallet },
+                    tipHeight = state?.tipHeight,
                 )
                 else -> EarthDetailTopBar(title = route.title(), onBack = { nav.pop() })
             }

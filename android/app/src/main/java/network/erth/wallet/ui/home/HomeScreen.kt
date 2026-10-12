@@ -123,9 +123,6 @@ fun HomeScreen(
     privateNotice: String? = null,
     /** What is due (a claim, a renewal), each with where to do it: reminders, never automatic. */
     reminders: List<Pair<String, () -> Unit>> = emptyList(),
-    /** The private sync's height and the chain's, for the line under the balance; hidden while either is unknown. */
-    syncedHeight: Long? = null,
-    tipHeight: Long? = null,
 ) {
     // Which list is under the cards. The third action swaps it.
     var panel by remember { mutableStateOf(HomePanel.Activity) }
@@ -142,14 +139,6 @@ fun HomeScreen(
             anml = anmlBalance,
             visible = balancesVisible,
         )
-        if (syncedHeight != null && tipHeight != null) {
-            Text(
-                text = "Synced %,d / %,d".format(syncedHeight, tipHeight),
-                style = EarthTypography.textXs,
-                color = EarthColors.Text.textTertiary,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
         privateNotice?.let {
             Text(
                 text = "Private balances, stake and registration: $it",

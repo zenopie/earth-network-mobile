@@ -226,10 +226,14 @@ struct EarthTopBar: View {
             }
             // There is one wallet, so this identifies rather than switches —
             // no chevron implying a menu that does not exist.
-            Text(title)
-                .font(EarthType.header6)
-                .fontWeight(.semibold)
-                .foregroundStyle(theme.colors.textPrimary)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(EarthType.header6)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(theme.colors.textPrimary)
+                // Under the wallet's name: it is this wallet's notes that are synced.
+                if showsBalances, model.syncedHeight > 0 { SyncStatus() }
+            }
             Spacer()
             if showsBalances {
                 Button { model.toggleBalances() } label: {
