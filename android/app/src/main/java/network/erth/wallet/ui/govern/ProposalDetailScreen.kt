@@ -19,7 +19,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.clickable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import network.erth.wallet.ui.earn.PillButton
 import network.erth.wallet.chain.Assembly
 import network.erth.wallet.chain.Gov
 import network.erth.wallet.ui.components.EarthDetailRow
@@ -56,8 +63,8 @@ fun ProposalDetailScreen(
     /** Why this wallet cannot vote with stake, or null when it can. */
     eligibility: String? = null,
     onVote: ((Gov.Proposal, Gov.Vote) -> Unit)? = null,
-    /** Stake votes are private and final: each staked note votes once. */
-    stakeVoteFinal: Boolean = false,
+    /** This wallet's private stake in ERTH, for the weight line; null when none. */
+    stakeWeight: String? = null,
     /** The human house's tally; null (not read) hides the section rather than showing it empty. */
     assembly: Assembly.Tally? = null,
     /** Why this wallet cannot vote as a human, or null when it can. */
@@ -81,6 +88,8 @@ fun ProposalDetailScreen(
         }
         return
     }
+    val red = EarthColors.Utility.ErrorRed.utilityError700
+    var expanded by remember { mutableStateOf(false) }
 
     Column(
         modifier
@@ -89,395 +98,157 @@ fun ProposalDetailScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = dimens.gutter),
     ) {
-        Spacer(Modifier.height(dimens.space8))
-
+        Spacer(Modifier.height(dimens.space16))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "#${proposal.id}",
+                text = "#${proposal.id}" + if (proposal.expedited) "  ·  Expedited" else "",
                 style = EarthTypography.textXs,
                 color = EarthColors.Text.textTertiary,
             )
-            if (proposal.expedited) {
-                Spacer(Modifier.height(dimens.space4))
-                Text(
-                    text = "  ·  Expedited",
-                    style = EarthTypography.textXs,
-                    color = EarthColors.Text.textTertiary,
-                )
-            }
             Spacer(Modifier.weight(1f))
             ProposalStatusPill(proposal.status)
         }
-
         Spacer(Modifier.height(dimens.space8))
         Text(
             text = proposal.title,
-            style = EarthTypography.header5,
+            style = EarthTypography.header5.copy(fontWeight = FontWeight.Bold),
             color = EarthColors.Text.textPrimary,
         )
-
         if (proposal.summary.isNotBlank()) {
             Spacer(Modifier.height(dimens.space8))
-            // No maxLines here — the list truncates, this is where the whole
-            // thing is meant to be readable.
             Text(
                 text = proposal.summary,
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textSecondary,
+                maxLines = if (expanded) Int.MAX_VALUE else 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                if (expanded) "Less" else "More",
+                style = EarthTypography.textSm,
+                fontWeight = FontWeight.SemiBold,
+                color = EarthAccent.ink,
+                modifier = Modifier.clickable { expanded = !expanded }.padding(vertical = dimens.space4),
             )
         }
+        if (proposal.votingEndTime.isNotBlank()) {
+            Spacer(Modifier.height(dimens.space8))
+            Row(Modifier.fillMaxWidth().padding(vertical = dimens.space8)) {
+                Text(if (proposal.isVoting) "Voting ends" else "Voting ended", style = EarthTypography.textMd,
+                    color = EarthColors.Text.textSecondary, modifier = Modifier.weight(1f))
+                Text(proposal.votingEndTime.take(10), style = EarthTypography.textMd, color = EarthColors.Text.textPrimary)
+            }
+        }
+        // An upgrade's plan decides what happens and when: worth its row.
+        proposal.planName?.let { EarthDetailRow("Upgrade", it + (proposal.planHeight?.let { h -> " · at $h" } ?: "")) }
 
         // --- stake house ---
         Spacer(Modifier.height(dimens.space24))
-        Text(
-            text = if (assembly != null) "Stake" else "Votes",
-            style = EarthTypography.textMd,
-            fontWeight = FontWeight.SemiBold,
-            color = EarthColors.Text.textPrimary,
-        )
-        Spacer(Modifier.height(dimens.space8))
+        // Named only when there are two houses.
+        if (assembly != null) SectionLabel("Stake")
         if (proposal.total <= 0) {
-            Text(
-                text = if (proposal.isVoting) {
-                    "Nothing cast yet."
-                } else {
-                    "No votes were cast."
-                },
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textTertiary,
-            )
+            Text(if (proposal.isVoting) "Nothing cast yet" else "No votes cast", style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
         } else {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(dimens.space8)
-                    .background(
-                        EarthColors.Surfaces.bgSecondary,
-                        RoundedCornerShape(dimens.space8),
-                    ),
-            ) {
+            TallyBar {
                 TallyBarPart(proposal.yes, proposal.total, EarthAccent.ink)
-                TallyBarPart(
-                    proposal.no,
-                    proposal.total,
-                    EarthColors.Utility.ErrorRed.utilityError700,
-                )
-                TallyBarPart(
-                    proposal.veto,
-                    proposal.total,
-                    EarthColors.Utility.ErrorRed.utilityError400,
-                )
-                TallyBarPart(
-                    proposal.abstain,
-                    proposal.total,
-                    EarthColors.Text.textTertiary,
-                )
+                TallyBarPart(proposal.no, proposal.total, red)
+                TallyBarPart(proposal.veto, proposal.total, EarthColors.Utility.ErrorRed.utilityError400)
+                TallyBarPart(proposal.abstain, proposal.total, EarthColors.Text.textTertiary)
             }
+            Spacer(Modifier.height(dimens.space8))
+            Line(
+                "${proposal.yes.pct(proposal.total)} yes · ${proposal.no.pct(proposal.total)} no · " +
+                    "${proposal.abstain.pct(proposal.total)} abstain · ${proposal.veto.pct(proposal.total)} veto",
+            )
+            // The figures as well: a stake-weighted vote is often one holder's, which shows only as a number.
+            Line("${formatErth(proposal.yes)} · ${formatErth(proposal.no)} · ${formatErth(proposal.abstain)} · ${formatErth(proposal.veto)}")
+        }
+        if (proposal.isVoting) {
             Spacer(Modifier.height(dimens.space12))
-            // The numbers as well as the bar: the bar answers "is it passing",
-            // the numbers answer "by how much", and a stake-weighted vote is
-            // usually decided by one holder whose size only shows as a figure.
-            VoteRow("Yes", proposal.yes, proposal.total, EarthAccent.ink)
-            VoteRow("No", proposal.no, proposal.total, EarthColors.Utility.ErrorRed.utilityError700)
-            VoteRow("Veto", proposal.veto, proposal.total, EarthColors.Utility.ErrorRed.utilityError400)
-            VoteRow("Abstain", proposal.abstain, proposal.total, EarthColors.Text.textTertiary)
+            if (eligibility != null) {
+                Line(eligibility)
+            } else if (onVote != null) {
+                stakeWeight?.let { Line("Your weight: $it"); Spacer(Modifier.height(dimens.space8)) }
+                Row(horizontalArrangement = Arrangement.spacedBy(dimens.space8)) {
+                    PillButton(Gov.Vote.Yes.label, modifier = Modifier.weight(1f)) { onVote(proposal, Gov.Vote.Yes) }
+                    PillButton(Gov.Vote.No.label, primary = false, modifier = Modifier.weight(1f)) { onVote(proposal, Gov.Vote.No) }
+                }
+                // A veto is not a louder no: it burns the deposit. Quieter, on its own row.
+                Spacer(Modifier.height(dimens.space8))
+                Row(horizontalArrangement = Arrangement.spacedBy(dimens.space8)) {
+                    PillButton(Gov.Vote.Abstain.label, primary = false, modifier = Modifier.weight(1f)) { onVote(proposal, Gov.Vote.Abstain) }
+                    PillButton(Gov.Vote.Veto.label, primary = false, modifier = Modifier.weight(1f)) { onVote(proposal, Gov.Vote.Veto) }
+                }
+                Spacer(Modifier.height(dimens.space8))
+                Line("Final · each stake note votes once")
+            }
         }
 
         // --- human house ---
         if (assembly != null) {
             Spacer(Modifier.height(dimens.space24))
-            Text(
-                text = "People",
-                style = EarthTypography.textMd,
-                fontWeight = FontWeight.SemiBold,
-                color = EarthColors.Text.textPrimary,
-            )
-            Spacer(Modifier.height(dimens.space8))
+            SectionLabel("People")
             if (assembly.silent) {
-                // Not "no votes yet". Silence is a refusal here, and a voter
-                // who reads it as "nothing has happened" is reading the one
-                // state that will decide the proposal if it persists.
+                // Silence is a refusal here: a proposal with no human votes fails.
                 Text(
-                    text = if (proposal.isVoting) {
-                        "Nobody has voted. A proposal with no human votes fails, " +
-                            "however much stake is behind it."
-                    } else {
-                        "No human votes were cast."
-                    },
+                    if (proposal.isVoting) "No votes yet · fails without any" else "No votes cast",
                     style = EarthTypography.textSm,
-                    color = EarthColors.Text.textTertiary,
+                    color = if (proposal.isVoting) red else EarthColors.Text.textTertiary,
                 )
             } else {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(dimens.space8)
-                        .background(
-                            EarthColors.Surfaces.bgSecondary,
-                            RoundedCornerShape(dimens.space8),
-                        ),
-                ) {
+                TallyBar {
                     TallyBarPart(assembly.yes, assembly.total, EarthAccent.ink)
-                    TallyBarPart(
-                        assembly.no,
-                        assembly.total,
-                        EarthColors.Utility.ErrorRed.utilityError700,
-                    )
+                    TallyBarPart(assembly.no, assembly.total, red)
                 }
-                Spacer(Modifier.height(dimens.space12))
-                // Counted as people rather than formatted as ERTH: these are
-                // headcounts, and putting them through the token formatter
-                // would render two voters as "0.000002".
-                PeopleRow("Yes", assembly.yes, assembly.total, EarthAccent.ink)
-                PeopleRow(
-                    "No",
-                    assembly.no,
-                    assembly.total,
-                    EarthColors.Utility.ErrorRed.utilityError700,
-                )
                 Spacer(Modifier.height(dimens.space8))
-                Text(
-                    text = if (assembly.approved) {
-                        "Clearing two thirds."
-                    } else {
-                        "Below the two thirds needed."
-                    },
-                    style = EarthTypography.textXs,
-                    color = EarthColors.Text.textTertiary,
-                )
+                // Headcounts, not ERTH.
+                Line("${assembly.yes} yes · ${assembly.no} no · " + if (assembly.approved) "clears two thirds" else "below two thirds")
+            }
+            if (proposal.isVoting) {
+                Spacer(Modifier.height(dimens.space12))
+                if (assemblyEligibility != null) {
+                    Line(assemblyEligibility)
+                } else if (onAssemblyVote != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(dimens.space8)) {
+                        PillButton(Assembly.Vote.Yes.label, modifier = Modifier.weight(1f)) { onAssemblyVote(proposal, Assembly.Vote.Yes) }
+                        PillButton(Assembly.Vote.No.label, primary = false, modifier = Modifier.weight(1f)) { onAssemblyVote(proposal, Assembly.Vote.No) }
+                    }
+                }
             }
         }
 
-        // --- details ---
-        Spacer(Modifier.height(dimens.space24))
-        Text(
-            text = "Details",
-            style = EarthTypography.textMd,
-            fontWeight = FontWeight.SemiBold,
-            color = EarthColors.Text.textPrimary,
-        )
-        Spacer(Modifier.height(dimens.space8))
-        if (proposal.messageType.isNotBlank()) {
-            EarthDetailRow("Type", proposal.messageType.substringAfterLast('.'))
-        }
-        proposal.planName?.let { EarthDetailRow("Upgrade", it) }
-        proposal.planHeight?.let { EarthDetailRow("At height", it) }
-        if (proposal.totalDepositUerth > 0) {
-            EarthDetailRow("Deposit", formatErth(proposal.totalDepositUerth))
-        }
-        if (proposal.votingEndTime.isNotBlank()) {
-            EarthDetailRow(
-                if (proposal.isVoting) "Voting ends" else "Voting ended",
-                proposal.votingEndTime.take(10),
-            )
-        }
-        if (proposal.proposer.isNotBlank()) {
-            EarthDetailRow("Proposer", proposal.proposer.shortAddress())
-        }
         // The human tally is purged when a proposal resolves, so for a closed
         // one this string is the only surviving record of which house ended it.
         if (proposal.failedReason.isNotBlank()) {
-            Spacer(Modifier.height(dimens.space8))
-            Text(
-                text = proposal.failedReason,
-                style = EarthTypography.textXs,
-                color = EarthColors.Text.textTertiary,
-            )
+            Spacer(Modifier.height(dimens.space16))
+            Line(proposal.failedReason)
         }
-
-        // --- vote ---
-        if (proposal.isVoting) {
-            Spacer(Modifier.height(dimens.space24))
-            if (assembly != null) {
-                // Named only when there are two. With one house a heading over
-                // the buttons is noise; with two, "Vote" alone would leave the
-                // buttons ambiguous about which tally they move.
-                Text(
-                    text = "Vote with stake",
-                    style = EarthTypography.textMd,
-                    fontWeight = FontWeight.SemiBold,
-                    color = EarthColors.Text.textPrimary,
-                )
-                Spacer(Modifier.height(dimens.space8))
-            }
-            if (eligibility != null) {
-                Text(
-                    text = eligibility,
-                    style = EarthTypography.textSm,
-                    color = EarthColors.Text.textTertiary,
-                )
-            } else if (onVote != null) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(dimens.space8),
-                ) {
-                    EarthButton(
-                        text = Gov.Vote.Yes.label,
-                        onClick = { onVote(proposal, Gov.Vote.Yes) },
-                        modifier = Modifier.weight(1f),
-                        colors = brandButtonColors(),
-                    )
-                    EarthButton(
-                        text = Gov.Vote.No.label,
-                        onClick = { onVote(proposal, Gov.Vote.No) },
-                        modifier = Modifier.weight(1f),
-                        colors = destructiveButtonColors(),
-                    )
-                }
-                // Abstain and veto quieter and on their own row: they are the
-                // rarer answers, and a veto is not a louder no — it burns the
-                // deposit and deserves its own moment of thought.
-                Spacer(Modifier.height(dimens.space8))
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(dimens.space8),
-                ) {
-                    EarthButton(
-                        text = Gov.Vote.Abstain.label,
-                        onClick = { onVote(proposal, Gov.Vote.Abstain) },
-                        modifier = Modifier.weight(1f),
-                        colors = EarthButtonDefaults.secondaryColors(),
-                    )
-                    EarthButton(
-                        text = Gov.Vote.Veto.label,
-                        onClick = { onVote(proposal, Gov.Vote.Veto) },
-                        modifier = Modifier.weight(1f),
-                        colors = EarthButtonDefaults.secondaryColors(),
-                    )
-                }
-                Spacer(Modifier.height(dimens.space8))
-                Text(
-                    text = if (stakeVoteFinal) {
-                        "Your vote is private and final. Your stake at each validator votes " +
-                            "once, as one vote you confirm yourself; nothing is " +
-                            "spent and it cannot be changed afterwards. Stake added since voting " +
-                            "opened does not count."
-                    } else {
-                        "Voting again replaces your previous vote."
-                    },
-                    style = EarthTypography.textXs,
-                    color = EarthColors.Text.textTertiary,
-                )
-            }
-
-            // The human house. A separate vote on the same proposal, not a
-            // confirmation of the one above: a wallet with stake and a
-            // registration has two to cast, and casting one does nothing to
-            // the other.
-            if (assembly != null) {
-                Spacer(Modifier.height(dimens.space24))
-                Text(
-                    text = "Vote as a person",
-                    style = EarthTypography.textMd,
-                    fontWeight = FontWeight.SemiBold,
-                    color = EarthColors.Text.textPrimary,
-                )
-                Spacer(Modifier.height(dimens.space8))
-                if (assemblyEligibility != null) {
-                    Text(
-                        text = assemblyEligibility,
-                        style = EarthTypography.textSm,
-                        color = EarthColors.Text.textTertiary,
-                    )
-                } else if (onAssemblyVote != null) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(dimens.space8),
-                    ) {
-                        EarthButton(
-                            text = Assembly.Vote.Yes.label,
-                            onClick = { onAssemblyVote(proposal, Assembly.Vote.Yes) },
-                            modifier = Modifier.weight(1f),
-                            colors = brandButtonColors(),
-                        )
-                        EarthButton(
-                            text = Assembly.Vote.No.label,
-                            onClick = { onAssemblyVote(proposal, Assembly.Vote.No) },
-                            modifier = Modifier.weight(1f),
-                            colors = destructiveButtonColors(),
-                        )
-                    }
-                    Spacer(Modifier.height(dimens.space8))
-                    // No abstain to explain away, and the reason is worth a
-                    // line: two thirds is measured against the votes cast, so
-                    // an abstention and a missing vote are the same arithmetic.
-                    Text(
-                        text = "Your vote counts once, whatever you hold. " +
-                            "There is no abstain — not voting is the same as abstaining.",
-                        style = EarthTypography.textXs,
-                        color = EarthColors.Text.textTertiary,
-                    )
-                }
-            }
-        }
-
         Spacer(Modifier.height(dimens.space32))
     }
 }
 
-/**
- * One line of the human tally.
- *
- * Deliberately not [VoteRow]: that one runs its figure through the ERTH
- * formatter, which is right for stake and renders two people as "0.000002".
- */
 @Composable
-private fun PeopleRow(label: String, count: Long, total: Long, color: Color) {
-    val dimens = EarthTheme.dimens
-    if (count <= 0) return
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = dimens.space2),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier
-                .height(dimens.space8)
-                .width(dimens.space8)
-                .background(color, RoundedCornerShape(dimens.space8)),
-        )
-        Spacer(Modifier.width(dimens.space8))
-        Text(
-            text = label,
-            style = EarthTypography.textSm,
-            color = EarthColors.Text.textSecondary,
-        )
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = "$count  ·  ${count * 100 / total}%",
-            style = EarthTypography.textSm,
-            color = EarthColors.Text.textPrimary,
-        )
-    }
+private fun SectionLabel(text: String) {
+    Text(text, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary)
+    Spacer(Modifier.height(EarthTheme.dimens.space8))
 }
 
 @Composable
-private fun VoteRow(label: String, amount: Long, total: Long, color: Color) {
+private fun Line(text: String) = Text(text, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
+
+@Composable
+private fun TallyBar(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
     val dimens = EarthTheme.dimens
-    if (amount <= 0) return
     Row(
-        Modifier.fillMaxWidth().padding(vertical = dimens.space2),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier
-                .height(dimens.space8)
-                .width(dimens.space8)
-                .background(color, RoundedCornerShape(dimens.space8)),
-        )
-        Spacer(Modifier.width(dimens.space8))
-        Text(
-            text = label,
-            style = EarthTypography.textSm,
-            color = EarthColors.Text.textSecondary,
-        )
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = "${formatErth(amount)}  ·  ${amount * 100 / total}%",
-            style = EarthTypography.textSm,
-            color = EarthColors.Text.textPrimary,
-        )
-    }
+        Modifier
+            .fillMaxWidth()
+            .height(dimens.space8)
+            .background(EarthColors.Surfaces.bgSecondary, RoundedCornerShape(dimens.space8)),
+        content = content,
+    )
 }
+
+private fun Long.pct(total: Long): String = if (total <= 0) "0%" else "${this * 100 / total}%"
 
 @Composable
 private fun androidx.compose.foundation.layout.RowScope.TallyBarPart(

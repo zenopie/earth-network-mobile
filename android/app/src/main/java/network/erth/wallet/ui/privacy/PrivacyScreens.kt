@@ -81,67 +81,28 @@ internal fun date(unix: Long): String = SimpleDateFormat("d MMM yyyy, HH:mm", Lo
  * Removal ballots: the human chamber's say over Groundworks options. Any
  * registered person may open one against an option (one open ballot per
  * option, no deposit) and vote in it; who opened or voted is never known,
- * and a second vote replaces the first.
+ * and a second vote replaces the first. Open ballots are voted on from the
+ * proposal list; this lists the options a ballot can still be opened against.
  */
 @Composable
-fun RemovalBallotsScreen(
+fun ProposeRemovalScreen(
     state: PrivacyActionsState?,
-    registered: Boolean,
     onPropose: (optionId: Long) -> Unit,
-    onVote: (optionId: Long, yes: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) = Page(modifier) {
     val dimens = EarthTheme.dimens
-    Note(
-        "People can remove a Groundworks option by ballot. Opening one and voting both " +
-            "prove you are a registered person without saying which one.",
-    )
-    Spacer(Modifier.height(dimens.space16))
     if (state == null) {
         Note("Loading…")
         return@Page
     }
-    if (!registered) {
-        Note("Register your identity to open or vote in a removal ballot.")
-        Spacer(Modifier.height(dimens.space16))
-    }
-    EarthLabel("Open ballots")
-    Spacer(Modifier.height(dimens.space8))
-    if (state.ballots.isEmpty()) Note("No ballot is open.")
-    state.ballots.forEach { b: PrivacyQueries.RemovalBallot ->
-        Card {
-            Text(
-                text = "Remove ${optionName(state.groundworksOptions, b.optionId)}?",
-                style = EarthTypography.textMd,
-                fontWeight = FontWeight.SemiBold,
-                color = EarthColors.Text.textPrimary,
-            )
-            EarthDetailRow("Yes / No", "${b.yes} / ${b.no}")
-            EarthDetailRow("Closes", date(b.closesAt))
-            if (registered) {
-                Spacer(Modifier.height(dimens.space8))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(dimens.space8)) {
-                    EarthButton(text = "Yes", onClick = { onVote(b.optionId, true) }, modifier = Modifier.weight(1f), colors = brandButtonColors())
-                    EarthButton(text = "No", onClick = { onVote(b.optionId, false) }, modifier = Modifier.weight(1f), colors = destructiveButtonColors())
-                }
-            }
-        }
-    }
-    if (registered) {
-        Spacer(Modifier.height(dimens.space24))
-        EarthLabel("Open a ballot")
-        Spacer(Modifier.height(dimens.space8))
-        val open = state.ballots.map { it.optionId }.toSet()
-        state.groundworksOptions.filter { it.id !in open }.forEach { o ->
-            Row(Modifier.fillMaxWidth().padding(vertical = dimens.space4)) {
-                Text(
-                    text = o.description,
-                    style = EarthTypography.textMd,
-                    color = EarthColors.Text.textPrimary,
-                    modifier = Modifier.weight(1f).padding(top = dimens.space8),
-                )
-                EarthButton(text = "Propose removal", onClick = { onPropose(o.id) }, colors = EarthButtonDefaults.secondaryColors())
-            }
+    val open = state.ballots.map { it.optionId }.toSet()
+    val options = state.groundworksOptions.filter { !it.removed && it.id !in open }
+    if (options.isEmpty()) Note("No option to propose against")
+    options.forEach { o ->
+        Row(Modifier.fillMaxWidth().padding(vertical = dimens.space8), verticalAlignment = Alignment.CenterVertically) {
+            Text(o.description.ifBlank { "Option ${o.id}" }, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold,
+                color = EarthColors.Text.textPrimary, modifier = Modifier.weight(1f), maxLines = 2)
+            network.erth.wallet.ui.earn.PillButton("Propose", primary = false, modifier = Modifier.width(120.dp)) { onPropose(o.id) }
         }
     }
 }

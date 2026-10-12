@@ -668,6 +668,19 @@ public final class AppModel {
         }
     }
 
+    /// Rename a wallet. A name is not a secret, so the session's own unlock
+    /// reseals the vault: no fresh confirmation.
+    public func renameWallet(address target: String, to name: String) async throws {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let sessionPin else { throw WalletStore.Error.notFound }
+        let store = self.store
+        wallets = try await Task.detached { try store.rename(address: target, to: name, pin: sessionPin) }.value
+        if target == address {
+            walletName = name
+            UserDefaults.standard.set(name, forKey: "walletName")
+        }
+    }
+
     /// Add a wallet and switch to it.
     public func addWallet(mnemonic: String, name: String) async throws {
         guard let sessionPin else { throw WalletStore.Error.notFound }

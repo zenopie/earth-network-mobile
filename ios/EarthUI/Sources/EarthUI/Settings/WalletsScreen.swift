@@ -23,6 +23,8 @@ struct WalletsScreen: View {
     /// Delete: the unlock is being asked for, then the wallet whose phrase is shown.
     @State private var confirmingDelete = false
     @State private var deleting: (entry: WalletStore.Entry, confirmation: AppModel.Confirmation)?
+    @State private var renaming = false
+    @State private var newName = ""
 
     enum Adding: String, Identifiable { case create, restore; var id: String { rawValue } }
 
@@ -73,6 +75,19 @@ struct WalletsScreen: View {
             .onChange(of: scenePhase) { if scenePhase != .active { revealed = nil; deleting = nil } }
             .onDisappear { revealed = nil; deleting = nil }
             .sheet(item: $adding) { AddWalletSheet(mode: $0).earthThemed() }
+            .alert("Rename wallet", isPresented: $renaming) {
+                TextField("Name", text: $newName)
+                Button("Cancel", role: .cancel) {}
+                Button("Save") {
+                    let name = String(newName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(32))
+                    let target = model.address
+                    Task {
+                        do { try await model.renameWallet(address: target, to: name) }
+                        catch { self.error = model.describe(error) }
+                    }
+                }
+                .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
     }
 
@@ -153,11 +168,24 @@ struct WalletsScreen: View {
                 .foregroundStyle(theme.colors.accentInk)
                 .frame(width: 56, height: 56)
                 .background(theme.colors.accentTint, in: .circle)
-            Text(current?.name ?? "")
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(theme.colors.textPrimary)
-                .lineLimit(1)
-                .padding(.top, theme.space.x12)
+            // The name is the rename: tap it.
+            Button {
+                newName = current?.name ?? ""
+                renaming = true
+            } label: {
+                HStack(spacing: 6) {
+                    Text(current?.name ?? "")
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(theme.colors.textPrimary)
+                        .lineLimit(1)
+                    Image(systemName: "pencil")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(theme.colors.textTertiary)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Rename \(current?.name ?? "wallet")")
+            .padding(.top, theme.space.x12)
             Text(current?.address ?? "")
                 .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.textTertiary)

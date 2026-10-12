@@ -61,9 +61,14 @@ fun WalletsScreen(
     onImport: () -> Unit,
     modifier: Modifier = Modifier,
     onDelete: () -> Unit = {},
+    onRename: (String) -> Unit = {},
 ) {
     val dimens = EarthTheme.dimens
     val current = state?.wallets?.getOrNull(state.selectedIndex)
+    var renaming by remember { mutableStateOf(false) }
+    if (renaming && current != null) {
+        RenameDialog(current.name, onSave = { renaming = false; onRename(it) }, onDismiss = { renaming = false })
+    }
     Column(
         modifier
             .fillMaxSize()
@@ -74,7 +79,22 @@ fun WalletsScreen(
         HeroColumn {
             HeroInitial(current?.name.orEmpty())
             HeroGap()
-            HeroTitle(current?.name ?: "Wallet")
+            // Tap the name to rename it.
+            Row(
+                Modifier.clickable(enabled = current != null) { renaming = true }.padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    current?.name ?: "Wallet",
+                    style = EarthTypography.header5.copy(fontWeight = FontWeight.Bold),
+                    color = EarthColors.Text.textPrimary,
+                    maxLines = 1,
+                )
+                if (current != null) {
+                    Spacer(Modifier.width(6.dp))
+                    Text("✎", style = EarthTypography.textMd, color = EarthColors.Text.textTertiary)
+                }
+            }
             HeroLine(current?.address?.let { Handles.truncate(it, 10, 6) }.orEmpty())
         }
         Spacer(Modifier.height(32.dp))
@@ -117,6 +137,28 @@ fun WalletsScreen(
         }
         Spacer(Modifier.height(dimens.space32))
     }
+}
+
+@Composable
+private fun RenameDialog(name: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf(name) }
+    val clean = network.erth.wallet.wallet.WalletList.cleanName(text)
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename wallet") },
+        text = {
+            network.erth.wallet.ui.designsystem.component.EarthTextField(
+                value = text,
+                onValueChange = { text = it.take(network.erth.wallet.wallet.WalletList.NAME_MAX) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = { clean?.let(onSave) }, enabled = clean != null && clean != name) { Text("Save") }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /**

@@ -55,7 +55,6 @@ private enum class Lens { Actual, Preferred }
 @Composable
 fun StreamDetailScreen(
     title: String,
-    detail: String,
     stream: StreamUiState?,
     eligibility: String?,
     onEdit: () -> Unit,
@@ -72,13 +71,6 @@ fun StreamDetailScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = dimens.gutter),
     ) {
-        Spacer(Modifier.height(dimens.space8))
-        Text(
-            text = detail,
-            style = EarthTypography.textSm,
-            color = EarthColors.Text.textSecondary,
-        )
-
         if (stream == null) {
             Spacer(Modifier.height(dimens.space24))
             Text(
@@ -126,19 +118,17 @@ fun StreamDetailScreen(
         Spacer(Modifier.height(dimens.space16))
         PieLegend(slices)
 
-        Spacer(Modifier.height(dimens.space16))
-        Text(
-            text = when {
-                lens == Lens.Actual -> "Where this stream's emission goes once " +
-                    "every voter is counted."
-                eligibility != null -> eligibility
-                slices.isEmpty() -> "You have not allocated your share of this stream."
-                else -> "Where you asked your share to go. It is one vote among many, " +
-                    "so the actual split will differ."
-            },
-            style = EarthTypography.textXs,
-            color = EarthColors.Text.textTertiary,
-        )
+        val caption = when {
+            lens == Lens.Actual -> null
+            eligibility != null -> eligibility
+            slices.isEmpty() -> "Not allocated"
+            else -> null
+        }
+        caption?.let {
+            Spacer(Modifier.height(dimens.space16))
+            Text(it, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary,
+                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        }
 
         // Only under Preferred. Actual is the whole stream's tally — a vote
         // button there would sit under a chart it cannot change, and read as
@@ -151,12 +141,7 @@ fun StreamDetailScreen(
             }
         } else if (lens == Lens.Preferred && eligibility == null) {
             Spacer(Modifier.height(dimens.space24))
-            EarthButton(
-                text = if (stream.slices.isEmpty()) "Allocate" else "Change allocation",
-                onClick = onEdit,
-                modifier = Modifier.fillMaxWidth(),
-                colors = brandButtonColors(),
-            )
+            network.erth.wallet.ui.earn.PillButton(if (stream.slices.isEmpty()) "Allocate" else "Change allocation", onClick = onEdit)
         }
         Spacer(Modifier.height(dimens.space32))
     }
@@ -216,18 +201,13 @@ fun GroundworksVoteControls(
 ) {
     val dimens = EarthTheme.dimens
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        EarthButton(
-            text = if (split.isEmpty()) "Vote" else "Change vote",
-            onClick = onVote,
-            modifier = Modifier.fillMaxWidth(),
-            colors = brandButtonColors(),
-        )
+        network.erth.wallet.ui.earn.PillButton(if (split.isEmpty()) "Vote" else "Change vote", onClick = onVote)
         // The split names an option the fund no longer has, struck (still listed, removed) or pruned (gone): the chain refuses it as it is.
         fun removed(s: Map<Long, Long>) = options.isNotEmpty() && s.keys.any { id -> options.none { it.id == id && !it.removed } }
         if (split.isNotEmpty() && removed(split)) {
             Spacer(Modifier.height(dimens.space12))
             Text(
-                text = "An option you chose was removed. Vote again to keep counting.",
+                text = "An option was removed · vote again",
                 style = EarthTypography.textSm,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
@@ -254,7 +234,7 @@ fun GroundworksVoteControls(
             if (lapsed) {
                 Spacer(Modifier.height(dimens.space12))
                 Text(
-                    text = "Your vote has lapsed",
+                    text = "Your vote lapsed",
                     style = EarthTypography.textSm,
                     fontWeight = FontWeight.SemiBold,
                     color = network.erth.wallet.ui.theme.EarthAccent.warnInk,
@@ -270,12 +250,7 @@ fun GroundworksVoteControls(
             // A split naming an option the fund has since removed cannot be cast again as it is.
             if ((lapsed || lease.renewalDue(now)) && !removed(lease.split)) {
                 Spacer(Modifier.height(dimens.space12))
-                EarthButton(
-                    text = "Renew",
-                    onClick = { onRenew(lease.split) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = EarthButtonDefaults.secondaryColors(),
-                )
+                network.erth.wallet.ui.earn.PillButton("Renew", primary = false) { onRenew(lease.split) }
             }
         }
         if (split.isNotEmpty()) {

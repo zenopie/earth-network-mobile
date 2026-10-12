@@ -164,6 +164,21 @@ class WalletsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun rename(index: Int, name: String, onRenamed: () -> Unit) {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { SecureWalletManager.renameWallet(ctx, index, name) }.isSuccess
+            }
+            if (!ok) {
+                _error.value = "Could not rename the wallet."
+                return@launch
+            }
+            refresh()
+            onRenamed()
+        }
+    }
+
     fun clearError() {
         _error.value = null
     }

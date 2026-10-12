@@ -32,11 +32,6 @@ struct StreamDetailScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Spacer().frame(height: theme.space.x8)
-                    Text(detail)
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textSecondary)
-
                     Spacer().frame(height: theme.space.x16)
                     lensPicker
 
@@ -54,10 +49,13 @@ struct StreamDetailScreen: View {
                     Spacer().frame(height: theme.space.x16)
                     PieLegend(slices: slices)
 
-                    Spacer().frame(height: theme.space.x16)
-                    Text(caption)
-                        .font(EarthType.caption)
-                        .foregroundStyle(theme.colors.textTertiary)
+                    if let caption {
+                        Spacer().frame(height: theme.space.x16)
+                        Text(caption)
+                            .font(EarthType.body)
+                            .foregroundStyle(theme.colors.textTertiary)
+                            .frame(maxWidth: .infinity)
+                    }
 
                     // Only under Preferred. Actual is the whole stream's
                     // tally — a vote button there would sit under a chart it
@@ -71,7 +69,7 @@ struct StreamDetailScreen: View {
                         GroundworksVoteControls(state: state, onChanged: onChanged) { editing = true }
                     } else if lens == .preferred, eligibility == nil {
                         Spacer().frame(height: theme.space.x24)
-                        EarthButton(title: state.slices.isEmpty ? "Allocate" : "Change allocation") {
+                        EarthPillButton(title: state.slices.isEmpty ? "Allocate" : "Change allocation") {
                             editing = true
                         }
                     }
@@ -119,13 +117,12 @@ struct StreamDetailScreen: View {
         lens == .actual ? state.actualSlices : state.slices
     }
 
-    private var caption: String {
-        if lens == .actual {
-            return "Where this stream's emission goes once every voter is counted."
-        }
+    /// One line, only when the chart cannot say it: why you cannot vote, or
+    /// that you have not.
+    private var caption: String? {
+        if lens == .actual { return nil }
         if let eligibility { return eligibility }
-        if slices.isEmpty { return "You have not allocated your share of this stream." }
-        return "Where you asked your share to go. It is one vote among many, so the actual split will differ."
+        return slices.isEmpty ? "Not allocated" : nil
     }
 }
 
@@ -145,9 +142,9 @@ struct GroundworksVoteControls: View {
         let lease = model.groundworksLease
         let now = Int64(Date().timeIntervalSince1970)
         VStack(spacing: theme.space.x12) {
-            EarthButton(title: split.isEmpty ? "Vote" : "Change vote") { edit() }
+            EarthPillButton(title: split.isEmpty ? "Vote" : "Change vote") { edit() }
             if !split.isEmpty, removedOption(split) {
-                Text("An option you chose was removed. Vote again to keep counting.")
+                Text("An option was removed · vote again")
                     .font(EarthType.bodySmall).fontWeight(.semibold)
                     .foregroundStyle(theme.colors.warnInk)
                     .multilineTextAlignment(.center)
@@ -157,22 +154,22 @@ struct GroundworksVoteControls: View {
                     .foregroundStyle(theme.colors.textTertiary)
             }
             if !split.isEmpty, let until = pendingUntil {
-                Text("Moved stake counts from \(Date(timeIntervalSince1970: TimeInterval(until)).formatted(date: .abbreviated, time: .omitted))")
+                Text("Moved stake counts from \(Date(timeIntervalSince1970: TimeInterval(until)).formatted(.dateTime.month(.abbreviated).day()))")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }
             if let lease {
                 if lease.lapsed(now) {
-                    Text("Your vote has lapsed")
+                    Text("Your vote lapsed")
                         .font(EarthType.bodySmall).fontWeight(.semibold)
                         .foregroundStyle(theme.colors.warnInk)
                 } else if lease.expiresAt > 0 {
-                    Text("Counts until \(Date(timeIntervalSince1970: TimeInterval(lease.expiresAt)).formatted(date: .abbreviated, time: .omitted))")
+                    Text("Counts until \(Date(timeIntervalSince1970: TimeInterval(lease.expiresAt)).formatted(.dateTime.month(.abbreviated).day()))")
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
                 }
                 if (lease.lapsed(now) || lease.renewalDue(now)) && !removedOption(lease.split) {
-                    EarthButton(title: "Renew", role: .secondary) {
+                    EarthPillButton(title: "Renew", role: .secondary) {
                         Self.cast(lease.split, rows: rows(lease.split), action: "Renew Groundworks vote", tx: tx, model: model, onChanged: onChanged)
                     }
                 }
@@ -261,10 +258,6 @@ struct AllocationEditSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: theme.space.x16) {
-                    Text("Your vote directs this stream's emission continuously — there is no voting period to miss, and it stands until you change it.")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textTertiary)
-
                     ForEach(state.stream.options.filter { !$0.removed }) { option in
                         VStack(alignment: .leading, spacing: theme.space.x4) {
                             HStack {
@@ -296,7 +289,7 @@ struct AllocationEditSheet: View {
                             .foregroundStyle(assigned == 100 ? theme.colors.accentInk : theme.colors.textError)
                     }
 
-                    EarthButton(title: "Review") { review() }
+                    EarthPillButton(title: "Review") { review() }
                         .disabled(assigned != 100)
                 }
                 .padding(theme.space.gutter)
@@ -362,32 +355,60 @@ struct AllocationEditSheet: View {
 struct ProposalsScreen: View {
     @Environment(\.earth) private var theme
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppModel.self) private var model
 
     let proposals: [Gov.Proposal]
+    /// For the removal ballots, which name its options.
+    let groundworks: Allocation.Stream
 
+    enum Destination: Hashable { case proposeRemoval }
+
+    @State private var path = NavigationPath()
+
+    init(proposals: [Gov.Proposal], groundworks: Allocation.Stream) {
+        self.proposals = proposals
+        self.groundworks = groundworks
+        #if targetEnvironment(simulator)
+        // `-demoProposal 1` opens the newest proposal, as `-demoStream` opens this list.
+        if UserDefaults.standard.bool(forKey: "demoProposal"), let p = proposals.first {
+            _path = State(initialValue: NavigationPath([p]))
+        }
+        #endif
+    }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: theme.space.x8) {
-                    if proposals.isEmpty {
-                        Text("No proposals yet. Anything that changes the chain itself — parameters, upgrades, spending from the community pool — is proposed here. It passes only with both staked ERTH and two thirds of the verified humans who vote.")
-                            .font(EarthType.bodySmall)
+                    // Open removal ballots first: rare, and each one is open
+                    // for days, not the weeks a proposal list covers.
+                    ForEach(model.removalBallots) { b in
+                        RemovalBallotCard(ballot: b, groundworks: groundworks, onDone: { dismiss() })
+                    }
+                    if proposals.isEmpty && model.removalBallots.isEmpty {
+                        Text("No proposals yet")
+                            .font(EarthType.body)
                             .foregroundStyle(theme.colors.textTertiary)
-                    } else {
-                        // Pushed, not presented. This screen is already a
-                        // sheet; a sheet over it would put the detail two
-                        // presentations deep, and a confirmation raised from
-                        // there — hosted on the root — draws behind both. A
-                        // push stays inside this presentation, so voting can
-                        // close the whole sheet and land on the confirmation
-                        // the way Send and Stake do.
-                        ForEach(proposals) { proposal in
-                            NavigationLink(value: proposal) {
-                                ProposalRow(proposal: proposal)
-                            }
-                            .buttonStyle(.plain)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, theme.space.x32)
+                    }
+                    // Pushed, not presented: a sheet over this sheet would put
+                    // the detail two presentations deep for no gain.
+                    ForEach(proposals) { proposal in
+                        NavigationLink(value: proposal) {
+                            ProposalRow(proposal: proposal)
                         }
+                        .buttonStyle(.plain)
+                    }
+                    if model.isRegistered {
+                        NavigationLink(value: Destination.proposeRemoval) {
+                            Text("Propose removing a Groundworks option")
+                                .font(EarthType.bodySmall).fontWeight(.semibold)
+                                .foregroundStyle(theme.colors.accentInk)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, theme.space.x16)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(theme.space.gutter)
@@ -397,11 +418,18 @@ struct ProposalsScreen: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
+            .refreshable { await model.refreshRemovalBallots() }
+            .task {
+                await model.refreshRemovalBallots()
+            }
             .navigationDestination(for: Gov.Proposal.self) { proposal in
                 // `onVoted` closes this sheet rather than popping the push:
                 // dismiss() inside a pushed view pops, which would leave the
-                // list on screen and the confirmation behind it.
+                // list on screen behind the confirmation.
                 ProposalDetailScreen(proposal: proposal, onVoted: { dismiss() })
+            }
+            .navigationDestination(for: Destination.self) { _ in
+                ProposeRemovalScreen(groundworks: groundworks, onDone: { dismiss() })
             }
         }
     }
@@ -424,12 +452,6 @@ struct ProposalRow: View {
             Text(proposal.title)
                 .font(EarthType.body).fontWeight(.semibold)
                 .foregroundStyle(theme.colors.textPrimary)
-            if !proposal.summary.isEmpty {
-                Text(proposal.summary)
-                    .font(EarthType.bodySmall)
-                    .foregroundStyle(theme.colors.textTertiary)
-                    .lineLimit(3)
-            }
             if proposal.total > 0 {
                 Spacer().frame(height: theme.space.x8)
                 TallyBar(proposal: proposal)
@@ -495,6 +517,8 @@ struct ProposalDetailScreen: View {
     @State private var partsChoice: StakeVoting?
     /// Why the stake votes could not be laid out, if they could not.
     @State private var voteError: String?
+    /// The summary past its first three lines.
+    @State private var expanded = false
 
     /// The stake votes still to confirm (one sheet each), and the validators
     /// the user chose to vote in parts.
@@ -522,18 +546,20 @@ struct ProposalDetailScreen: View {
                     .foregroundStyle(theme.colors.textPrimary)
 
                 if !proposal.summary.isEmpty {
-                    Text(proposal.summary)
-                        .font(EarthType.body)
-                        .foregroundStyle(theme.colors.textSecondary)
-                        .textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: theme.space.x4) {
+                        Text(proposal.summary)
+                            .font(EarthType.body)
+                            .foregroundStyle(theme.colors.textSecondary)
+                            .lineLimit(expanded ? nil : 3)
+                            .textSelection(.enabled)
+                        Button(expanded ? "Less" : "More") { expanded.toggle() }
+                            .font(EarthType.bodySmall).fontWeight(.semibold)
+                            .foregroundStyle(theme.colors.accentInk)
+                    }
                 }
 
-                EarthCard {
-                    EarthDetailRow(label: "Status", value: shortStatus)
-                    if !closesAt.isEmpty {
-                        EarthDetailRow(label: proposal.isLive ? "Voting ends" : "Voting ended",
-                                       value: closesAt)
-                    }
+                if !closesAt.isEmpty {
+                    EarthDetailRow(label: proposal.isLive ? "Voting ends" : "Voting ended", value: closesAt)
                 }
 
                 if proposal.total > 0 {
@@ -544,14 +570,11 @@ struct ProposalDetailScreen: View {
                     // not have one either. Both must clear their own bar.
                     EarthLabel(assembly == nil ? "Tally" : "Stake")
                     TallyBar(proposal: proposal)
-                    EarthCard {
-                        EarthDetailRow(label: "Yes", value: Figures.display(BigInt(proposal.yes)))
-                        EarthDetailRow(label: "No", value: Figures.display(BigInt(proposal.no)))
-                        EarthDetailRow(label: "Abstain", value: Figures.display(BigInt(proposal.abstain)))
-                        EarthDetailRow(label: "No with veto", value: Figures.display(BigInt(proposal.veto)))
-                    }
+                    Text("Yes \(Figures.display(BigInt(proposal.yes))) · No \(Figures.display(BigInt(proposal.no))) · Abstain \(Figures.display(BigInt(proposal.abstain))) · Veto \(Figures.display(BigInt(proposal.veto)))")
+                        .font(EarthType.caption.monospacedDigit())
+                        .foregroundStyle(theme.colors.textTertiary)
                 } else if proposal.isLive {
-                    Text("No votes counted yet.")
+                    Text("No votes yet")
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
                 }
@@ -610,23 +633,15 @@ struct ProposalDetailScreen: View {
                 // Not "no votes yet". Silence is a refusal here, and a voter
                 // who reads it as "nothing has happened" is looking at the one
                 // state that decides the proposal if it holds.
-                Text(proposal.isLive
-                    ? "Nobody has voted. A proposal with no human votes fails, however much stake is behind it."
-                    : "No human votes were cast.")
+                Text(proposal.isLive ? "No human votes · fails without them" : "No human votes")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             } else {
                 PeopleTallyBar(tally: tally)
-                EarthCard {
-                    // Plain counts, not run through the ERTH formatter: these
-                    // are headcounts, and formatting two voters as a token
-                    // amount renders them "0.000002".
-                    EarthDetailRow(label: "Yes", value: "\(tally.yes)")
-                    EarthDetailRow(label: "No", value: "\(tally.no)")
-                }
-                Text(tally.approved
-                    ? "Clearing two thirds."
-                    : "Below the two thirds needed.")
+                // Plain counts, not run through the ERTH formatter: these are
+                // headcounts, and formatting two voters as a token amount
+                // renders them "0.000002".
+                Text("Yes \(tally.yes) · No \(tally.no) · \(tally.approved ? "clears two thirds" : "below two thirds")")
                     .font(EarthType.caption)
                     .foregroundStyle(theme.colors.textTertiary)
             }
@@ -645,28 +660,17 @@ struct ProposalDetailScreen: View {
             // delegated can broadcast a vote that succeeds and moves the tally
             // by nothing, which would otherwise look like a vote that failed.
             if model.privateStakeTotal == 0 {
-                EarthCard {
-                    Text("You have no private stake")
-                        .font(EarthType.body)
-                        .foregroundStyle(theme.colors.textPrimary)
-                    Text("Stake ERTH privately to vote here. Only stake held before voting opened counts.")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textSecondary)
-                }
-            } else if let weight, weight.uerth == 0 {
-                EarthCard {
-                    Text("No stake left to vote with")
-                        .font(EarthType.body)
-                        .foregroundStyle(theme.colors.textPrimary)
-                    Text("Only stake held when this proposal entered voting counts, and a note that has voted cannot vote again.")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textSecondary)
-                }
-            } else {
-                if weight != nil { EarthDetailRow(label: "Your weight", value: weightText) }
-                Text("Your stake at each validator votes once, as one vote (up to two notes) you confirm yourself. Nothing is spent. A stake vote is final.")
-                    .font(EarthType.bodySmall)
+                Text("No private stake")
+                    .font(EarthType.body)
                     .foregroundStyle(theme.colors.textTertiary)
+            } else if let weight, weight.uerth == 0 {
+                // Only stake from before voting opened counts, and a voted note cannot vote again.
+                Text("No stake left to vote")
+                    .font(EarthType.body)
+                    .foregroundStyle(theme.colors.textTertiary)
+            } else if weight != nil {
+                // Final: each validator's stake votes once.
+                EarthDetailRow(label: "Your weight · final", value: weightText)
             }
 
             if let voteError {
@@ -676,7 +680,7 @@ struct ProposalDetailScreen: View {
             }
 
             ForEach(Gov.Vote.allCases, id: \.rawValue) { option in
-                EarthButton(
+                EarthPillButton(
                     title: option.label,
                     role: option == .yes ? .primary : .secondary
                 ) { cast(option) }
@@ -690,23 +694,14 @@ struct ProposalDetailScreen: View {
             if assembly != nil {
                 EarthDivider()
                 EarthLabel("Vote as a person")
-                if model.isRegistered {
-                    Text("Your vote counts once, whatever you hold. There is no abstain — not voting is the same as abstaining.")
-                        .font(EarthType.bodySmall)
+                if !model.isRegistered {
+                    Text("Not registered")
+                        .font(EarthType.body)
                         .foregroundStyle(theme.colors.textTertiary)
-                } else {
-                    EarthCard {
-                        Text("You are not registered")
-                            .font(EarthType.body)
-                            .foregroundStyle(theme.colors.textPrimary)
-                        Text("This house counts people, not holdings — one registration is one vote. Register with your passport to take part.")
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textSecondary)
-                    }
                 }
 
                 ForEach(Assembly.Vote.allCases, id: \.rawValue) { option in
-                    EarthButton(
+                    EarthPillButton(
                         title: option.label,
                         role: option == .yes ? .primary : .secondary
                     ) { castAsPerson(option) }
@@ -820,10 +815,10 @@ struct ProposalDetailScreen: View {
     private var partsChoiceText: String {
         guard let v = partsChoice, let valoper = v.asking,
               let item = v.items.first(where: { if case let .validator(x, _) = $0 { return x == valoper }; return false }) else { return "" }
-        return "One vote holds up to \(MsgStakeVote.maxVoteNotes) notes.\n\n"
-            + "Vote in parts: \(item.parts) votes, a fee each. Each part shows its own weight, and the parts can be linked to each other.\n\n"
-            + "Merge notes: one fee merges two notes, so later proposals take this stake in fewer votes. "
-            + "This proposal's voting opened before the merge, so it still counts these notes as they were: vote here afterwards, in parts."
+        // In parts: a fee each, and the parts can be linked to each other. A
+        // merge helps later proposals only: this one counts the notes as they
+        // were when voting opened.
+        return "In parts: \(item.parts) votes, a fee each.\nMerge: helps later proposals, not this one."
     }
 
     private func voteInParts() {

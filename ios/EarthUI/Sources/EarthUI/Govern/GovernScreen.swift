@@ -24,13 +24,11 @@ struct GovernScreen: View {
     enum Route: Hashable, Identifiable {
         case stream(caretaker: Bool)
         case proposals
-        case removals
 
         var id: String {
             switch self {
             case let .stream(caretaker): "stream-\(caretaker)"
             case .proposals: "proposals"
-            case .removals: "removals"
             }
         }
     }
@@ -39,17 +37,12 @@ struct GovernScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer().frame(height: theme.space.x16)
-                Text("Two of Earth's four emission streams are directed by vote. The Caretaker Fund counts people, Groundworks counts stake — you can hold a say in both.")
-                    .font(EarthType.bodySmall)
-                    .foregroundStyle(theme.colors.textSecondary)
-
-                Spacer().frame(height: theme.space.x16)
                 GovernRow(
                     title: "Caretaker Fund",
-                    detail: "One verified human, one vote.",
+                    detail: "One person, one vote",
                     status: streams.caretaker.status(
                         eligible: model.isRegistered,
-                        blocked: "Register to take part"
+                        blocked: "Register to vote"
                     ),
                     loading: !streams.loaded
                 ) { route = .stream(caretaker: true) }
@@ -57,28 +50,21 @@ struct GovernScreen: View {
                 Spacer().frame(height: theme.space.x8)
                 GovernRow(
                     title: "Groundworks Fund",
-                    detail: "Directed by staked ERTH.",
+                    detail: "Directed by stake",
                     status: streams.groundworks.status(
                         eligible: model.privateStakeTotal > 0,
-                        blocked: "Stake ERTH privately to take part"
+                        blocked: "Stake ERTH to vote"
                     ),
                     loading: !streams.loaded
                 ) { route = .stream(caretaker: false) }
 
-                Spacer().frame(height: theme.space.x8)
-                GovernRow(
-                    title: "Removal ballots",
-                    detail: "People can remove a Groundworks option by ballot.",
-                    status: model.removalBallots.isEmpty ? "None open" : Figures.count(model.removalBallots.count, "open ballot"),
-                    loading: !streams.loaded
-                ) { route = .removals }
 
                 Spacer().frame(height: theme.space.x24)
-                EarthLabel("Chain governance")
+                EarthLabel("Chain")
                 Spacer().frame(height: theme.space.x8)
                 GovernRow(
                     title: "Proposals",
-                    detail: "Changes to the chain itself: staked ERTH and two thirds of the humans who vote must both agree.",
+                    detail: "Chain upgrades and changes",
                     status: proposalStatus,
                     loading: !streams.loaded
                 ) { route = .proposals }
@@ -105,7 +91,10 @@ struct GovernScreen: View {
         #if targetEnvironment(simulator)
         // `-demoStream groundworks` opens a stream, as `-demoTab` opens a tab.
         .task {
-            if let name = UserDefaults.standard.string(forKey: "demoStream") { route = .stream(caretaker: name == "caretaker") }
+            if let name = UserDefaults.standard.string(forKey: "demoStream") {
+                while !streams.loaded { try? await Task.sleep(for: .milliseconds(300)) }
+                route = name == "proposals" ? .proposals : .stream(caretaker: name == "caretaker")
+            }
         }
         #endif
         // A reminder's tap on Home: straight to where it is done.
@@ -119,28 +108,25 @@ struct GovernScreen: View {
             case let .stream(caretaker):
                 StreamDetailScreen(
                     title: caretaker ? "Caretaker Fund" : "Groundworks Fund",
-                    detail: caretaker
-                        ? "One verified human, one vote."
-                        : "Directed by staked ERTH. Your stake votes with your split; the split and amount are public, who you are is not.",
+                    detail: caretaker ? "One person, one vote" : "Directed by stake",
                     stream: caretaker ? .caretaker : .groundworks,
                     state: caretaker ? streams.caretaker : streams.groundworks,
                     eligibility: caretaker
-                        ? (model.isRegistered ? nil : "Register with your passport to vote here.")
-                        : (model.privateStakeTotal > 0 ? nil : "Stake ERTH to take part."),
+                        ? (model.isRegistered ? nil : "Register to vote")
+                        : (model.privateStakeTotal > 0 ? nil : "Stake ERTH to vote"),
                     onChanged: { Task { await streams.load(model: model) } }
                 )
                 .earthThemed()
             case .proposals:
-                ProposalsScreen(proposals: streams.proposals).earthThemed()
-            case .removals:
-                RemovalBallotsView(groundworks: streams.groundworks.stream).earthThemed()
+                ProposalsScreen(proposals: streams.proposals, groundworks: streams.groundworks.stream).earthThemed()
             }
         }
     }
 
     private var proposalStatus: String? {
         guard streams.loaded else { return nil }
-        let live = streams.proposals.filter { $0.status == "PROPOSAL_STATUS_VOTING_PERIOD" }.count
+        // Open removal ballots count with the proposals they are listed among.
+        let live = streams.proposals.filter { $0.status == "PROPOSAL_STATUS_VOTING_PERIOD" }.count + model.removalBallots.count
         if live > 0 { return Figures.count(live, "open for voting", "open for voting") }
         return streams.proposals.isEmpty ? "None yet" : "\(streams.proposals.count) closed"
     }

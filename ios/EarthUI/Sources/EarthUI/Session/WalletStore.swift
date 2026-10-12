@@ -195,6 +195,15 @@ public struct WalletStore: Sendable {
         return rest
     }
 
+    /// Rename one wallet; the rest of the vault is resealed as it was.
+    public func rename(address: String, to name: String, pin: String) throws -> [Entry] {
+        let opened = try open(pin: pin)
+        guard opened.wallets.contains(where: { $0.address == address }) else { throw Error.notFound }
+        let wallets = opened.wallets.map { $0.address == address ? Entry(name: name, mnemonic: $0.mnemonic, address: $0.address) : $0 }
+        try write(wallets, dataKey: opened.dataKey, pin: pin)
+        return wallets
+    }
+
     /// Every wallet held, given the PIN.
     ///
     /// A wrong PIN surfaces as `wrongPin` rather than as garbage, because

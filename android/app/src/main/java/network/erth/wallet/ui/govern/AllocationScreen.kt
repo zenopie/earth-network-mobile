@@ -58,8 +58,9 @@ fun AllocationScreen(
     stakedUerth: Long,
     onOpenStream: (StreamId) -> Unit,
     onOpenProposals: () -> Unit,
-    onOpenRemovals: () -> Unit = {},
     modifier: Modifier = Modifier,
+    /** Open removal ballots, counted with the proposals open for voting. */
+    openBallots: Int = 0,
 ) {
     val dimens = EarthTheme.dimens
     val shimmer = rememberEarthShimmer()
@@ -72,18 +73,9 @@ fun AllocationScreen(
             .padding(horizontal = dimens.gutter),
     ) {
         Spacer(Modifier.height(dimens.space16))
-        Text(
-            text = "Two of Earth's four emission streams are directed by vote. " +
-                "The Caretaker Fund counts people, Groundworks counts stake — " +
-                "you can hold a say in both.",
-            style = EarthTypography.textSm,
-            color = EarthColors.Text.textSecondary,
-        )
-
-        Spacer(Modifier.height(dimens.space16))
         GovernRow(
             title = "Caretaker Fund",
-            detail = "One verified human, one vote.",
+            detail = "One person, one vote",
             status = state?.human.statusFor(
                 eligible = registered,
                 blocked = "Register to take part",
@@ -96,7 +88,7 @@ fun AllocationScreen(
         Spacer(Modifier.height(dimens.space8))
         GovernRow(
             title = "Groundworks Fund",
-            detail = "Directed by staked ERTH.",
+            detail = "Directed by stake",
             status = state?.capital.statusFor(
                 eligible = stakedUerth > 0,
                 blocked = "Stake ERTH privately to take part",
@@ -106,24 +98,14 @@ fun AllocationScreen(
             onClick = { onOpenStream(StreamId.STREAM_ID_GROUNDWORKS) },
         )
 
-        Spacer(Modifier.height(dimens.space8))
-        GovernRow(
-            title = "Removal ballots",
-            detail = "People can vote a Groundworks option out.",
-            status = null,
-            loading = false,
-            shimmer = shimmer,
-            onClick = onOpenRemovals,
-        )
-
         Spacer(Modifier.height(dimens.space24))
-        EarthLabel("Chain governance")
+        EarthLabel("Chain")
         Spacer(Modifier.height(dimens.space8))
         GovernRow(
             title = "Proposals",
-            detail = "Changes to the chain itself: staked ERTH and two thirds of the humans who vote must both agree.",
+            detail = "Chain upgrades and changes",
             status = state?.proposals?.let { proposals ->
-                val live = proposals.count { it.status == "PROPOSAL_STATUS_VOTING_PERIOD" }
+                val live = proposals.count { it.status == "PROPOSAL_STATUS_VOTING_PERIOD" } + openBallots
                 when {
                     live > 0 -> "$live open for voting"
                     proposals.isEmpty() -> "None yet"

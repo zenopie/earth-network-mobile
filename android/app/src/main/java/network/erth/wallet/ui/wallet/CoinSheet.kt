@@ -171,7 +171,7 @@ fun CoinSheet(
     onDismiss: () -> Unit,
 ) {
     val anml = coin.denom == "uanml"
-    EarthSheet(onDismiss = onDismiss) {
+    EarthSheet(onDismiss = onDismiss, bottomPadding = 24.dp, fitContent = true) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.height(8.dp))
             CoinMark(coin.denom, coin.symbol, 56.dp)

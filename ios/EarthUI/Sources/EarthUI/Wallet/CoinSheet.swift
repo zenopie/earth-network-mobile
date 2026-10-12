@@ -130,6 +130,8 @@ struct CoinSheet: View {
     private var shieldFee: BigInt { BigInt(TransactionSigner.defaultFeeUerth) ?? 0 }
     private var unshieldFee: UInt64 { UInt64(Fees.forGas(PrivacyWallet.privateGasEstimate)) ?? 0 }
     private var privateOnly: Bool { denom == Token.anml.denom }
+    /// The content's own height: the sheet is exactly that tall, no blank below.
+    @State private var height: CGFloat = 300
 
     var body: some View {
         let coin = coin
@@ -176,12 +178,18 @@ struct CoinSheet: View {
                                                              fee: unshieldFee) != nil)
                 }
             }
-            Spacer(minLength: theme.space.x16)
         }
         .padding(.horizontal, theme.space.gutter)
+        .padding(.bottom, theme.space.x24)
         .frame(maxWidth: .infinity)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(GeometryReader { g in
+            Color.clear.preference(key: SheetHeight.self, value: g.size.height)
+        })
+        .onPreferenceChange(SheetHeight.self) { if $0 > 0 { height = $0 } }
+        .frame(maxHeight: .infinity, alignment: .top)
         .earthBackground()
-        .presentationDetents([.height(privateOnly ? 300 : 440)])
+        .presentationDetents([.height(height)])
         .presentationDragIndicator(.visible)
     }
 
@@ -189,6 +197,11 @@ struct CoinSheet: View {
         onMove(direction)
         dismiss()
     }
+}
+
+private struct SheetHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// Icon and text a few points apart, centred: the system label spaces them

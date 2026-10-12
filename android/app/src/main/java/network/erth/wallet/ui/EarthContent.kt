@@ -70,7 +70,7 @@ import network.erth.wallet.ui.privacy.SwitchIdentityScreen
 import network.erth.wallet.ui.privacy.SWITCH_TO_SELF
 import network.erth.wallet.privacy.Reminders
 import network.erth.wallet.privacy.handles.Handles
-import network.erth.wallet.ui.privacy.RemovalBallotsScreen
+import network.erth.wallet.ui.privacy.ProposeRemovalScreen
 import network.erth.wallet.chain.math.SwapMath
 import cosmos.gov.v1.WeightedVoteOption
 import network.erth.wallet.ui.settings.AboutScreen
@@ -188,6 +188,34 @@ internal fun EarthContent(
     fun monikerOf(validator: String): String =
         earnState?.monikerOf(validator) ?: validator
     val activityView = ActivityView(visible = balancesVisible, name = ::monikerOf, now = now)
+
+    // Removal ballots: a membership proof in the ballot's scope, so who
+    // opened or voted is never known; a second vote replaces the first.
+    fun proposeRemoval(optionId: Long) {
+        tx.requestPrivate(
+            details = TxConfirmDetails(
+                action = "Propose removing option $optionId",
+                msgTypeUrl = PrivateMsgs.PROPOSE_REMOVAL,
+                balanceUerth = 0L,
+            ),
+            shieldedErth = loaded.shieldedErthUerth,
+            onSuccess = { privacy.refresh() },
+            run = { ctx -> PrivacySession.wallet(ctx).proposeRemoval(optionId).hash },
+        )
+    }
+
+    fun voteRemoval(optionId: Long, yes: Boolean) {
+        tx.requestPrivate(
+            details = TxConfirmDetails(
+                action = "Vote ${if (yes) "Yes" else "No"} on removing option $optionId",
+                msgTypeUrl = PrivateMsgs.VOTE_REMOVAL,
+                balanceUerth = 0L,
+            ),
+            shieldedErth = loaded.shieldedErthUerth,
+            onSuccess = { privacy.refresh() },
+            run = { ctx -> PrivacySession.wallet(ctx).voteRemoval(optionId, yes).hash },
+        )
+    }
 
     // Votes all of this wallet's stake in Groundworks with [split] (empty:
     // stops): one restake per validator, sent one after the other on this one
@@ -396,7 +424,7 @@ internal fun EarthContent(
             stakedUerth = privateStake,
             onOpenStream = { nav.push(EarthRoute.Stream(it == StreamId.STREAM_ID_CARETAKER)) },
             onOpenProposals = { nav.push(EarthRoute.Proposals) },
-            onOpenRemovals = { nav.push(EarthRoute.RemovalBallots) },
+            openBallots = privacyState?.ballots?.size ?: 0,
             modifier = inset,
         )
 
@@ -670,33 +698,9 @@ internal fun EarthContent(
 
         EarthRoute.RemovalBallots -> {
             LaunchedEffect(Unit) { privacy.refresh() }
-            RemovalBallotsScreen(
+            ProposeRemovalScreen(
                 state = privacyState,
-                registered = loaded.registered,
-                onPropose = { optionId ->
-                    tx.requestPrivate(
-                        details = TxConfirmDetails(
-                            action = "Propose removing option $optionId",
-                            msgTypeUrl = PrivateMsgs.PROPOSE_REMOVAL,
-                            balanceUerth = 0L,
-                        ),
-                        shieldedErth = loaded.shieldedErthUerth,
-                        onSuccess = { privacy.refresh() },
-                        run = { ctx -> PrivacySession.wallet(ctx).proposeRemoval(optionId).hash },
-                    )
-                },
-                onVote = { optionId, yes ->
-                    tx.requestPrivate(
-                        details = TxConfirmDetails(
-                            action = "Vote ${if (yes) "Yes" else "No"} on removing option $optionId",
-                            msgTypeUrl = PrivateMsgs.VOTE_REMOVAL,
-                            balanceUerth = 0L,
-                        ),
-                        shieldedErth = loaded.shieldedErthUerth,
-                        onSuccess = { privacy.refresh() },
-                        run = { ctx -> PrivacySession.wallet(ctx).voteRemoval(optionId, yes).hash },
-                    )
-                },
+                onPropose = ::proposeRemoval,
                 modifier = inset,
             )
         }
@@ -748,6 +752,8 @@ internal fun EarthContent(
                     nav.push(EarthRoute.ImportWallet)
                 },
                 onDelete = { confirmingDelete = true },
+                // The top bar's name comes from the wallet read.
+                onRename = { name -> walletsState?.selectedIndex?.let { wallets.rename(it, name) { onRefresh() } } },
                 modifier = inset,
             )
             if (confirmingDelete) {
@@ -843,17 +849,12 @@ internal fun EarthContent(
             }
             StreamDetailScreen(
                 title = if (route.human) "Caretaker Fund" else "Groundworks Fund",
-                detail = if (route.human) {
-                    "One verified human, one vote."
-                } else {
-                    "Directed by staked ERTH. Your stake votes with your split; the split and amount are public, who you are is not."
-                },
                 stream = if (route.human) allocationState?.human else allocationState?.capital,
                 eligibility = when {
                     route.human && !loaded.registered ->
-                        "Register your identity to take part."
+                        "Register to vote"
                     !route.human && privateStake <= 0 ->
-                        "Stake ERTH to take part."
+                        "Stake ERTH to vote"
                     else -> null
                 },
                 onEdit = { editing = id },
@@ -890,6 +891,14 @@ internal fun EarthContent(
             proposals = allocationState?.proposals,
             modifier = inset,
             onOpen = { nav.push(EarthRoute.ProposalDetail(it.id)) },
+            ballots = privacyState?.let { ps ->
+                ps.ballots.map { b ->
+                    val name = ps.groundworksOptions.firstOrNull { it.id == b.optionId }?.description?.ifBlank { null } ?: "Option ${b.optionId}"
+                    network.erth.wallet.ui.govern.OpenBallot(b.optionId, "Remove $name?", b.yes, b.no, b.closesAt)
+                }
+            }.orEmpty(),
+            onVoteBallot = if (loaded.registered) ::voteRemoval else null,
+            onProposeRemoval = if (loaded.registered) { { nav.push(EarthRoute.RemovalBallots) } } else null,
         )
 
         is EarthRoute.ProposalDetail -> ProposalDetailScreen(
@@ -907,12 +916,10 @@ internal fun EarthContent(
             // snapshot without being spent (its weight rounded down to three
             // significant figures). Final:
             // a note votes once per proposal, and on every open proposal.
-            eligibility = if (privateStake <= 0) {
-                "Stake ERTH privately to vote here. Only stake held before voting opened counts."
-            } else {
-                null
-            },
-            stakeVoteFinal = true,
+            eligibility = if (privateStake <= 0) "No private stake" else null,
+            // The stake held now; only what was held when voting opened counts.
+            stakeWeight = Amounts.satSum(derthHeld.entries.toList()) { (d, v) -> derthValue(v, d.removePrefix("derth/")) }
+                .takeIf { it > 0 }?.let { "${formatUerth(it)} ERTH" },
             onVote = { proposal, vote -> scope.launch {
                 // Every vote this wallet's stake takes: one per validator
                 // (its notes, up to two a vote). Each is its own confirm
@@ -922,7 +929,7 @@ internal fun EarthContent(
                 }
                 items.onSuccess {
                     if (it.isEmpty()) {
-                        tx.showFailure("Vote with stake", IllegalStateException("No stake from before voting opened is left to vote on this proposal."))
+                        tx.showFailure("Vote with stake", IllegalStateException("No stake left to vote"))
                     } else {
                         stakeVoting = StakeVoting(proposal.id, vote, it)
                     }
@@ -931,12 +938,7 @@ internal fun EarthContent(
             // Absent on a chain without an assembly, which hides the whole
             // second house rather than explaining one that is not there yet.
             assembly = allocationState?.assemblyTallies?.get(route.id),
-            assemblyEligibility = if (!loaded.registered) {
-                "Register your identity to vote here. This house counts people, " +
-                    "not holdings — one registration is one vote."
-            } else {
-                null
-            },
+            assemblyEligibility = if (!loaded.registered) "Not registered" else null,
             onAssemblyVote = { proposal, vote ->
                 // Private: a membership proof in this ballot's scope; who voted
                 // is never known, and a second vote replaces the first.
@@ -1032,10 +1034,8 @@ internal fun EarthContent(
             title = { androidx.compose.material3.Text("${item.notes} stake notes at $name") },
             text = {
                 androidx.compose.material3.Text(
-                    "One vote holds up to ${PrivateMsgs.MAX_VOTE_NOTES} notes.\n\n" +
-                        "Vote in parts: ${item.parts} votes, a fee each. Each part shows its own weight, and the parts can be linked to each other.\n\n" +
-                        "Merge notes: one fee merges two notes, so later proposals take this stake in fewer votes. " +
-                        "This proposal's voting opened before the merge, so it still counts these notes as they were: vote here afterwards, in parts.",
+                    // Parts can be linked to each other; a merge helps only later proposals.
+                    "Parts: ${item.parts} votes, a fee each.\nMerge: fewer votes on later proposals.",
                 )
             },
             confirmButton = {

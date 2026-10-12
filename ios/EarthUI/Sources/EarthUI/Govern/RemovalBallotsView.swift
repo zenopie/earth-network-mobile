@@ -6,108 +6,112 @@ import SwiftUI
 /// option, no deposit) and vote in it; who opened or voted is never known,
 /// and a second vote replaces the first. Ports RemovalBallotsScreen.
 ///
-/// A sheet over the Govern tab: confirmations close it and draw at the root.
-struct RemovalBallotsView: View {
+/// Rare, so they live inside Proposals rather than on the Govern tab: the
+/// open ones as cards above the proposals, opening one a link at the bottom.
+
+/// One open ballot, with Yes / No for a registered person.
+struct RemovalBallotCard: View {
     @Environment(\.earth) private var theme
-    @Environment(\.dismiss) private var dismiss
+    @Environment(AppModel.self) private var model
+    @Environment(TxController.self) private var tx
+
+    let ballot: PrivacyReads.RemovalBallot
+    let groundworks: Allocation.Stream
+    let onDone: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.x8) {
+            HStack {
+                Text("Removal")
+                    .font(EarthType.caption)
+                    .foregroundStyle(theme.colors.textTertiary)
+                Spacer()
+                Text("Closes \(Date(timeIntervalSince1970: TimeInterval(ballot.closesAt)).formatted(date: .abbreviated, time: .omitted))")
+                    .font(EarthType.caption)
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
+            Text("Remove \(RemovalBallots.name(ballot.optionID, groundworks))?")
+                .font(EarthType.body).fontWeight(.semibold)
+                .foregroundStyle(theme.colors.textPrimary)
+            Text("\(ballot.yes) yes · \(ballot.no) no")
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textSecondary)
+            if model.isRegistered {
+                HStack(spacing: theme.space.x8) {
+                    EarthPillButton(title: "Yes") { vote(yes: true) }
+                    EarthPillButton(title: "No", role: .secondary) { vote(yes: false) }
+                }
+                .padding(.top, theme.space.x4)
+            }
+        }
+        .padding(theme.space.x16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.colors.bgSecondary, in: .rect(cornerRadius: 20))
+    }
+
+    private func vote(yes: Bool) {
+        let name = RemovalBallots.name(ballot.optionID, groundworks)
+        let id = ballot.optionID
+        tx.requestPrivate(.private(
+            action: "Vote \(yes ? "Yes" : "No") on removing \(name)",
+            rows: [("Ballot", name), ("Vote", yes ? "Yes" : "No")]
+        ), onSuccess: { await model.syncPrivacy() }) { w in
+            try await w.voteRemoval(optionID: id, yes: yes)
+        }
+        onDone()
+    }
+}
+
+/// Open a ballot against an option that has none: pushed from Proposals.
+struct ProposeRemovalScreen: View {
+    @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     @Environment(TxController.self) private var tx
 
     let groundworks: Allocation.Stream
+    let onDone: () -> Void
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: theme.space.x12) {
-                    Text("People can remove a Groundworks option by ballot. Opening one and voting both prove you are a registered person without saying which one.")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textTertiary)
-                    if !model.isRegistered {
-                        Text("Register your identity to open or vote in a removal ballot.")
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textSecondary)
+        ScrollView {
+            VStack(spacing: 0) {
+                let open = Set(model.removalBallots.map(\.optionID))
+                ForEach(groundworks.options.filter { !open.contains($0.id) && !$0.removed }) { o in
+                    HStack {
+                        Text(RemovalBallots.name(o.id, groundworks))
+                            .font(EarthType.body)
+                            .foregroundStyle(theme.colors.textPrimary)
+                        Spacer()
+                        Button("Propose") { propose(o.id) }
+                            .font(EarthType.body).fontWeight(.semibold)
+                            .foregroundStyle(theme.colors.accentInk)
                     }
-
-                    EarthLabel("Open ballots")
-                    if model.removalBallots.isEmpty {
-                        Text("No ballot is open.")
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textTertiary)
-                    }
-                    ForEach(model.removalBallots) { b in
-                        EarthCard {
-                            Text("Remove \(optionName(b.optionID))?")
-                                .font(EarthType.body).fontWeight(.semibold)
-                                .foregroundStyle(theme.colors.textPrimary)
-                            EarthDetailRow(label: "Yes / No", value: "\(b.yes) / \(b.no)")
-                            EarthDetailRow(label: "Closes", value: date(b.closesAt))
-                            if model.isRegistered {
-                                HStack(spacing: theme.space.x8) {
-                                    EarthButton(title: "Yes") { vote(b.optionID, yes: true) }
-                                    EarthButton(title: "No", role: .secondary) { vote(b.optionID, yes: false) }
-                                }
-                            }
-                        }
-                    }
-
-                    if model.isRegistered {
-                        EarthLabel("Open a ballot")
-                        let open = Set(model.removalBallots.map(\.optionID))
-                        ForEach(groundworks.options.filter { !open.contains($0.id) }) { o in
-                            HStack {
-                                Text(optionName(o.id))
-                                    .font(EarthType.body)
-                                    .foregroundStyle(theme.colors.textPrimary)
-                                Spacer()
-                                Button("Propose removal") { propose(o.id) }
-                                    .font(EarthType.bodySmall)
-                                    .foregroundStyle(theme.colors.accentInk)
-                            }
-                            .padding(.vertical, theme.space.x4)
-                        }
-                    }
+                    .padding(.vertical, theme.space.x12)
+                    EarthDivider()
                 }
-                .padding(theme.space.gutter)
             }
-            .navigationTitle("Removal ballots")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
-            .background(theme.colors.bgPrimary)
-            .scrollContentBackground(.hidden)
-            .refreshable { await model.refreshRemovalBallots() }
-            .task {
-                await model.refreshRemovalBallots()
-                await model.syncPrivacy()
-            }
+            .padding(theme.space.gutter)
         }
-    }
-
-    private func optionName(_ id: UInt64) -> String {
-        let d = groundworks.options.first { $0.id == id }?.description ?? ""
-        return d.isEmpty ? "Option \(id)" : d
-    }
-
-    private func date(_ unix: Int64) -> String {
-        Date(timeIntervalSince1970: TimeInterval(unix)).formatted(date: .abbreviated, time: .shortened)
-    }
-
-    private func vote(_ optionID: UInt64, yes: Bool) {
-        tx.requestPrivate(.private(
-            action: "Vote \(yes ? "Yes" : "No") on removing \(optionName(optionID))",
-            rows: [("Ballot", optionName(optionID)), ("Vote", yes ? "Yes" : "No")]
-        ), onSuccess: { await model.syncPrivacy() }) { w in
-            try await w.voteRemoval(optionID: optionID, yes: yes)
-        }
-        dismiss()
+        .navigationTitle("Remove an option")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(theme.colors.bgPrimary)
+        .scrollContentBackground(.hidden)
     }
 
     private func propose(_ optionID: UInt64) {
+        let name = RemovalBallots.name(optionID, groundworks)
         tx.requestPrivate(.private(
-            action: "Propose removing \(optionName(optionID))",
-            rows: [("Option", optionName(optionID))]
+            action: "Propose removing \(name)",
+            rows: [("Option", name)]
         ), onSuccess: { await model.syncPrivacy() }) { w in
             try await w.proposeRemoval(optionID: optionID)
         }
-        dismiss()
+        onDone()
+    }
+}
+
+enum RemovalBallots {
+    static func name(_ id: UInt64, _ groundworks: Allocation.Stream) -> String {
+        let d = groundworks.options.first { $0.id == id }?.description ?? ""
+        return d.isEmpty ? "Option \(id)" : d
     }
 }

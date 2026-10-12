@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -213,19 +214,28 @@ fun EarthSegmented(
 fun EarthSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Under the content, above the nav-bar inset the sheet adds itself. Null: the default. */
+    bottomPadding: androidx.compose.ui.unit.Dp? = null,
+    /**
+     * Open at the content's own height rather than half the screen first:
+     * for a short sheet whose whole content is the point.
+     */
+    fitContent: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val dimens = EarthTheme.dimens
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = fitContent),
         containerColor = EarthColors.Surfaces.bgPrimary,
         shape = RoundedCornerShape(topStart = dimens.radiusSheet, topEnd = dimens.radiusSheet),
     ) {
         Column(
             modifier
                 .fillMaxWidth()
+                .wrapContentHeight()
                 .padding(horizontal = dimens.gutter)
-                .padding(bottom = dimens.space32),
+                .padding(bottom = bottomPadding ?: dimens.space32),
         ) { content() }
     }
 }

@@ -66,21 +66,6 @@ fun AllocationEditSheet(
             style = EarthTypography.header5,
             color = EarthColors.Text.textPrimary,
         )
-        Spacer(Modifier.height(dimens.space4))
-        Text(
-            text = when {
-                remaining > 0 -> "$remaining% left to allocate"
-                remaining < 0 -> "${-remaining}% over — take some back"
-                else -> "All 100% allocated"
-            },
-            style = EarthTypography.textSm,
-            color = if (remaining == 0L) {
-                EarthColors.Utility.SuccessGreen.utilitySuccess700
-            } else {
-                EarthColors.Text.textTertiary
-            },
-        )
-
         Spacer(Modifier.height(dimens.space16))
 
         stream.options.filter { !it.removed }.forEach { option ->
@@ -121,14 +106,19 @@ fun AllocationEditSheet(
             }
         }
 
+        Spacer(Modifier.height(dimens.space8))
+        Row(Modifier.fillMaxWidth().padding(vertical = dimens.space8), verticalAlignment = Alignment.CenterVertically) {
+            Text("Total", style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold,
+                color = EarthColors.Text.textPrimary, modifier = Modifier.weight(1f))
+            Text(
+                "$total%",
+                style = EarthTypography.textMd,
+                fontWeight = FontWeight.SemiBold,
+                color = if (remaining == 0L) EarthColors.Utility.SuccessGreen.utilitySuccess700 else EarthColors.Text.textTertiary,
+            )
+        }
         Spacer(Modifier.height(dimens.space16))
-        EarthButton(
-            text = "Set allocation",
-            onClick = { onConfirm(weights.toMap()) },
-            enabled = remaining == 0L,
-            modifier = Modifier.fillMaxWidth(),
-            colors = brandButtonColors(),
-        )
+        network.erth.wallet.ui.earn.PillButton("Review", enabled = remaining == 0L) { onConfirm(weights.toMap()) }
         Spacer(Modifier.height(dimens.space16))
     }
 }

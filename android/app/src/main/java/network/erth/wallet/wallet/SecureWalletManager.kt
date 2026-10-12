@@ -164,6 +164,12 @@ object SecureWalletManager {
         SessionManager.setSelectedWalletIndex(context, selected)
     }
 
+    /** Renames the wallet at [index] and re-seals the list. A name is not a secret: no fresh unlock. */
+    fun renameWallet(context: Context, index: Int, name: String) {
+        requireSession()
+        SessionManager.saveWallets(context, WalletList.rename(SessionManager.wallets(), index, name))
+    }
+
     fun selectWallet(context: Context, walletIndex: Int) {
         requireSession()
         val count = SessionManager.wallets().length()

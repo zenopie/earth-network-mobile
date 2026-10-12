@@ -48,4 +48,25 @@ class WalletListTest {
         WalletList.remove(wallets, 0, 0)
         assertEquals(listOf("a", "b"), names(wallets))
     }
+
+    @Test
+    fun renamesOnlyThatWalletAndKeepsItsPhrase() {
+        val wallets = list("a", "b")
+        val out = WalletList.rename(wallets, 1, "  Savings  ")
+        assertEquals(listOf("a", "Savings"), names(out))
+        assertEquals("m-b", out.getJSONObject(1).getString("mnemonic"))
+        assertEquals(listOf("a", "b"), names(wallets))
+    }
+
+    @Test
+    fun nameBounds() {
+        assertEquals(null, WalletList.cleanName("   "))
+        assertEquals(null, WalletList.cleanName("x".repeat(33)))
+        assertEquals("x".repeat(32), WalletList.cleanName("x".repeat(32)))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun refusesAnEmptyName() {
+        WalletList.rename(list("a"), 0, " ")
+    }
 }
