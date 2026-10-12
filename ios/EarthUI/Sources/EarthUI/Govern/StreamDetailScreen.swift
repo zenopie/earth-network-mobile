@@ -65,10 +65,10 @@ struct StreamDetailScreen: View {
                     // tally — a vote button there would sit under a chart it
                     // cannot change, and read as editing everyone's split
                     // rather than your own.
-                    if stream == .groundworks, eligibility == nil {
+                    if stream == .groundworks, lens == .preferred, eligibility == nil {
                         // Your stake votes: every stake tx carries the split
-                        // onto the note it makes. Shown under both lenses:
-                        // the lease and its renewal are not a chart's.
+                        // onto the note it makes. With its lease and renewal,
+                        // all of it is your vote, so it lives with your split.
                         Spacer().frame(height: theme.space.x24)
                         GroundworksVoteControls(state: state, onChanged: onChanged) { editing = true }
                     } else if lens == .preferred, eligibility == nil {
@@ -95,6 +95,14 @@ struct StreamDetailScreen: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
+            // A Groundworks vote due for renewal opens on Preferred, where Renew
+            // is: the Home reminder lands here for exactly that.
+            .task {
+                let now = Int64(Date().timeIntervalSince1970)
+                if stream == .groundworks, let lease = model.groundworksLease, lease.lapsed(now) || lease.renewalDue(now) {
+                    lens = .preferred
+                }
+            }
             #if targetEnvironment(simulator)
             // `-demoAddOption 1` opens the add sheet, as `-demoStream` opens this screen.
             .task {
