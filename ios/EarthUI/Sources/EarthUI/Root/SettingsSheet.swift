@@ -14,7 +14,7 @@ struct SettingsSheet: View {
     @State private var route: Route?
 
     enum Route: String, Identifiable {
-        case identity, handle, notes, wallets, security, network, explorer, activity, about
+        case identity, handle, notes, wallets, security, notifications, network, explorer, about
         var id: String { rawValue }
     }
 
@@ -39,12 +39,12 @@ struct SettingsSheet: View {
                         divider
                         row("Unlocking", "lock", subtitle: methodName, route: .security)
                         divider
+                        row("Notifications", "bell", subtitle: "ANML ready, new proposals", route: .notifications)
+                        divider
                         row("Network", "network", subtitle: NodeSettings.current.isDefault ? "Earth's node" : "Your node", route: .network)
                         divider
                         row("Explorer", "safari",
                             subtitle: "Blocks, validators and registrations", route: .explorer)
-                        divider
-                        row("Activity", "list.bullet", route: .activity)
                         divider
                         row("About", "info.circle", route: .about)
                     }
@@ -74,9 +74,9 @@ struct SettingsSheet: View {
                 case .notes: NotesScreen().earthThemed()
                 case .wallets: WalletsScreen().earthThemed()
                 case .security: SecurityScreen().earthThemed()
+                case .notifications: NotificationsScreen().earthThemed()
                 case .network: NetworkScreen().earthThemed()
                 case .explorer: ExploreScreen().earthThemed()
-                case .activity: ActivityScreen().earthThemed()
                 case .about: AboutScreen().earthThemed()
                 }
             }
@@ -202,9 +202,6 @@ struct IdentityScreen: View {
             .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
             .sheet(isPresented: $switching) { SwitchIdentityScreen().earthThemed() }
             .task(id: model.isRegistered) { moveOffer = model.isRegistered ? await model.moveOffer() : nil }
-            // A sheet over the settings sheet, so the root's confirmation
-            // would draw behind both. See TxController.Host.
-            .overlay { TxOverlay(host: .identity) }
         }
     }
 
@@ -254,30 +251,5 @@ struct AboutScreen: View {
 
     private func link(_ title: String, _ url: String) -> some View {
         EarthRow(title: title, action: { URL(string: url).map { openURL($0) } })
-    }
-}
-
-/// The full activity list. The wallet screen shows the same rows, trimmed.
-struct ActivityScreen: View {
-    @Environment(\.earth) private var theme
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @State private var opened: ActivityEntry?
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ActivityList(entries: model.activity ?? []) { opened = $0 }
-                }
-            }
-            .refreshable { await model.refresh() }
-            .navigationTitle("Activity")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
-            .background(theme.colors.bgPrimary)
-            .scrollContentBackground(.hidden)
-            .sheet(item: $opened) { ActivityDetailSheet(entry: $0).earthThemed() }
-        }
     }
 }

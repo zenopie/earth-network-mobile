@@ -89,7 +89,9 @@ struct StakeSheet: View {
             let standing = StakeRound.Standing(v.element)
             let open = model.stakeTargets.contains(v.element.validator) && standing == .active
             return .init(validator: v.element.validator,
-                         detail: open ? ValidatorPicker.commission(model.commission(of: v.element.validator)) : standing.label,
+                         detail: open ? ValidatorPicker.aprAndCommission(model.commission(of: v.element.validator),
+                                                                         bonded: Int64(model.totalBonded.description) ?? 0)
+                             : standing.label,
                          enabled: open)
         }
     }
@@ -286,6 +288,12 @@ struct ValidatorPicker: View {
 
     static func commission(_ c: Double?) -> String {
         String(format: "%.0f%% commission", (c ?? 0) * 100)
+    }
+
+    /// "12.3% APR · 5% commission": what a delegator here earns, then why.
+    static func aprAndCommission(_ c: Double?, bonded: Int64) -> String {
+        guard let apr = StakingApr.forValidator(bondedUerth: bonded, commission: c ?? 0) else { return commission(c) }
+        return "\(Figures.rate(apr)) APR · \(commission(c))"
     }
 
     var body: some View {

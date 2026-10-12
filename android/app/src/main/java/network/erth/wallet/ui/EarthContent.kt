@@ -247,11 +247,14 @@ internal fun EarthContent(
             rewardsUerth = state?.rewardsUerth ?: 0L,
             unbondingUerth = earnState?.unbonding?.sumOf { it.amountUerth } ?: 0L,
             privateNotice = state?.privacySyncError,
+            syncedHeight = state?.syncedHeight,
+            tipHeight = state?.tipHeight,
             // What is due, never done unasked: each reminder opens where it is done.
             // A node that failed its recheck (or awaits it) leads: Earth's node is in use meanwhile.
-            reminders = listOfNotNull(nodeNotice?.let { it to { nav.push(EarthRoute.Network) } }) + personal?.reminders.orEmpty().map { r ->
+            reminders = listOfNotNull(nodeNotice?.let { it to { nav.push(EarthRoute.Network) } }) + personal?.reminders.orEmpty().mapNotNull { r ->
                 Reminders.text(r, now) to when (r) {
-                    Reminders.Reminder.AnmlReady -> onClaimAnml
+                    // The Claim button already says so.
+                    Reminders.Reminder.AnmlReady -> return@mapNotNull null
                     is Reminders.Reminder.CaretakerExpiring -> { { nav.push(EarthRoute.Stream(true)) } }
                     is Reminders.Reminder.GroundworksExpiring -> { { nav.push(EarthRoute.Stream(false)) } }
                     is Reminders.Reminder.HandleExpiring, is Reminders.Reminder.HandlePaysElsewhere -> { { nav.push(EarthRoute.Handle) } }
@@ -454,6 +457,8 @@ internal fun EarthContent(
         }
 
         EarthRoute.Security -> SecurityScreen(modifier = inset)
+
+        EarthRoute.Notifications -> network.erth.wallet.ui.settings.NotificationsScreen(modifier = inset)
 
         EarthRoute.Network -> network.erth.wallet.ui.settings.NetworkScreen(onChanged = onRefresh, modifier = inset)
 
@@ -1071,7 +1076,7 @@ internal fun EarthContent(
             rowLabel = if (stake) "To" else "From",
             pickFirst = !stake,
             detailFor = { v ->
-                if (stake) "${"%.0f".format(v.commission * 100)}% commission"
+                if (stake) network.erth.wallet.ui.earn.validatorDetail(earnState?.totalBondedUerth ?: 0L, v.commission)
                 else "${network.erth.wallet.ui.earn.stakeAmount(derthValue(v.amountUerth, v.validatorOperator))} ERTH"
             },
             capFor = { v ->
@@ -1458,15 +1463,16 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState?, person
             onClick = { nav.push(EarthRoute.Explore) },
         ),
         SettingsItem(
-            title = "Activity",
-            icon = R.drawable.ic_earnings,
-            onClick = { nav.push(EarthRoute.Activity) },
-        ),
-        SettingsItem(
             title = "Unlocking",
             subtitle = "PIN and biometrics",
             icon = R.drawable.ic_lock,
             onClick = { nav.push(EarthRoute.Security) },
+        ),
+        SettingsItem(
+            title = "Notifications",
+            subtitle = "ANML ready, new proposals",
+            icon = R.drawable.ic_notifications,
+            onClick = { nav.push(EarthRoute.Notifications) },
         ),
         SettingsItem(
             title = "Network",

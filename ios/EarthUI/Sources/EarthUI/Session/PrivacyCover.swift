@@ -77,6 +77,17 @@ private enum PrivacyShield {
                 forName: UIScene.willDeactivateNotification, object: nil, queue: .main
             ) { note in
                 let scene = note.object as? UIWindowScene
+                MainActor.assumeIsolated {
+                    guard !PrivacyCoverControl.suspended else { return }
+                    show(in: scene, theme: theme)
+                }
+            },
+            // Regardless of a suspension: leaving the app mid-scan still has
+            // the snapshot taken, and it must not hold the passport screen.
+            center.addObserver(
+                forName: UIScene.didEnterBackgroundNotification, object: nil, queue: .main
+            ) { note in
+                let scene = note.object as? UIWindowScene
                 MainActor.assumeIsolated { show(in: scene, theme: theme) }
             },
             center.addObserver(
@@ -107,6 +118,17 @@ private enum PrivacyShield {
     }
 }
 #endif
+
+/// Holds the cover off while a system sheet the app asked for is up: the
+/// passport's NFC sheet deactivates the scene exactly as leaving the app does,
+/// and covering the screen behind it reads as the app locking mid-scan. Going
+/// to the background still covers.
+@MainActor
+enum PrivacyCoverControl {
+    private(set) static var suspended = false
+
+    static func setSuspended(_ on: Bool) { suspended = on }
+}
 
 public extension View {
     /// Covers this view whenever the app is not frontmost, so it stays out of

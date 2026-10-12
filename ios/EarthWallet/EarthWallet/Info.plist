@@ -40,6 +40,16 @@
 	<string>Connect to your own Earth node on your local network, if you choose one in Settings.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Unlock your wallet and approve transactions.</string>
+	<!-- A background refresh reads the public proposal list to notify one
+	     opening for votes (EarthNotifications). -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>network.erth.EarthWallet.proposals</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

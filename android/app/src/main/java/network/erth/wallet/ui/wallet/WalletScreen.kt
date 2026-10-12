@@ -39,6 +39,9 @@ data class WalletUiState(
      * when the notes are spread over more than that.
      */
     val unshieldableErthUerth: Long = 0,
+    /** How far the private sync has read the chain (notes), and the chain's tip: null when unknown. */
+    val syncedHeight: Long? = null,
+    val tipHeight: Long? = null,
 ) {
     companion object {
         /**

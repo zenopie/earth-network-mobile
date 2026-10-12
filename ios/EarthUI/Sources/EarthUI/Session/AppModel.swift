@@ -52,6 +52,11 @@ public final class AppModel {
     public private(set) var identityStatus: WalletSync.IdentityStatus = .none
     /// When ANML can next be claimed: 0 for now, nil without a live registration.
     public private(set) var claimOpensAt: Int64?
+    /// The block the private side is synced to (0: not yet), and the chain's
+    /// latest as last read (0: unknown). Shown on the wallet screen: notes
+    /// and stake are only as current as the first.
+    public private(set) var syncedHeight: UInt64 = 0
+    public private(set) var chainHeight: UInt64 = 0
     /// Why the last privacy sync failed, if it did.
     public private(set) var privacySyncError: String?
     /// Spendable note counts per denom with more than one note.
@@ -228,6 +233,24 @@ public final class AppModel {
     // MARK: - session
 
     public func start() {
+        // A launch before the device is unlocked (prewarming, a background
+        // refresh) can read neither the Keychain nor the install marker in
+        // defaults, and would decide "no wallet" — or wipe one as a
+        // reinstall. It waits for the device instead.
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            guard protectedDataObserver == nil else { return }
+            protectedDataObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let o = self.protectedDataObserver else { return }
+                    NotificationCenter.default.removeObserver(o)
+                    self.protectedDataObserver = nil
+                    self.start()
+                }
+            }
+            return
+        }
         watchDeviceLock()
         watchNode()
         clearIfReinstalled()
@@ -637,7 +660,9 @@ public final class AppModel {
         PrivacySession.setDataKey(nil)
         wallets = []
         lastError = nil
-        phase = store.exists ? .locked : .setup
+        // Locking a session means there was a wallet. Asking the Keychain
+        // here was the bug: this runs as the device locks, when it cannot answer.
+        phase = .locked
     }
 
     /// Follow the scene, locking after `backgroundGrace` away.
@@ -648,6 +673,7 @@ public final class AppModel {
     public func scenePhaseChanged(to scenePhase: ScenePhase) {
         switch scenePhase {
         case .background:
+            EarthNotifications.scheduleRefresh()
             backgroundedAt = backgroundedAt ?? .now
             holdBackgroundLock()
         case .active:
@@ -663,6 +689,7 @@ public final class AppModel {
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var backgroundLock: Task<Void, Never>?
     private var deviceLockObserver: NSObjectProtocol?
+    private var protectedDataObserver: NSObjectProtocol?
 
     /// A suspended app runs nothing, so a check on return alone would keep
     /// the secret and every phrase in memory for as long as it sits
@@ -742,6 +769,8 @@ public final class AppModel {
         async let rewards = client.totalRewards(address)
         async let bonded = client.totalBonded()
         async let transactions = client.transactions(hashes: SentTxLog.standard.hashes(for: address))
+        async let status = client.status()
+        async let proposals = client.proposals(limit: 20)
 
         self.balances = await balances.compactMapValues { BigInt($0) }
         self.pools = await pools
@@ -756,8 +785,10 @@ public final class AppModel {
         let signer = address
         self.publicActivity = await transactions.compactMap { ActivityEntry(tx: $0, self: signer) }
         mergeActivity()
+        if let h = await status?.height, h > 0 { chainHeight = max(chainHeight, UInt64(h)) }
         await reachable
         await privacySync
+        await EarthNotifications.notifyNewProposals(await proposals)
     }
 
     /// One list: the public rows and the private ones, newest first. Private
@@ -891,6 +922,7 @@ public final class AppModel {
         shieldedAddress = ""
         identityStatus = .none
         claimOpensAt = nil
+        syncedHeight = 0
         mergeable = [:]
         unshieldableErth = 0
         groundworksVotes = []
@@ -912,6 +944,9 @@ public final class AppModel {
         pendingUnbonds = snap.pendingUnbonds
         identityStatus = snap.identityStatus
         claimOpensAt = w.claimOpensAt()
+        syncedHeight = snap.syncedHeight
+        // A sync that lands after the tip was read has seen a later block.
+        chainHeight = max(chainHeight, snap.syncedHeight)
         mergeable = snap.mergeable.merging(snap.stakeMergeable) { a, _ in a }
         unshieldableErth = snap.unshieldableErth
         handle = snap.handle; handleMovedOut = snap.handleMovedOut
@@ -939,6 +974,7 @@ public final class AppModel {
             privacySyncError = describe(error)
         }
         publishPrivacy()
+        EarthNotifications.scheduleAnml(claimOpensAt: claimOpensAt)
         let queries = PrivacyQueries(rest: client.rest)
         await refreshGroundworks()
         await refreshStakeHoldings()

@@ -58,7 +58,6 @@ struct HandleScreen: View {
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
             .task { await model.refreshPersonal() }
-            .overlay { TxOverlay(host: .handle) }
         }
     }
 
@@ -135,7 +134,7 @@ struct HandleScreen: View {
         }
         EarthButton(title: "Release @\(model.handle)", role: .destructive) {
             let h = model.handle
-            tx.requestPrivate(.private(action: "Release @\(h)", rows: [], gas: PrivacyWallet.bindHandleGasEstimate), host: .handle, onSuccess: { await refreshed() }) { w in
+            tx.requestPrivate(.private(action: "Release @\(h)", rows: [], gas: PrivacyWallet.bindHandleGasEstimate), onSuccess: { await refreshed() }) { w in
                 try await w.releaseHandle()
             }
         }
@@ -173,8 +172,7 @@ struct HandleScreen: View {
                 guard let h = parsed else { return }
                 let pays = "@\(h) · \(Handles.truncate(model.shieldedAddress))"
                 tx.requestPrivate(.private(action: model.handle.isEmpty ? "Claim @\(h)" : "Change handle to @\(h)", rows: [("Pays", pays)],
-                                           gas: PrivacyWallet.bindHandleGasEstimate),
-                                  host: .handle, onSuccess: { input = ""; await refreshed() }) { w in
+                                           gas: PrivacyWallet.bindHandleGasEstimate), onSuccess: { input = ""; await refreshed() }) { w in
                     try await w.bindHandle(h)
                 }
             }
@@ -188,8 +186,7 @@ struct HandleScreen: View {
         let changing = !model.handle.isEmpty && model.handle != h
         tx.requestPrivate(.private(action: changing ? "Change handle to @\(h)" : "Renew @\(h) for a year",
                                    rows: [("Pays", "@\(h) · \(Handles.truncate(model.shieldedAddress))")],
-                                   gas: PrivacyWallet.bindHandleGasEstimate),
-                          host: .handle, onSuccess: { await refreshed() }) { w in
+                                   gas: PrivacyWallet.bindHandleGasEstimate), onSuccess: { await refreshed() }) { w in
             try await w.bindHandle(h, renewOnly: true)
         }
     }
@@ -198,8 +195,7 @@ struct HandleScreen: View {
         let h = model.handle
         guard !h.isEmpty else { return }
         tx.requestPrivate(.private(action: "Renew @\(h) for a year", rows: [("Pays", "@\(h) · \(Handles.truncate(model.shieldedAddress))")],
-                                   gas: PrivacyWallet.bindHandleGasEstimate),
-                          host: .handle, onSuccess: { await refreshed() }) { w in
+                                   gas: PrivacyWallet.bindHandleGasEstimate), onSuccess: { await refreshed() }) { w in
             try await w.bindHandle(h, renewOnly: true)
         }
     }
@@ -506,7 +502,7 @@ struct MoveOfferCard: View {
         var d = TxController.Details.private(action: handle ? "Bring @\(offer.handle) to this identity" : "Bring your Caretaker split to this identity",
                                              rows: [("Fee paid by", within ? "This wallet (its private ERTH)" : "\(offer.fromName) (its private ERTH)")])
         d.payerErth = offer.feeErth
-        tx.requestPrivate(d, host: .identity, onSuccess: { await model.syncPrivacy(); await refresh() }) { w in
+        tx.requestPrivate(d, onSuccess: { await model.syncPrivacy(); await refresh() }) { w in
             if within {
                 // This wallet's earlier identity: one phrase holds both secrets.
                 try await w.sync()

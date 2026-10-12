@@ -53,6 +53,7 @@ import network.erth.wallet.ui.designsystem.component.rememberEarthShimmer
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import network.erth.wallet.ui.swap.PoolList
+import network.erth.wallet.ui.swap.asPercent
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 
@@ -219,6 +220,24 @@ private class StakeView(val state: EarnUiState?, val now: Long, val visible: Boo
     /** The validator's rate after its commission; null when unknown or it earns nothing now. */
     fun apr(p: PrivateStakeRow): Double? =
         if (p.standing?.earns == false) null else state?.let { StakingApr.forValidator(it.totalBondedUerth, p.commission) }
+
+    /**
+     * What the whole stake earns, weighted by value: idle stake counts at
+     * zero, so a jailed validator pulls the figure down as it does the
+     * daily one. Null without earning stake.
+     */
+    fun blendedApr(rows: List<PrivateStakeRow>): Double? {
+        val total = rows.sumOf { it.valueUerth.toDouble() }
+        if (total <= 0) return null
+        val earned = rows.sumOf { it.valueUerth.toDouble() * (apr(it) ?: 0.0) }
+        return if (earned > 0) earned / total else null
+    }
+}
+
+/** A picker row's line: the validator's rate after its commission, then the commission. */
+internal fun validatorDetail(totalBondedUerth: Long, commission: Double): String {
+    val cut = "${"%.0f".format(commission * 100)}% commission"
+    return StakingApr.forValidator(totalBondedUerth, commission)?.let { "${it.asPercent()} APR · $cut" } ?: cut
 }
 
 private enum class StakeStatus { EARNING, IDLE }
@@ -241,6 +260,13 @@ private fun StakeHero(view: StakeView, rows: List<PrivateStakeRow>, empty: Boole
         heroLine(view, rows, total, empty)?.let { (text, color) ->
             Spacer(Modifier.height(12.dp))
             Text(text, style = EarthTypography.textMd.copy(fontSize = 15.sp), fontWeight = FontWeight.SemiBold, color = color)
+        }
+        // A rate is not private, so it shows with balances hidden.
+        val apr = if (total > 0) view.blendedApr(rows)?.let { "${it.asPercent()} APR" }
+        else view.state?.let { StakingApr.base(it.totalBondedUerth) }?.let { "Up to ${it.asPercent()} APR" }
+        apr?.let {
+            Spacer(Modifier.height(4.dp))
+            Text(it, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
         }
     }
 }
@@ -396,7 +422,7 @@ private fun ValidatorStakeSheet(
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = when (p.status) {
-                        StakeStatus.EARNING -> "Earning"
+                        StakeStatus.EARNING -> view.apr(p)?.let { "Earning · ${it.asPercent()} APR" } ?: "Earning"
                         StakeStatus.IDLE -> p.standing?.label ?: "Not earning"
                     },
                     style = EarthTypography.textSm,

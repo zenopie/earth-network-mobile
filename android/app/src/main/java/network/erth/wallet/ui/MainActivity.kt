@@ -10,6 +10,7 @@ import androidx.core.net.toUri
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import network.erth.wallet.notify.Notifications
 import network.erth.wallet.ui.onboarding.FirstWalletFlow
 import network.erth.wallet.ui.onboarding.OnboardingViewModel
 import network.erth.wallet.ui.onboarding.PreAppScreen
@@ -40,6 +41,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        takeOpen(intent)
 
         val version = runCatching {
             packageManager.getPackageInfo(packageName, 0).versionName
@@ -106,6 +108,16 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        takeOpen(intent)
+    }
+
+    // Only this app's own notifications can carry it: the activity is not exported.
+    private fun takeOpen(intent: Intent?) {
+        intent?.getStringExtra(Notifications.EXTRA_OPEN)?.let { Notifications.pendingOpen.value = it }
     }
 
     private fun openUrl(url: String) {

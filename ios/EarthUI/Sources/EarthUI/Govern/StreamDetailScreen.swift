@@ -88,12 +88,6 @@ struct StreamDetailScreen: View {
                 AllocationEditSheet(stream: stream, state: state, onChanged: onChanged)
                     .earthThemed()
             }
-            // This sheet hosts its own confirmation. It is the only flow that
-            // presents a sheet over itself, and the root's copy draws behind
-            // both — closing them to reveal it was tried and still left the
-            // card under the tab. Hosting it here keeps you on the stream you
-            // were editing, which is where the confirmation makes sense anyway.
-            .overlay { TxOverlay(host: .allocation) }
         }
     }
 
@@ -233,7 +227,7 @@ struct GroundworksVoteControls: View {
                      tx: TxController, model: AppModel, onChanged: @escaping () -> Void) {
         let validators = model.privateStake.filter { $0.value > 0 }.count
         let sends = validators == 1 ? "At least 1 transaction" : "At least \(validators) transactions, one per validator"
-        tx.requestPrivate(.private(action: action, rows: rows + [("Sends", sends)]), host: .allocation, onSuccess: {
+        tx.requestPrivate(.private(action: action, rows: rows + [("Sends", sends)]), onSuccess: {
             await model.refreshGroundworks()
             onChanged()
         }) { w in
@@ -351,9 +345,6 @@ struct AllocationEditSheet: View {
                 action: "Set caretaker split",
                 rows: split.sorted { $0.key < $1.key }.map { (label($0.key), "\($0.value)%") }
             ),
-            // Drawn by the stream sheet this editor sits on, not by the root:
-            // a root overlay cannot appear over a sheet that is still up.
-            host: .allocation,
             onSuccess: { onChanged() }
         ) { w in
             try await w.setCaretaker(split: split)

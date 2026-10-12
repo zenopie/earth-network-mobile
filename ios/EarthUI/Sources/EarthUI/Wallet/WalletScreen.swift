@@ -47,7 +47,8 @@ struct WalletScreen: View {
                     .padding(.top, 6)
             }
             // What is due, never done unasked: each reminder opens where it is done.
-            ForEach(Array(model.reminders.enumerated()), id: \.offset) { _, r in
+            // Not the day's ANML: the Claim card already says it.
+            ForEach(Array(model.reminders.filter { $0 != .anmlReady }.enumerated()), id: \.offset) { _, r in
                 ReminderBanner(text: Reminders.text(r, now: Int64(Date().timeIntervalSince1970))) { open(r) }
                     .padding(.horizontal, 24)
                     .padding(.top, 6)
@@ -145,6 +146,13 @@ struct BalanceWidget: View {
                     .foregroundStyle(theme.colors.textTertiary)
             }
 
+            if model.syncedHeight > 0 {
+                Spacer().frame(height: 4)
+                Text(syncLine)
+                    .font(EarthType.caption.monospacedDigit())
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
+
             // Why the private side (notes, stake, registration) is not
             // verified against the chain: shown, never hidden.
             if let notice = model.privacySyncError {
@@ -156,6 +164,15 @@ struct BalanceWidget: View {
                     .padding(.horizontal, 24)
             }
         }
+    }
+}
+
+extension BalanceWidget {
+    /// Where the private side is synced to, against the chain's latest block.
+    var syncLine: String {
+        let synced = Figures.grouped(Int64(clamping: model.syncedHeight))
+        guard model.chainHeight > 0 else { return "Synced to block \(synced)" }
+        return "Synced \(synced) / \(Figures.grouped(Int64(clamping: model.chainHeight)))"
     }
 }
 

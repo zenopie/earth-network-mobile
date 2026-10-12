@@ -41,7 +41,7 @@ struct NotesScreen: View {
                             if let count = model.mergeable[denom] {
                                 EarthDetailRow(label: "Notes", value: "\(count)")
                                 EarthButton(title: "Merge smallest notes", role: .secondary) {
-                                    tx.requestPrivate(.private(action: "Merge notes", rows: [("Asset", label(denom))]), host: .notes,
+                                    tx.requestPrivate(.private(action: "Merge notes", rows: [("Asset", label(denom))]),
                                                       onSuccess: { await model.syncPrivacy() }) { w in
                                         // Stake notes merge by a restake (owner-locked, two per proof).
                                         denom.hasPrefix(PrivacyWallet.derthPrefix) ? try await w.mergeStake(denom: denom) : try await w.merge(denom: denom)
@@ -74,7 +74,6 @@ struct NotesScreen: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
-            .overlay { TxOverlay(host: .notes) }
         }
     }
 
@@ -88,8 +87,7 @@ struct NotesScreen: View {
     /// to this wallet's own shielded address, its ciphertext v1.
     private func shield() {
         guard let value = shieldValue, let w = model.privacy, let out = try? w.shieldOutput(denom: Constants.gasDenom, amount: UInt64(value)) else { return }
-        tx.request(.init(action: "Shield ERTH", rows: [("Amount", "\(Token.erth.format(value)) ERTH"), ("To", "your shielded balance")]),
-                   host: .notes, onSuccess: { shieldAmount = ""; await model.syncPrivacy() }) { key in
+        tx.request(.init(action: "Shield ERTH", rows: [("Amount", "\(Token.erth.format(value)) ERTH"), ("To", "your shielded balance")]), onSuccess: { shieldAmount = ""; await model.syncPrivacy() }) { key in
             [MsgShield(sender: key.address, amount: Coin(denom: Constants.gasDenom, amount: String(value)),
                        pc: out.pc.bytes, ciphertext: out.ciphertext).asAny(typeURL: MsgShield.typeURL)]
         }

@@ -29,6 +29,11 @@ class App : Application() {
 
         AutoLock.install(this)
 
+        runCatching {
+            network.erth.wallet.notify.Notifications.ensureChannel(this)
+            network.erth.wallet.notify.Notifications.scheduleProposalChecks(this)
+        }
+
         // The node the user chose (Settings -> Network), before anything queries the chain.
         network.erth.wallet.chain.NodeConfig.load(this)
 

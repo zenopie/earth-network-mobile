@@ -81,6 +81,10 @@ public enum PassportChip {
     /// need the passport still held there.
     public static func read(key: MRZ.Key) async throws -> PassportRegistration.Scan {
         guard let reader else { throw Failure.unavailable }
+        // The NFC sheet makes the app inactive, which is when the privacy
+        // cover goes up: without this the scan ran behind the lock panel.
+        await PrivacyCoverControl.setSuspended(true)
+        defer { Task { @MainActor in PrivacyCoverControl.setSuspended(false) } }
         return try await reader(key)
     }
 }

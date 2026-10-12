@@ -59,7 +59,7 @@ struct MoveStakeSheet: View {
                     }
                 } else {
                     ValidatorPicker(title: "Move to", options: destinations.map {
-                        .init(validator: $0, detail: ValidatorPicker.commission(model.commission(of: $0)), enabled: true)
+                        .init(validator: $0, detail: ValidatorPicker.aprAndCommission(model.commission(of: $0), bonded: Int64(model.totalBonded.description) ?? 0), enabled: true)
                     }, selected: destination) { op in
                         destination = op
                         picking = nil

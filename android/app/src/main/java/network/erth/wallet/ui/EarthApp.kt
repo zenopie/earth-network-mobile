@@ -31,6 +31,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import network.erth.wallet.R
+import network.erth.wallet.notify.Notifications
 import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.ui.privacy.PrivacyActionsViewModel
 import network.erth.wallet.privacy.tx.PrivateMsgs
@@ -112,6 +113,26 @@ fun EarthApp(
     // reminders (Reminders), acted on by the user.
     LaunchedEffect(walletEpoch) {
         PrivacySession.clear()
+    }
+
+    // A tapped proposal notification opens Govern.
+    val openRequest by Notifications.pendingOpen.collectAsStateWithLifecycle()
+    LaunchedEffect(openRequest) {
+        if (openRequest == Notifications.OPEN_GOVERN) {
+            if (nav.currentTab != EarthRoute.Govern) nav.selectTab(EarthRoute.Govern)
+            Notifications.pendingOpen.value = null
+        }
+    }
+
+    // Asked once, with a wallet in front of the user rather than at first
+    // launch, before there is anything to be told about.
+    val notifyPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) wallet.refresh()
+    }
+    LaunchedEffect(state?.address) {
+        if (!state?.address.isNullOrBlank() && Notifications.shouldAsk(context)) {
+            notifyPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     // Each tab loads when it is first shown rather than all at once on start.
@@ -392,6 +413,7 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.Activity -> "Activity"
     EarthRoute.Settings -> "Settings"
     EarthRoute.Security -> "Unlocking"
+    EarthRoute.Notifications -> "Notifications"
     EarthRoute.Network -> "Network"
     EarthRoute.About -> "About"
     is EarthRoute.Stream -> if (human) "Caretaker Fund" else "Groundworks Fund"

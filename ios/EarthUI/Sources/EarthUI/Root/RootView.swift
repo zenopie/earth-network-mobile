@@ -29,30 +29,27 @@ public struct RootView: View {
                 TabsView()
             }
         }
-        // The overlay goes on *before* the environment, because an overlay is
-        // a sibling of the view it decorates rather than a child of it — put
-        // it after and it sits outside the environment these modifiers inject,
-        // so it cannot see TxController and the app traps on first render.
-        //
         // One confirmation and one result for the whole app, so no screen can
-        // broadcast without them.
-        //
-        // Overlays rather than sheets, for two reasons. A screen that raises a
-        // transaction is usually itself a sheet — Send, Stake — and asking
-        // SwiftUI to present a sheet on an ancestor while a descendant is
-        // dismissing does not reliably present anything. And a sheet's own
-        // dismissal would have to be told apart from a confirmation, which is
-        // the kind of distinction that silently stops working.
-        //
-        // This copy serves everything that raises a transaction from a tab or
-        // a single sheet, which is most of them. An overlay draws inside
-        // the view it decorates, so it cannot appear over a sheet that is still
-        // presented; a flow nested deeper than one sheet hosts its own — see
-        // TxController.Host.
-        .overlay { TxOverlay(host: .root) }
+        // broadcast without them, drawn in a window of their own above every
+        // sheet (see TxOverlay). Not sheets: a screen that raises a
+        // transaction is usually itself a sheet, and presenting one on an
+        // ancestor while a descendant is dismissing does not reliably present
+        // anything.
+        .background(TxWindow(model: model, tx: tx))
         // Here rather than in the App, which EarthUI cannot see: the root
         // view's scene phase is the window's, and the model is here.
         .onChange(of: scenePhase) { _, phase in model.scenePhaseChanged(to: phase) }
+        #if targetEnvironment(simulator)
+        // `-demoConfirm 1` raises a confirmation over whatever is open, to
+        // look at it without the funds to make a real one. Never sent: its run throws.
+        .task {
+            guard UserDefaults.standard.bool(forKey: "demoConfirm") else { return }
+            try? await Task.sleep(for: .seconds(4))
+            tx.requestPrivate(.private(action: "Vote in Groundworks", rows: [("Option A", "60%"), ("Option B", "40%"), ("Sends", "At least 1 transaction")])) { _ in
+                throw PrivacyError("demo")
+            }
+        }
+        #endif
         .environment(model)
         .environment(tx)
         .earthThemed()
@@ -107,7 +104,7 @@ struct TabsView: View {
     @State private var demoSheet = TabsView.demoSheet
 
     enum DemoSheet: String, Identifiable {
-        case settings, wallets, explorer
+        case settings, wallets, explorer, notifications
         var id: String { rawValue }
     }
 
@@ -158,12 +155,22 @@ struct TabsView: View {
         }
         .background(theme.colors.bgPrimary.ignoresSafeArea())
         .task {
-            model.tab = Tab.initialSelection
+            model.tab = EarthNotifications.Router.shared.tab ?? Tab.initialSelection
+            EarthNotifications.Router.shared.tab = nil
+            // Once the wallet is open, not at first launch: a prompt before
+            // there is anything to be notified about is the one people refuse.
+            await EarthNotifications.requestAuthorization()
             await model.loadLPShare()
             // After the chain work, not beside it: the banner is the least
             // important thing on screen and should not compete for the first
             // round trip.
             await update.check()
+        }
+        // A notification tapped while the tabs are up.
+        .onChange(of: EarthNotifications.Router.shared.tab) { _, tab in
+            guard let tab else { return }
+            model.tab = tab
+            EarthNotifications.Router.shared.tab = nil
         }
         .sheet(isPresented: $settingsOpen) { SettingsSheet().earthThemed() }
         .sheet(item: $demoSheet) { sheet in
@@ -171,6 +178,7 @@ struct TabsView: View {
             case .settings: SettingsSheet().earthThemed()
             case .wallets: WalletsScreen().earthThemed()
             case .explorer: ExploreScreen().earthThemed()
+            case .notifications: NotificationsScreen().earthThemed()
             }
         }
     }

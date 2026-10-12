@@ -148,8 +148,13 @@ public struct WalletStore: Sendable {
     /// Asked at launch to decide between the setup flow and the lock screen.
     /// A plain lookup: the vault does not demand the user, and reading it
     /// gives ciphertext, which is no use to anyone without the secret.
+    ///
+    /// A locked device answers errSecInteractionNotAllowed for the vault
+    /// (it is readable only while unlocked), and that is not "no wallet":
+    /// taking it for one sent a phone locked in the background back to setup.
     public var exists: Bool {
-        SecItemCopyMatching(Self.baseQuery as CFDictionary, nil) == errSecSuccess
+        let status = SecItemCopyMatching(Self.baseQuery as CFDictionary, nil)
+        return status == errSecSuccess || status == errSecInteractionNotAllowed
     }
 
     /// Create the vault with a first wallet.

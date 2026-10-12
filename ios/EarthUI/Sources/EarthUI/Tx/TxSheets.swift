@@ -3,19 +3,22 @@ import EarthCore
 import SwiftUI
 
 /// The confirmation, the wait, and the result — in that order, over everything.
+///
+/// Drawn in its own window (`TxWindow`), never inside a screen. An overlay
+/// renders inside the view it decorates, so one on the root sat behind every
+/// sheet, and copies hosted per sheet still lost to whatever was presented or
+/// dismissing above them: Govern's slider editor closing over the pie charts
+/// left the confirmation under the stream sheet. A window above the app's is
+/// above every presentation it can make, so there is one place this draws and
+/// it is always on top.
 struct TxOverlay: View {
     @Environment(TxController.self) private var tx
 
-    /// Which presentation context this copy is attached to. Several are
-    /// mounted at once — the root and any sheet deep enough to need its own —
-    /// and only the one the request named draws anything.
-    let host: TxController.Host
-
-    /// Whether this copy is the one showing something. The scrim keys off it
-    /// rather than off each branch, so moving between confirm -> submitting ->
-    /// result slides the card without flashing the dim behind it.
+    /// Whether anything is showing. The scrim keys off it rather than off each
+    /// branch, so moving between confirm -> submitting -> result slides the
+    /// card without flashing the dim behind it.
     private var presenting: Bool {
-        tx.host == host && (tx.pending != nil || tx.submitting || tx.outcome != nil)
+        tx.isPresenting
     }
 
     var body: some View {
@@ -26,9 +29,7 @@ struct TxOverlay: View {
                     .transition(.opacity)
             }
 
-            if tx.host != host {
-                EmptyView()
-            } else if let details = tx.pending {
+            if let details = tx.pending {
                 TxConfirmSheet(details: details)
                     .transition(.move(edge: .bottom))
             } else if tx.submitting {
@@ -39,6 +40,7 @@ struct TxOverlay: View {
                     .transition(.move(edge: .bottom))
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         // Rises rather than fades, matching Android's ModalBottomSheet. A
         // spring rather than easeInOut because a card that travels the height
         // of a sheet reads as sticky on a linear curve; the low bounce is what
@@ -236,12 +238,10 @@ struct TxResultSheet: View {
 /// `ModalBottomSheet` — full width against the bottom edge, only the top
 /// corners rounded, `bgPrimary` behind it.
 ///
-/// Not a SwiftUI `.sheet`. This is an overlay hosted wherever the request came
-/// from, which is what lets a confirmation raised from inside another sheet
-/// draw over it — a real `.sheet` presented from the root would land *behind*
-/// whatever was already presented, which is the bug `TxController.Host` exists
-/// to route around. The scrim is not here either: it belongs to `TxOverlay`, so
-/// it can stay put while the card slides.
+/// Not a SwiftUI `.sheet`: a `.sheet` presented from the root would land
+/// *behind* whatever was already presented. It draws in `TxWindow`, above
+/// everything. The scrim is not here either: it belongs to `TxOverlay`, so it
+/// can stay put while the card slides.
 struct TxOverlayCard<Content: View>: View {
     @Environment(\.earth) private var theme
     @ViewBuilder var content: Content

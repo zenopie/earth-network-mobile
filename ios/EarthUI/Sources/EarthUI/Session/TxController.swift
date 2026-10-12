@@ -102,44 +102,14 @@ public final class TxController {
         }
     }
 
-    /// Where the confirmation should draw.
-    ///
-    /// The sheets are one overlay, and an overlay renders inside the view it is
-    /// attached to — so an overlay on the root view is *behind* anything
-    /// presented over it. That is invisible until a flow is more than one sheet
-    /// deep: Send and Stake reveal the root overlay by closing themselves,
-    /// while Govern's slider editor sits under a stream sheet that would still
-    /// be covering it.
-    ///
-    /// Dismissing both was tried and is not enough — landing back on the tab
-    /// still drew the confirmation under it. So the confirmation is hosted
-    /// wherever the request came from instead of always at the root, and the
-    /// requester says which. There is still exactly one controller and one
-    /// broadcast path; only the place the card draws moves.
-    public enum Host: Equatable, Sendable {
-        /// The root view, behind no presentation. Everything that raises a
-        /// transaction from a tab or a single sheet.
-        case root
-        /// The allocation stream sheet, which presents the slider editor over
-        /// itself.
-        case allocation
-        /// The identity screen, which is a sheet over the settings sheet — so
-        /// the root's copy draws behind both, the same way it does under the
-        /// stream editor.
-        case identity
-        /// The shielded-notes screen, another sheet over the settings sheet.
-        case notes
-        /// The handle screen, another sheet over the settings sheet.
-        case handle
-    }
-
-    public private(set) var host: Host = .root
-
     /// What is waiting on the confirmation sheet, if anything.
     public private(set) var pending: Details?
     /// What came back, if anything.
     public private(set) var outcome: Outcome?
     public private(set) var submitting = false
+
+    /// Whether a sheet is up: confirm, in flight, or result.
+    public var isPresenting: Bool { pending != nil || submitting || outcome != nil }
 
     /// True while the grant is being asked for and the backend has not
     /// answered. Keeps a second tap from spending a second grant.
@@ -182,7 +152,6 @@ public final class TxController {
     /// cannot be baked in while the sheet sits open.
     public func request(
         _ details: Details,
-        host: Host = .root,
         onSuccess: (() async -> Void)? = nil,
         build: @escaping (EarthKey) async throws -> [ProtoAny]
     ) {
@@ -191,7 +160,6 @@ public final class TxController {
         self.build = build
         self.runPrivate = nil
         self.onSuccess = onSuccess
-        self.host = host
         pending = details
     }
 
@@ -200,7 +168,6 @@ public final class TxController {
     /// PrivacyWallet action) once confirmed.
     public func requestPrivate(
         _ details: Details,
-        host: Host = .root,
         onSuccess: (() async -> Void)? = nil,
         run: @escaping (PrivacyWallet) async throws -> TxResult
     ) {
@@ -211,7 +178,6 @@ public final class TxController {
         self.build = nil
         self.runPrivate = run
         self.onSuccess = onSuccess
-        self.host = host
         pending = d
     }
 
@@ -229,7 +195,6 @@ public final class TxController {
         build = nil
         runPrivate = nil
         onSuccess = nil
-        host = .root
         gasError = nil
     }
 
@@ -428,6 +393,5 @@ public final class TxController {
 
     public func dismissOutcome() {
         outcome = nil
-        host = .root
     }
 }

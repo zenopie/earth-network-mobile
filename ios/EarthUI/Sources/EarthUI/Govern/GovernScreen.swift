@@ -102,6 +102,12 @@ struct GovernScreen: View {
             await streams.load(model: model)
             await ballots
         }
+        #if targetEnvironment(simulator)
+        // `-demoStream groundworks` opens a stream, as `-demoTab` opens a tab.
+        .task {
+            if let name = UserDefaults.standard.string(forKey: "demoStream") { route = .stream(caretaker: name == "caretaker") }
+        }
+        #endif
         // A reminder's tap on Home: straight to where it is done.
         .onChange(of: model.governLink, initial: true) { _, link in
             guard let link else { return }

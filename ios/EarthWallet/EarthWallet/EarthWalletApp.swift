@@ -29,6 +29,9 @@ struct EarthWalletApp: App {
         ChipReader.install()
         DeviceProver.install()
 
+        // Before launch finishes: iOS refuses a background task registered later.
+        EarthNotifications.install()
+
         // Learn the node's minimum gas price before any screen quotes a fee.
         // Fees.forGas is synchronous — it is read while laying out a sheet and
         // while working out a spendable balance — so it answers from cache or a

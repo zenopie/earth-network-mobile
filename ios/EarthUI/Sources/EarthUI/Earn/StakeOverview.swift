@@ -107,6 +107,17 @@ struct StakeOverview: View {
                     .foregroundStyle(line.color)
                     .padding(.top, theme.space.x12)
             }
+            // Shown with balances hidden too: a rate says nothing about what
+            // is held.
+            if let apr = aprLine(cards, total: total) {
+                Text(apr)
+                    .font(EarthType.bodySmall).fontWeight(.medium)
+                    .foregroundStyle(theme.colors.accentInk)
+                    .padding(.horizontal, theme.space.x12)
+                    .padding(.vertical, theme.space.x4)
+                    .background(theme.colors.accentTint, in: .capsule)
+                    .padding(.top, theme.space.x8)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, theme.space.x24)
@@ -121,6 +132,18 @@ struct StakeOverview: View {
         guard daily > 0 else { return ("Not earning", theme.colors.textTertiary) }
         guard model.balancesVisible else { return nil }
         return ("+\(dailyText(daily)) ERTH / day", theme.colors.accentInk)
+    }
+
+    /// What the stake earns a year, weighted across its validators after
+    /// each one's commission; before any stake, what the network pays
+    /// before commission, which is the most any validator can.
+    private func aprLine(_ cards: [StakeCard], total: UInt64) -> String? {
+        if total > 0 {
+            let daily = perDay(cards)
+            guard daily > 0 else { return nil }
+            return "\(Figures.rate(daily * 365 / Double(total))) APR"
+        }
+        return StakingApr.base(bondedUerth: bonded).map { "Up to \(Figures.rate($0)) APR" }
     }
 
     private var bonded: Int64 { Int64(model.totalBonded.description) ?? 0 }
@@ -301,7 +324,7 @@ struct ValidatorStakeSheet: View {
             if let card {
                 HStack(spacing: 6) {
                     StakeDot(status: card.status)
-                    Text(statusWord(card))
+                    Text([statusWord(card), apr(card)].compactMap { $0 }.joined(separator: " · "))
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
                 }
@@ -352,6 +375,14 @@ struct ValidatorStakeSheet: View {
         .background(theme.colors.bgPrimary)
         .presentationDetents([.height(420)])
         .presentationDragIndicator(.visible)
+    }
+
+    /// This validator's rate after its commission, while stake here earns.
+    private func apr(_ c: StakeCard) -> String? {
+        guard c.status == .earning else { return nil }
+        return StakingApr.forValidator(bondedUerth: Int64(model.totalBonded.description) ?? 0,
+                                       commission: model.commission(of: c.validator) ?? 0)
+            .map { "\(Figures.rate($0)) APR" }
     }
 
     private func statusWord(_ c: StakeCard) -> String {

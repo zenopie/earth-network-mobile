@@ -334,7 +334,7 @@ private fun AprLine(label: String, value: String) {
  * a hundredth of a percent it says so rather than rounding to a flat 0.00%,
  * which reads as "none" when it means "very small".
  */
-private fun Double.asPercent(): String {
+internal fun Double.asPercent(): String {
     val pct = this * 100
     return when {
         pct == 0.0 -> "0%"

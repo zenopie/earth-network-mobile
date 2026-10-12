@@ -14,7 +14,9 @@ import network.erth.wallet.Constants
 import network.erth.wallet.chain.Bank
 import network.erth.wallet.chain.Explorer
 import network.erth.wallet.chain.SentTxLog
+import network.erth.wallet.notify.Notifications
 import network.erth.wallet.privacy.PrivacySession
+import network.erth.wallet.privacy.chain.LcdChainRoots
 import network.erth.wallet.privacy.sync.WalletSync
 import network.erth.wallet.privacy.tx.ShieldMove
 import network.erth.wallet.chain.Staking
@@ -54,6 +56,9 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
     fun refresh(): Job {
         return viewModelScope.launch {
             val ctx = getApplication<Application>()
+            // Public, and nothing about this wallet: the open proposals. Its
+            // own job, so a pull's spinner does not wait on it.
+            viewModelScope.launch(Dispatchers.IO) { runCatching { Notifications.checkProposals(ctx) } }
             val address = withContext(Dispatchers.IO) {
                 runCatching { SecureWalletManager.getWalletAddress(ctx) }.getOrNull()
             }
@@ -85,10 +90,16 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                 // A sync error, else roots the chain has not vouched for
                 // (no private tx is built on them), else a registration
                 // whose leaf did not match: each is shown, none is hidden.
+                val syncFailure = privacy?.let { w -> runCatching { w.sync() }.exceptionOrNull() }
                 val syncError = privacy?.let { w ->
-                    runCatching { w.sync() }.exceptionOrNull()?.message
+                    syncFailure?.message
                         ?: w.store.state.rootsError?.takeIf { !w.store.state.rootsVerified }
                         ?: w.pendingRegistration?.failure
+                }
+                // Only a sync that went through says whether the registration
+                // is live; without one the claim alarms stay as they are.
+                if (privacy != null && syncFailure == null) {
+                    runCatching { Notifications.syncAnml(ctx, runCatching { privacy.claimOpensAt() }.getOrNull()) }
                 }
                 val shielded = privacy?.balances().orEmpty()
 
@@ -119,6 +130,8 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                     unshieldableErthUerth = privacy?.let {
                         ShieldMove.maxUnshield(it.notes, runCatching { it.maxActions() }.getOrDefault(DEFAULT_MAX_ACTIONS))
                     } ?: 0L,
+                    syncedHeight = privacy?.store?.state?.notesHeight?.takeIf { it > 0 },
+                    tipHeight = runCatching { LcdChainRoots.latestHeight() }.getOrNull(),
                 )
             }
             _state.value = loaded
