@@ -27,6 +27,8 @@ struct StreamDetailScreen: View {
 
     @State private var lens = Lens.actual
     @State private var editing = false
+    @State private var addingOption = false
+    @State private var opened: Allocation.OptionInfo?
 
     var body: some View {
         NavigationStack {
@@ -47,7 +49,9 @@ struct StreamDetailScreen: View {
                     .frame(maxWidth: .infinity)
 
                     Spacer().frame(height: theme.space.x16)
-                    PieLegend(slices: slices)
+                    PieLegend(slices: slices, unallocated: unallocated) { slice in
+                        opened = state.stream.options.first { $0.id == slice.optionID }
+                    }
 
                     if let caption {
                         Spacer().frame(height: theme.space.x16)
@@ -73,6 +77,15 @@ struct StreamDetailScreen: View {
                             editing = true
                         }
                     }
+                    // Open to anyone on the caretaker stream (a fee is burned);
+                    // groundworks options come only through governance.
+                    if stream == .caretaker {
+                        Button("Add an option") { addingOption = true }
+                            .font(EarthType.body).fontWeight(.semibold)
+                            .foregroundStyle(theme.colors.accentInk)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, theme.space.x24)
+                    }
                     Spacer().frame(height: theme.space.x32)
                 }
                 .padding(.horizontal, theme.space.gutter)
@@ -82,6 +95,23 @@ struct StreamDetailScreen: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
+            #if targetEnvironment(simulator)
+            // `-demoAddOption 1` opens the add sheet, as `-demoStream` opens this screen.
+            .task {
+                if UserDefaults.standard.bool(forKey: "demoAddOption") { addingOption = true }
+                // `-demoOption 1` opens the first option's detail.
+                if UserDefaults.standard.bool(forKey: "demoOption") { opened = state.stream.options.first }
+            }
+            #endif
+            .sheet(item: $opened) { option in
+                OptionDetailSheet(option: option, rewardIndex: state.stream.rewardIndex, onClaimed: onChanged, stream: stream,
+                                  share: state.actualSlices.first { $0.optionID == option.id }?.percent ?? 0,
+                                  mine: state.slices.first { $0.optionID == option.id }?.percent)
+                    .earthThemed()
+            }
+            .sheet(isPresented: $addingOption) {
+                AddCaretakerOptionSheet(onAdded: onChanged).earthThemed()
+            }
             .sheet(isPresented: $editing) {
                 AllocationEditSheet(stream: stream, state: state, onChanged: onChanged)
                     .earthThemed()
@@ -115,6 +145,15 @@ struct StreamDetailScreen: View {
 
     private var slices: [AllocationSlice] {
         lens == .actual ? state.actualSlices : state.slices
+    }
+
+    /// Live options with no share, under Actual only: Preferred is your own
+    /// split, where an option you gave nothing is not part of it.
+    private var unallocated: [AllocationSlice] {
+        guard lens == .actual else { return [] }
+        let shown = Set(slices.compactMap(\.optionID))
+        return state.stream.options.filter { !$0.removed && !shown.contains($0.id) }
+            .map { AllocationSlice(name: $0.displayName, percent: 0, optionID: $0.id, detail: $0.source) }
     }
 
     /// One line, only when the chart cannot say it: why you cannot vote, or
@@ -205,8 +244,7 @@ struct GroundworksVoteControls: View {
 
     private func rows(_ split: [UInt64: UInt64]) -> [(String, String)] {
         split.sorted { $0.value > $1.value }.map { id, pct in
-            let d = state.stream.options.first { $0.id == id }?.description ?? ""
-            return (d.isEmpty ? "Option \(id)" : d, "\(pct)%")
+            return (state.stream.options.first { $0.id == id }?.displayName ?? "Option \(id)", "\(pct)%")
         }
     }
 
@@ -261,9 +299,15 @@ struct AllocationEditSheet: View {
                     ForEach(state.stream.options.filter { !$0.removed }) { option in
                         VStack(alignment: .leading, spacing: theme.space.x4) {
                             HStack {
-                                Text(option.description.isEmpty ? "Option \(option.id)" : option.description)
-                                    .font(EarthType.body)
-                                    .foregroundStyle(theme.colors.textPrimary)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(option.displayName)
+                                        .font(EarthType.body)
+                                        .foregroundStyle(theme.colors.textPrimary)
+                                        .lineLimit(3)
+                                    Text(option.source)
+                                        .font(EarthType.caption)
+                                        .foregroundStyle(theme.colors.textTertiary)
+                                }
                                 Spacer()
                                 Text("\(Int(weights[option.id] ?? 0))%")
                                     .font(EarthType.amount)
@@ -346,8 +390,7 @@ struct AllocationEditSheet: View {
     }
 
     private func label(_ optionID: UInt64) -> String {
-        let description = state.stream.options.first { $0.id == optionID }?.description ?? ""
-        return description.isEmpty ? "Option \(optionID)" : description
+        state.stream.options.first { $0.id == optionID }?.displayName ?? "Option \(optionID)"
     }
 }
 
@@ -355,19 +398,13 @@ struct AllocationEditSheet: View {
 struct ProposalsScreen: View {
     @Environment(\.earth) private var theme
     @Environment(\.dismiss) private var dismiss
-    @Environment(AppModel.self) private var model
 
     let proposals: [Gov.Proposal]
-    /// For the removal ballots, which name its options.
-    let groundworks: Allocation.Stream
-
-    enum Destination: Hashable { case proposeRemoval }
 
     @State private var path = NavigationPath()
 
-    init(proposals: [Gov.Proposal], groundworks: Allocation.Stream) {
+    init(proposals: [Gov.Proposal]) {
         self.proposals = proposals
-        self.groundworks = groundworks
         #if targetEnvironment(simulator)
         // `-demoProposal 1` opens the newest proposal, as `-demoStream` opens this list.
         if UserDefaults.standard.bool(forKey: "demoProposal"), let p = proposals.first {
@@ -380,12 +417,7 @@ struct ProposalsScreen: View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: theme.space.x8) {
-                    // Open removal ballots first: rare, and each one is open
-                    // for days, not the weeks a proposal list covers.
-                    ForEach(model.removalBallots) { b in
-                        RemovalBallotCard(ballot: b, groundworks: groundworks, onDone: { dismiss() })
-                    }
-                    if proposals.isEmpty && model.removalBallots.isEmpty {
+                    if proposals.isEmpty {
                         Text("No proposals yet")
                             .font(EarthType.body)
                             .foregroundStyle(theme.colors.textTertiary)
@@ -400,16 +432,6 @@ struct ProposalsScreen: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    if model.isRegistered {
-                        NavigationLink(value: Destination.proposeRemoval) {
-                            Text("Propose removing a Groundworks option")
-                                .font(EarthType.bodySmall).fontWeight(.semibold)
-                                .foregroundStyle(theme.colors.accentInk)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, theme.space.x16)
-                        }
-                        .buttonStyle(.plain)
-                    }
                 }
                 .padding(theme.space.gutter)
             }
@@ -418,18 +440,11 @@ struct ProposalsScreen: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
-            .refreshable { await model.refreshRemovalBallots() }
-            .task {
-                await model.refreshRemovalBallots()
-            }
             .navigationDestination(for: Gov.Proposal.self) { proposal in
                 // `onVoted` closes this sheet rather than popping the push:
                 // dismiss() inside a pushed view pops, which would leave the
                 // list on screen behind the confirmation.
                 ProposalDetailScreen(proposal: proposal, onVoted: { dismiss() })
-            }
-            .navigationDestination(for: Destination.self) { _ in
-                ProposeRemovalScreen(groundworks: groundworks, onDone: { dismiss() })
             }
         }
     }

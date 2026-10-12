@@ -259,72 +259,193 @@ struct HandleScreen: View {
     }
 }
 
-/// A voluntary switch of identity: the same passport registered to another
-/// of this phone's wallets (its next identity). The chain zeroes the live leaf
-/// and makes a new one. Once the switch has landed, the new identity can bring
-/// this one's handle and caretaker vote over (`MoveOfferCard`, on Identity
-/// where it registered): a move proves knowledge of both identities' secrets,
-/// so it comes after the switch and needs both on this phone.
+/// Move your person to another wallet: the same passport registered to
+/// another of this phone's wallets (its next identity). The chain zeroes this
+/// wallet's leaf and makes a new one there. Afterwards the new wallet's
+/// Identity offers to bring the handle and caretaker vote over
+/// (`MoveOfferCard`): a move proves knowledge of both identities' secrets, so
+/// it comes after the switch and needs both on this phone.
+///
+/// Two steps: where to (a new wallet, or one already here), then the passport
+/// scan. A new wallet's phrase is backed up as it is created; for an existing
+/// one its owner says they have its phrase, since moving into a wallet that
+/// cannot be recovered loses the person with it.
 ///
 /// Not offered: a fresh identity in this same wallet. It derives from the same
 /// phrase, so it helps only if an identity secret leaked by itself off the
 /// phone, never for a lost phone or an exposed phrase, which is what anyone
 /// reaching for this screen is afraid of. Renewal still registers the next
 /// identity here; that path is Identity's, not this one.
-///
-/// Another wallet's recovery phrase is shown after a fresh unlock and dropped
-/// when the app leaves the foreground or the screen closes; the backup box
-/// needs the phrase shown first.
 struct SwitchIdentityScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var target: Int?
-    @State private var backedUp = false
-    @State private var confirming = false
-    @State private var phrase: String?
-    @State private var revealedFor: Int?
+    /// Step two's wallet, once chosen; nil on step one.
+    @State private var target: Target?
+    @State private var hasPhrase = false
     @State private var adding = false
+    /// Wallet count before creating one: a larger count after means it was made.
+    @State private var countBeforeAdding = 0
     @State private var registering = false
     @State private var targetWarning: String?
-    /// One step only: what this identity's predecessor still holds that has not moved here.
+    /// What this identity's predecessor still holds that has not moved here.
     @State private var unmoved: String?
     @State private var strandAccepted = false
     @State private var handleOpen = false
 
+    struct Target: Equatable {
+        let index: Int
+        let name: String
+        /// Made just now, its phrase shown and confirmed on the way.
+        let created: Bool
+    }
+
     var body: some View {
         NavigationStack {
-            Group {
-                if confirming {
-                    ConfirmIdentity(reason: "Show the new wallet's recovery phrase") { confirmation in
-                        if let t = target, confirmation.wallets.indices.contains(t) { phrase = confirmation.wallets[t].mnemonic; revealedFor = t }
-                        confirming = false
-                    }
-                } else {
-                    form
+            ScrollView {
+                VStack(spacing: 0) {
+                    if let target { scan(target) } else { whereTo }
                 }
+                .padding(.horizontal, theme.space.gutter)
+                .padding(.bottom, theme.space.x32)
             }
-            .navigationTitle("Switch identity")
+            .scrollContentBackground(.hidden)
+            .navigationTitle("Move to another wallet")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button(confirming ? "Cancel" : "Done") { if confirming { confirming = false } else { dismiss() } } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .task {
                 model.loadWallets(); await model.refreshPersonal()
                 if let o = await model.moveOffer(), o.anything {
                     let what = [o.handle.isEmpty ? nil : "@\(o.handle)", o.voteLive ? "your caretaker vote" : nil].compactMap { $0 }.joined(separator: " and ")
                     let held = what.isEmpty ? "a move in flight" : what
-                    unmoved = o.withinWallet ? "Your previous identity still holds \(held)"
-                        : "\(o.fromName) still holds \(held)"
+                    unmoved = o.withinWallet ? "Your previous identity still holds \(held)" : "\(o.fromName) still holds \(held)"
                 }
             }
-            .onChange(of: scenePhase) { if scenePhase != .active { phrase = nil } }
-            .onDisappear { phrase = nil }
-            .sheet(isPresented: $adding) { AddWalletSheet(mode: .create).earthThemed() }
+            .sheet(isPresented: $adding, onDismiss: {
+                // Creating selects the new wallet: it is the target.
+                guard model.wallets.count > countBeforeAdding, model.wallets.indices.contains(model.selected) else { return }
+                choose(Target(index: model.selected, name: model.wallets[model.selected].name, created: true))
+            }) { AddWalletSheet(mode: .create).earthThemed() }
             .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
             .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
         }
     }
+
+    // MARK: - step one
+
+    @ViewBuilder
+    private var whereTo: some View {
+        Hero(title: "Where to?", line: ("This wallet stops counting as you", theme.colors.textTertiary))
+        VStack(alignment: .leading, spacing: theme.space.x12) {
+            if let renewFirst {
+                Caption(renewFirst, error: true)
+                Button("Renew first") {
+                    let handleSoon = Self.renewSoonText(handle: model.handle, handleExpiresAt: model.handleEntry?.expiresAt ?? 0, voteExpiresAt: 0,
+                                                        now: Int64(Date().timeIntervalSince1970)) != nil
+                    if handleSoon { handleOpen = true } else { model.governLink = .caretaker; model.tab = .govern; dismiss() }
+                }
+                .font(EarthType.body).fontWeight(.semibold)
+                .foregroundStyle(theme.colors.accentInk)
+            }
+            if let unmoved {
+                // A move goes only from an identity to the one that replaced it,
+                // so after another switch it can never move.
+                Caption("\(unmoved). Moving strands it.", error: true)
+                Toggle("Move anyway", isOn: $strandAccepted)
+                    .tint(theme.colors.brandButtonBg)
+            }
+
+            option("New wallet", "Recommended", symbol: "plus") {
+                countBeforeAdding = model.wallets.count
+                adding = true
+            }
+            ForEach(model.wallets.enumerated().filter { $0.offset != model.selected }, id: \.offset) { index, w in
+                option(w.name, w.address, symbol: nil) {
+                    choose(Target(index: index, name: w.name, created: false))
+                }
+            }
+        }
+        .padding(.top, theme.space.x32)
+        .disabled(unmoved != nil && !strandAccepted)
+    }
+
+    private func option(_ title: String, _ subtitle: String, symbol: String?, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: theme.space.x12) {
+                Group {
+                    if let symbol {
+                        Image(systemName: symbol).font(.system(size: 17, weight: .bold))
+                    } else {
+                        Text(String(title.prefix(1)).uppercased()).font(.system(size: 17, weight: .bold))
+                    }
+                }
+                .foregroundStyle(theme.colors.accentInk)
+                .frame(width: 44, height: 44)
+                .background(theme.colors.accentTint, in: .circle)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(EarthType.body).fontWeight(.semibold).foregroundStyle(theme.colors.textPrimary).lineLimit(1)
+                    Text(subtitle).font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary).lineLimit(1).truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
+            .padding(theme.space.x12)
+            .background(theme.colors.bgSecondary, in: .rect(cornerRadius: 20))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func choose(_ t: Target) {
+        target = t
+        hasPhrase = t.created
+        guard let info = model.switchTargetInfo(ofWallet: t.index) else { targetWarning = nil; return }
+        // What a move after the switch could not bring there, said up front.
+        if info.handleRefusal != nil || info.voteRefusal != nil {
+            targetWarning = [info.handleRefusal.map { "Handle can't move there: \($0)" },
+                             info.voteRefusal.map { "Vote can't move there: \($0)" }]
+                .compactMap { $0 }.joined(separator: "\n")
+        } else if info.live {
+            // Its current identity keeps what it holds unless moved.
+            targetWarning = "Replaces that wallet's own registration"
+        } else {
+            // A registration from the last two days that lands first refuses this switch.
+            targetWarning = info.registered ? "Its pending registration may block this" : nil
+        }
+    }
+
+    // MARK: - step two
+
+    @ViewBuilder
+    private func scan(_ t: Target) -> some View {
+        Hero(title: "Scan your passport", line: ("\(t.name) will count as you", theme.colors.textTertiary))
+        VStack(spacing: theme.space.x16) {
+            if let targetWarning { Caption(targetWarning) }
+            if !t.created {
+                Toggle("I have \(t.name)'s phrase", isOn: $hasPhrase)
+                    .tint(theme.colors.brandButtonBg)
+            }
+            EarthPillButton(title: "Scan passport") {
+                // The target registers the same passport to its next identity.
+                Task {
+                    if model.selected != t.index { await model.select(t.index) }
+                    registering = true
+                }
+            }
+            .disabled(!hasPhrase)
+            if !t.created {
+                Button("Back") { target = nil }
+                    .font(EarthType.body).fontWeight(.semibold)
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
+        }
+        .padding(.top, theme.space.x32)
+    }
+
+    // MARK: - renew first
 
     /// What this identity holds whose lease ends soon: renewed first (it still
     /// can), its move after the switch has a full lease to land in.
@@ -346,112 +467,7 @@ struct SwitchIdentityScreen: View {
             voteExpiresAt > now && voteExpiresAt < soon ? "your vote" : nil,
         ].compactMap { $0 }
         guard !what.isEmpty else { return nil }
-        return "Renew \(what.joined(separator: " and ")) before switching"
-    }
-
-    private func pick(_ index: Int) {
-        target = index; phrase = nil; backedUp = false
-        guard let info = model.switchTargetInfo(ofWallet: index) else { targetWarning = nil; return }
-        // What a move after the switch could not bring there, said up front.
-        // Any wallet can be a target: it registers its next unused identity.
-        if info.handleRefusal != nil || info.voteRefusal != nil {
-            targetWarning = [info.handleRefusal.map { "Handle can't move there: \($0)" },
-                             info.voteRefusal.map { "Vote can't move there: \($0)" }]
-                .compactMap { $0 }.joined(separator: "\n")
-        } else if info.live {
-            // Its current identity keeps what it holds unless moved.
-            targetWarning = "Replaces that wallet's live identity"
-        } else {
-            // A registration from the last two days that lands first refuses this switch.
-            targetWarning = info.registered ? "Its pending registration may block this" : nil
-        }
-    }
-
-    private var form: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                Hero(title: "New identity", line: ("Move your passport to another wallet", theme.colors.textTertiary))
-                VStack(alignment: .leading, spacing: theme.space.x12) { options }
-                    .padding(.top, theme.space.x32)
-            }
-            .padding(.horizontal, theme.space.gutter)
-            .padding(.bottom, theme.space.x32)
-        }
-        .scrollContentBackground(.hidden)
-    }
-
-    @ViewBuilder
-    private var options: some View {
-        if let renewFirst {
-            Caption(renewFirst, error: true)
-            EarthPillButton(title: "Renew first", role: .secondary) {
-                let handleSoon = Self.renewSoonText(handle: model.handle, handleExpiresAt: model.handleEntry?.expiresAt ?? 0, voteExpiresAt: 0,
-                                                    now: Int64(Date().timeIntervalSince1970)) != nil
-                if handleSoon { handleOpen = true } else { model.governLink = .caretaker; model.tab = .govern; dismiss() }
-            }
-        }
-        if let unmoved {
-            // A move goes only from an identity to the one that replaced it, so
-            // after another switch it can never move.
-            Caption("\(unmoved). Switching strands it for good.", error: true)
-            Toggle("Switch anyway", isOn: $strandAccepted)
-        }
-        EarthLabel("Switch to")
-        let others = model.wallets.enumerated().filter { $0.offset != model.selected }
-        ForEach(others, id: \.offset) { index, w in
-            choice(title: w.name, subtitle: w.address, selected: target == index) {
-                if target != index { pick(index) }
-            }
-        }
-        if others.isEmpty {
-            Caption("No other wallets on this phone")
-        }
-        if let targetWarning {
-            Caption(targetWarning)
-        }
-        EarthPillButton(title: "Create a new wallet", role: .secondary) { adding = true }
-        // Ticked only once the phrase was shown for this target.
-        let canTick = target != nil && revealedFor == target
-        if let phrase {
-            SeedGrid(words: phrase.split(separator: " ").map(String.init))
-            Caption("Write down in order. Keep offline.")
-        }
-        EarthPillButton(title: phrase == nil ? "Show recovery phrase" : "Hide recovery phrase", role: .secondary) {
-            if phrase == nil { confirming = true } else { phrase = nil }
-        }
-        .disabled(target == nil)
-        Toggle(canTick ? "I backed up the phrase" : "Show the phrase first",
-               isOn: Binding(get: { backedUp && canTick }, set: { backedUp = $0 }))
-            .disabled(!canTick)
-        EarthPillButton(title: "Switch") {
-            guard let t = target else { return }
-            // The target registers the same passport to its next identity.
-            Task { await model.select(t); registering = true }
-        }
-        .disabled(!(target != nil && backedUp && canTick && (unmoved == nil || strandAccepted)))
-        .padding(.top, theme.space.x8)
-        // The old identity no longer counts once registered elsewhere; a lost
-        // phrase leaves its handle and vote to wait out their leases.
-        Caption("This identity stops counting. Move handle and vote after.")
-            .frame(maxWidth: .infinity)
-    }
-
-    private func choice(title: String, subtitle: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: theme.space.x12) {
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22))
-                    .foregroundStyle(theme.colors.accentInk)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(EarthType.body).fontWeight(.semibold).foregroundStyle(theme.colors.textPrimary).lineLimit(1)
-                    Text(subtitle).font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary).lineLimit(1).truncationMode(.middle)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, theme.space.x8)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
+        return "Renew \(what.joined(separator: " and ")) before moving"
     }
 }
 

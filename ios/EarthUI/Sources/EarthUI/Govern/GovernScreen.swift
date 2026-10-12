@@ -73,21 +73,10 @@ struct GovernScreen: View {
             }
             .padding(.horizontal, theme.space.gutter)
         }
-        // Removal ballots with the streams: opened and closed by other people
-        // at any time, so the row's count is re-read on every appearance and
-        // pull rather than only when the sheet opens.
-        .refreshable {
-            async let ballots: Void = model.refreshRemovalBallots()
-            await streams.load(model: model)
-            await ballots
-        }
+        .refreshable { await streams.load(model: model) }
         .background(theme.colors.bgPrimary)
         .scrollContentBackground(.hidden)
-        .task {
-            async let ballots: Void = model.refreshRemovalBallots()
-            await streams.load(model: model)
-            await ballots
-        }
+        .task { await streams.load(model: model) }
         #if targetEnvironment(simulator)
         // `-demoStream groundworks` opens a stream, as `-demoTab` opens a tab.
         .task {
@@ -118,15 +107,14 @@ struct GovernScreen: View {
                 )
                 .earthThemed()
             case .proposals:
-                ProposalsScreen(proposals: streams.proposals, groundworks: streams.groundworks.stream).earthThemed()
+                ProposalsScreen(proposals: streams.proposals).earthThemed()
             }
         }
     }
 
     private var proposalStatus: String? {
         guard streams.loaded else { return nil }
-        // Open removal ballots count with the proposals they are listed among.
-        let live = streams.proposals.filter { $0.status == "PROPOSAL_STATUS_VOTING_PERIOD" }.count + model.removalBallots.count
+        let live = streams.proposals.filter { $0.status == "PROPOSAL_STATUS_VOTING_PERIOD" }.count
         if live > 0 { return Figures.count(live, "open for voting", "open for voting") }
         return streams.proposals.isEmpty ? "None yet" : "\(streams.proposals.count) closed"
     }
@@ -151,7 +139,7 @@ final class StreamsModel {
             guard total > 0 else { return [] }
             let percents = Self.apportion(weights, total: total)
             return zip(stream.options, percents).compactMap { option, percent in
-                percent > 0 ? AllocationSlice(name: option.description, percent: percent) : nil
+                percent > 0 ? AllocationSlice(name: option.displayName, percent: percent, optionID: option.id, detail: option.source) : nil
             }
             .sorted { $0.percent > $1.percent }
         }
@@ -190,7 +178,7 @@ final class StreamsModel {
             stream.options.compactMap { option in
                 guard let weight = mine.first(where: { $0.optionID == option.id })?.percent,
                       weight > 0 else { return nil }
-                return AllocationSlice(name: option.description, percent: Int(weight))
+                return AllocationSlice(name: option.displayName, percent: Int(weight), optionID: option.id, detail: option.source)
             }
             .sorted { $0.percent > $1.percent }
         }

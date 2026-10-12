@@ -104,7 +104,7 @@ struct TabsView: View {
     @State private var demoSheet = TabsView.demoSheet
 
     enum DemoSheet: String, Identifiable {
-        case settings, wallets, explorer, notifications, identity, about, handle, notes, security, network
+        case settings, wallets, explorer, notifications, identity, about, handle, notes, security, network, move
         var id: String { rawValue }
     }
 
@@ -185,6 +185,7 @@ struct TabsView: View {
             case .notes: NotesScreen().earthThemed()
             case .security: SecurityScreen().earthThemed()
             case .network: NetworkScreen().earthThemed()
+            case .move: SwitchIdentityScreen().earthThemed()
             }
         }
     }

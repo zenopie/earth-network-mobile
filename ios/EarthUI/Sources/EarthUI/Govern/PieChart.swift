@@ -4,8 +4,12 @@ import SwiftUI
 struct AllocationSlice: Identifiable, Equatable {
     let name: String
     let percent: Int
+    /// The option it is, for opening its detail (nil: not an option).
+    var optionID: UInt64? = nil
+    /// Under the name: built in, or the address a listed option pays.
+    var detail: String? = nil
 
-    var id: String { name }
+    var id: String { optionID.map { "option-\($0)" } ?? name }
 }
 
 /// A share of a whole, as a ring.
@@ -116,32 +120,78 @@ struct PieChart: View {
 struct PieLegend: View {
     @Environment(\.earth) private var theme
     let slices: [AllocationSlice]
+    /// Options with no share, listed after the chart's: a new option has no
+    /// arc, and would otherwise be nowhere to be found. Grey dots.
+    var unallocated: [AllocationSlice] = []
+    /// A row was tapped; nil leaves the rows plain.
+    var onTap: ((AllocationSlice) -> Void)? = nil
+    /// Unvoted options stay folded: anyone can list one, so they can be many.
+    @State private var showUnallocated = false
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(slices.enumerated()), id: \.element.id) { index, slice in
-                HStack(spacing: theme.space.x4) {
-                    Circle()
-                        .fill(Palette.Series.slot(index))
-                        .frame(width: 10, height: 10)
-                    Text(slice.name)
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textPrimary)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("\(slice.percent)%")
-                        .font(EarthType.bodySmall).fontWeight(.semibold)
-                        .foregroundStyle(theme.colors.textSecondary)
-                }
-                .padding(.vertical, theme.space.x4)
+                row(slice, dot: Palette.Series.slot(index))
             }
-            if slices.isEmpty {
+            if !unallocated.isEmpty {
+                Button(showUnallocated ? "Hide options with no votes" : "Show \(unallocated.count) with no votes") {
+                    showUnallocated.toggle()
+                }
+                .font(EarthType.bodySmall).fontWeight(.semibold)
+                .foregroundStyle(theme.colors.accentInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, theme.space.x8)
+                if showUnallocated {
+                    ForEach(unallocated) { slice in
+                        row(slice, dot: theme.colors.bgTertiary)
+                    }
+                }
+            }
+            if slices.isEmpty && unallocated.isEmpty {
                 Spacer().frame(height: theme.space.x8)
                 Text("Nothing allocated.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ slice: AllocationSlice, dot: Color) -> some View {
+        let content = HStack(spacing: theme.space.x4) {
+            Circle()
+                .fill(dot)
+                .frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(slice.name)
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textPrimary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                if let detail = slice.detail {
+                    Text(detail)
+                        .font(EarthType.caption)
+                        .foregroundStyle(theme.colors.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text("\(slice.percent)%")
+                .font(EarthType.bodySmall).fontWeight(.semibold)
+                .foregroundStyle(theme.colors.textSecondary)
+            if onTap != nil, slice.optionID != nil {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
+        }
+        .padding(.vertical, theme.space.x8)
+        .contentShape(.rect)
+        if let onTap, slice.optionID != nil {
+            Button { onTap(slice) } label: { content }.buttonStyle(.plain)
+        } else {
+            content
         }
     }
 }

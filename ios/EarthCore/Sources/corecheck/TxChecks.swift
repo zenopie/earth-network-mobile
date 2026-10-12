@@ -47,6 +47,20 @@ func checkTransactions(writingTo artifacts: URL) {
         "0807122c6561727468317337726773636c7476773876336b7a686a34367070746471673834336e6773377468397977701803"
     )
     Check.equal("MsgVote type url", Msg.Vote.typeURL, "/cosmos.gov.v1.MsgVote")
+    // MsgAddAddressOption against x/allocation's own Marshal (gogoproto),
+    // run once in the chain repo: the stream enum is 1 for caretaker and an
+    // empty claimer is elided.
+    Check.equal(
+        "MsgAddAddressOption",
+        Msg.AddAddressOption(submitter: "earth1submitter", stream: .caretaker,
+                             description: "Clean water · Lagos", recipient: "earth1recipient").encoded().hexString,
+        "0a0f6561727468317375626d697474657210011a14436c65616e20776174657220c2b7204c61676f73220f656172746831726563697069656e74"
+    )
+    Check.equal(
+        "MsgClaimAllocation",
+        Msg.ClaimAllocation(creator: "earth1creator", stream: .caretaker, optionID: 7).encoded().hexString,
+        "0a0d65617274683163726561746f7210011807"
+    )
     // Yes is 1, not 0. The proto enum reserves 0 for unspecified, and a zero
     // would be elided as a default — leaving a vote with no option on it.
     Check.equal("vote options match the proto enum",

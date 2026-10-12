@@ -167,7 +167,7 @@ struct IdentityScreen: View {
                     VStack(spacing: theme.space.x12) {
                         if model.isRegistered {
                             EarthPillButton(title: model.handle.isEmpty ? "Claim a handle" : "@\(model.handle)") { handleOpen = true }
-                            EarthPillButton(title: "Switch identity", role: .secondary) { switching = true }
+                            EarthPillButton(title: "Move to another wallet", role: .secondary) { switching = true }
                             if let moveOffer, moveOffer.anything {
                                 MoveOfferCard(offer: moveOffer) { self.moveOffer = await model.moveOffer() }
                             }

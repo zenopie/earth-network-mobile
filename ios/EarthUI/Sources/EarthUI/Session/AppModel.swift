@@ -73,8 +73,6 @@ public final class AppModel {
     public private(set) var stakeHoldings: [PrivacyWallet.StakeHolding] = []
     /// The chain's label window as last read (0: never): how long moved stake stays put.
     public private(set) var labelWindowSeconds: UInt64 = 0
-    /// x/assembly's open removal ballots.
-    public private(set) var removalBallots: [PrivacyReads.RemovalBallot] = []
     /// Live rate_v (ERTH per derth) of every validator with a book, from the
     /// validator list (read whole, so no read names which ones this wallet
     /// holds). Missing until the first read lands.
@@ -1017,7 +1015,6 @@ public final class AppModel {
         let queries = PrivacyQueries(rest: client.rest)
         await refreshGroundworks()
         await refreshStakeHoldings()
-        await refreshRemovalBallots()
         // The list the sync just read.
         applyValidatorList(PrivacyQueries.cachedValidators)
         if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds; registrationValiditySeconds = p.registrationValiditySeconds }
@@ -1266,13 +1263,6 @@ public final class AppModel {
         return try PrivacyKeys.fromMnemonic(wallets[index].mnemonic)
     }
 
-
-    /// x/assembly's open removal ballots, on their own: public and cheap, so
-    /// the Govern tab re-reads them on every appearance and pull rather than
-    /// waiting on a full privacy sync.
-    func refreshRemovalBallots() async {
-        if let ballots = try? await PrivacyQueries(rest: client.rest).removalBallots() { removalBallots = ballots }
-    }
 
     /// The validator list (Query/Validators, read whole: every sync, every
     /// quote and every refresh): names, rates and who takes stake, for every

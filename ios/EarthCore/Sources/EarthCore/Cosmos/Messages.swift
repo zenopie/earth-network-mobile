@@ -112,6 +112,51 @@ public enum Msg {
         case groundworks = 2
     }
 
+    /// Lists an address as an option in a stream. On the caretaker stream it
+    /// is open to any account, which burns params.address_option_fee from its
+    /// own balance; on groundworks only governance may, so a wallet never
+    /// sends it there. An empty claimer lets anyone trigger the payout, which
+    /// goes to `recipient` regardless.
+    public struct AddAddressOption: ProtoMessage {
+        public static let typeURL = "/earth.allocation.v1.MsgAddAddressOption"
+        public let submitter: String, stream: StreamID, description: String, recipient: String, claimer: String
+
+        public init(submitter: String, stream: StreamID, description: String, recipient: String, claimer: String = "") {
+            self.submitter = submitter; self.stream = stream; self.description = description
+            self.recipient = recipient; self.claimer = claimer
+        }
+
+        public func encoded() -> Data {
+            var w = ProtoWriter()
+            w.string(1, submitter)
+            w.enumValue(2, stream.rawValue)
+            w.string(3, description)
+            w.string(4, recipient)
+            w.string(5, claimer)
+            return w.data
+        }
+    }
+
+    /// Pays an ADDRESS option's balance to its recipient. Anyone may send it
+    /// unless the option names a claimer; the payout goes to the recipient
+    /// regardless of who signs.
+    public struct ClaimAllocation: ProtoMessage {
+        public static let typeURL = "/earth.allocation.v1.MsgClaimAllocation"
+        public let creator: String, stream: StreamID, optionID: UInt64
+
+        public init(creator: String, stream: StreamID, optionID: UInt64) {
+            self.creator = creator; self.stream = stream; self.optionID = optionID
+        }
+
+        public func encoded() -> Data {
+            var w = ProtoWriter()
+            w.string(1, creator)
+            w.enumValue(2, stream.rawValue)
+            w.uint64(3, optionID)
+            return w.data
+        }
+    }
+
     public struct AllocationWeight: ProtoMessage {
         public let optionID: UInt64, percent: UInt64
 
