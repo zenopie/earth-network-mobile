@@ -110,9 +110,9 @@ struct CoinRow: View {
     }
 }
 
-/// One coin: its private and public balances, and Shield / Unshield preset to
-/// it. The moves themselves are MoveSheet's; this only says which way, or why
-/// a way is not open.
+/// One coin, as the stake page shows a validator: its mark, the private
+/// amount large, the public amount on one line beneath, and Shield /
+/// Unshield. ANML is only ever private, so it is the number and nothing to do.
 struct CoinSheet: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
@@ -129,108 +129,75 @@ struct CoinSheet: View {
 
     private var shieldFee: BigInt { BigInt(TransactionSigner.defaultFeeUerth) ?? 0 }
     private var unshieldFee: UInt64 { UInt64(Fees.forGas(PrivacyWallet.privateGasEstimate)) ?? 0 }
+    private var privateOnly: Bool { denom == Token.anml.denom }
 
     var body: some View {
         let coin = coin
         let token = coin.token
         VStack(spacing: 0) {
-            CoinMark(token: token, size: 64)
-                .padding(.top, 28)
+            Spacer().frame(height: theme.space.x32)
+            CoinMark(token: token, size: 56)
+            Spacer().frame(height: theme.space.x12)
             Text(token.symbol)
-                .font(EarthType.textXl).fontWeight(.semibold)
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(theme.colors.textPrimary)
-                .padding(.top, 10)
-            Text(coin.role)
-                .font(EarthType.bodySmall)
+
+            Spacer().frame(height: theme.space.x24)
+            if model.balancesVisible {
+                SplitAmount(amount: Figures.plain(coin.privateAmount, decimals: token.decimals))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+            } else {
+                Text("-----").font(EarthType.header2).fontWeight(.semibold)
+                    .foregroundStyle(theme.colors.textPrimary)
+            }
+            Label(privateOnly ? "Always private" : "Private", systemImage: "lock.fill")
+                .font(EarthType.body)
                 .foregroundStyle(theme.colors.textTertiary)
-                .padding(.top, 2)
+                .labelStyle(TightLabel())
 
-            VStack(spacing: 0) {
-                balanceLine("Private", "Invisible on chain", coin.privateAmount, token, locked: true)
-                Divider().overlay(theme.colors.strokeSecondary).padding(.horizontal, 14)
-                balanceLine("Public", "Seen by Keplr, exchanges and validators", coin.publicAmount, token, locked: false)
+            if !privateOnly, coin.showsPublic {
+                Label("\(model.balancesVisible ? Figures.balance(coin.publicAmount, decimals: token.decimals) : "••••") public",
+                      systemImage: "globe")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textTertiary)
+                    .labelStyle(TightLabel())
+                    .padding(.top, theme.space.x12)
             }
-            .background(theme.colors.bgSecondary, in: .rect(cornerRadius: theme.space.radiusLg))
-            .padding(.top, 20)
 
-            VStack(spacing: 8) {
-                moveButton("Shield", "Public → Private", "lock.fill", .shield,
-                           blocked: ShieldMove.shieldBlocked(denom: coin.denom, public: coin.publicAmount, fee: shieldFee))
-                moveButton("Unshield", "Private → Public", "lock.open.fill", .unshield,
-                           blocked: ShieldMove.unshieldBlocked(denom: coin.denom, private: coin.privateAmount,
-                                                               spendable: coin.denom == Token.erth.denom ? model.unshieldableErth : 0,
-                                                               fee: unshieldFee))
+            if !privateOnly {
+                Spacer().frame(height: theme.space.x32)
+                HStack(spacing: theme.space.x8) {
+                    EarthPillButton(title: "Shield") { move(.shield) }
+                        .disabled(ShieldMove.shieldBlocked(denom: coin.denom, public: coin.publicAmount, fee: shieldFee) != nil)
+                    EarthPillButton(title: "Unshield", role: .secondary) { move(.unshield) }
+                        .disabled(ShieldMove.unshieldBlocked(denom: coin.denom, private: coin.privateAmount,
+                                                             spendable: coin.denom == Token.erth.denom ? model.unshieldableErth : 0,
+                                                             fee: unshieldFee) != nil)
+                }
             }
-            .padding(.top, 16)
-            Spacer(minLength: 0)
+            Spacer(minLength: theme.space.x16)
         }
         .padding(.horizontal, theme.space.gutter)
         .frame(maxWidth: .infinity)
         .earthBackground()
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.height(privateOnly ? 300 : 440)])
         .presentationDragIndicator(.visible)
     }
 
-    private func balanceLine(_ label: String, _ detail: String, _ amount: BigInt, _ token: Token, locked: Bool) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: locked ? "lock.fill" : "globe")
-                .font(.system(size: 13))
-                .foregroundStyle(locked ? theme.colors.accentInk : theme.colors.textTertiary)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label)
-                    .font(EarthType.body)
-                    .foregroundStyle(theme.colors.textPrimary)
-                Text(detail)
-                    .font(EarthType.caption)
-                    .foregroundStyle(theme.colors.textTertiary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-            Spacer(minLength: 8)
-            Text(model.balancesVisible ? Figures.balance(amount, token) : "••••")
-                .font(EarthType.amount)
-                .foregroundStyle(theme.colors.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+    private func move(_ direction: MoveSheet.Direction) {
+        onMove(direction)
+        dismiss()
     }
+}
 
-    /// The way across, or why not: the reason takes the direction's place.
-    private func moveButton(_ title: String, _ way: String, _ symbol: String, _ direction: MoveSheet.Direction, blocked: String?) -> some View {
-        Button {
-            onMove(direction)
-            dismiss()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: symbol)
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 20)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(EarthType.body).fontWeight(.semibold)
-                    // A reason must stay readable: the disabled ink is too faint for a sentence.
-                    Text(blocked ?? way)
-                        .font(EarthType.caption)
-                        .foregroundStyle(blocked == nil ? theme.colors.secondaryButtonFg.opacity(0.8) : theme.colors.textSecondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                }
-                Spacer(minLength: 0)
-                if blocked == nil {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-            }
-            .foregroundStyle(blocked == nil ? theme.colors.secondaryButtonFg : theme.colors.buttonDisabledFg)
-            .padding(.horizontal, 16)
-            .frame(maxWidth: .infinity, minHeight: theme.space.buttonHeight + 4)
-            .background(blocked == nil ? theme.colors.secondaryButtonBg : theme.colors.buttonDisabledBg,
-                        in: .rect(cornerRadius: theme.space.radiusMd))
+/// Icon and text a few points apart, centred: the system label spaces them
+/// for a list row.
+private struct TightLabel: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 5) {
+            configuration.icon.font(.system(size: 11))
+            configuration.title
         }
-        .buttonStyle(.plain)
-        .disabled(blocked != nil)
     }
 }

@@ -21,51 +21,50 @@ struct NetworkScreen: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: theme.space.x12) {
-                    Text(node.isDefault ? "Earth's node" : "Your node")
-                        .font(EarthType.headline)
-                        .foregroundStyle(theme.colors.textPrimary)
-                    Text(node.lcd.absoluteString)
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textSecondary)
-                    Text(status ?? "Checking…")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textTertiary)
-                    if let notice = model.nodeNotice { errorText(notice) }
-
-                    Text("Every balance, chain query and transaction goes through this node. Run your own and nobody else sees which account asks what, or when. The handle directory, the private-note index, the registration gas grant and passport circuit downloads still come from api.erth.network.")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textTertiary)
-
-                    EarthLabel("LCD (REST) URL")
-                    field("https://node.example.com", text: $lcd)
-                    if let lcdError { errorText(lcdError) }
-
-                    EarthLabel("RPC URL")
-                    field("https://rpc.example.com", text: $rpc)
-                    if let rpcError { errorText(rpcError) }
-                    Text(NodeSettings.rpcWhy)
-                        .font(EarthType.caption)
-                        .foregroundStyle(theme.colors.textTertiary)
-
-                    if cleartext {
-                        errorText("This is plain http://. Anyone on the same network can read and alter what the wallet sends and receives, including the balances it shows you. A payment to a @handle then goes ahead only when Earth's own directory confirms the address. Use it only for a node on this phone or on a network you control.")
+                VStack(spacing: 0) {
+                    hero
+                    if let notice = model.nodeNotice {
+                        errorText(notice).padding(.top, theme.space.x12)
                     }
-                    if let error { errorText(error) }
 
-                    EarthButton(title: "Check and use this node", busy: checking) { check() }
-                        .disabled(candidate == nil || checking)
-                    if !node.isDefault || NodeSettings.saved != nil {
-                        EarthButton(title: "Reset to default", role: .secondary) {
-                            NodeSettings.reset()
-                            node = NodeSettings.current
-                            lcd = ""; rpc = ""; error = nil
-                            model.refreshNodeNotice()
-                            Task { await model.refresh() }
+                    Spacer().frame(height: theme.space.x24)
+                    EarthDetailRow(label: "Node", value: node.lcd.host() ?? node.lcd.absoluteString)
+                    EarthDivider()
+
+                    VStack(alignment: .leading, spacing: theme.space.x8) {
+                        EarthLabel("LCD URL")
+                        field("https://node.example.com", text: $lcd)
+                        if let lcdError { errorText(lcdError) }
+
+                        EarthLabel("RPC URL")
+                        field("https://rpc.example.com", text: $rpc)
+                        if let rpcError { errorText(rpcError) }
+
+                        if cleartext {
+                            errorText("Plain http: anyone on your network can tamper.")
+                        }
+                        if let error { errorText(error) }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, theme.space.x24)
+
+                    Spacer().frame(height: theme.space.x24)
+                    HStack(spacing: theme.space.x12) {
+                        EarthPillButton(title: checking ? "Checking…" : "Use this node") { check() }
+                            .disabled(candidate == nil || checking)
+                        if !node.isDefault || NodeSettings.saved != nil {
+                            EarthPillButton(title: "Reset", role: .secondary) {
+                                NodeSettings.reset()
+                                node = NodeSettings.current
+                                lcd = ""; rpc = ""; error = nil
+                                model.refreshNodeNotice()
+                                Task { await model.refresh() }
+                            }
                         }
                     }
+                    Spacer().frame(height: theme.space.x32)
                 }
-                .padding(theme.space.gutter)
+                .padding(.horizontal, theme.space.gutter)
             }
             .navigationTitle("Network")
             .navigationBarTitleDisplayMode(.inline)
@@ -81,7 +80,7 @@ struct NetworkScreen: View {
                 // The light probe while its last full check stands, else (or when that fails) the full check.
                 do {
                     let p = try await NodeSettings.status(node)
-                    status = "Connected · \(p.chainID) · height \(p.height)"
+                    status = "Connected · \(p.chainID) · \(Figures.grouped(Int64(clamping: p.height)))"
                 } catch {
                     status = "Not answering: \(error.localizedDescription)"
                 }
@@ -93,8 +92,26 @@ struct NetworkScreen: View {
         }
     }
 
+    /// Whose node, big, and whether it answers.
+    private var hero: some View {
+        VStack(spacing: theme.space.x8) {
+            EarthGlyph(systemName: "server.rack", size: 56)
+            Text(node.isDefault ? "Earth's node" : "Your node")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(theme.colors.textPrimary)
+                .padding(.top, theme.space.x4)
+            Text(status ?? "Checking…")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(connected ? theme.colors.accentInk : theme.colors.textTertiary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, theme.space.x24)
+    }
+
+    private var connected: Bool { status?.hasPrefix("Connected") ?? false }
+
     private var lcdURL: URL? { NodeSettings.normalize(lcd) }
-    /// Required: only the RPC serves the genesis the check compares.
     private var rpcURL: URL? { NodeSettings.normalize(rpc) }
 
     private var lcdError: String? {

@@ -21,15 +21,19 @@ struct NotificationsScreen: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: theme.space.x16) {
+                VStack(spacing: 0) {
+                    hero
+
                     if status == .denied {
-                        notice("Notifications are off for Earth Wallet in iOS Settings.", action: "Open Settings") {
+                        Spacer().frame(height: theme.space.x24)
+                        EarthPillButton(title: "Open Settings") {
                             #if os(iOS)
                             if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                             #endif
                         }
                     } else if status == .notDetermined {
-                        notice("Earth Wallet has not asked to send notifications yet.", action: "Allow notifications") {
+                        Spacer().frame(height: theme.space.x24)
+                        EarthPillButton(title: "Allow notifications") {
                             Task {
                                 await EarthNotifications.requestAuthorization(force: true)
                                 await refreshStatus()
@@ -38,15 +42,18 @@ struct NotificationsScreen: View {
                         }
                     }
 
-                    EarthCard {
-                        Toggle(isOn: $anml) { label("ANML ready", "When the day's claim opens") }
+                    Spacer().frame(height: theme.space.x24)
+                    VStack(spacing: 0) {
+                        Toggle(isOn: $anml) { label("ANML ready", "Daily claim opens") }
+                            .padding(.vertical, theme.space.x12)
                         EarthDivider()
-                        Toggle(isOn: $proposals) { label("New proposals", "When a proposal opens for voting") }
+                        Toggle(isOn: $proposals) { label("New proposals", "Voting opens") }
+                            .padding(.vertical, theme.space.x12)
                     }
                     .tint(theme.colors.brandButtonBg)
                     .disabled(status == .denied)
                 }
-                .padding(theme.space.gutter)
+                .padding(.horizontal, theme.space.gutter)
             }
             .navigationTitle("Notifications")
             .navigationBarTitleDisplayMode(.inline)
@@ -79,14 +86,29 @@ struct NotificationsScreen: View {
         }
     }
 
-    private func notice(_ text: String, action: String, run: @escaping () -> Void) -> some View {
-        VStack(alignment: .leading, spacing: theme.space.x12) {
-            Text(text)
-                .font(EarthType.bodySmall)
-                .foregroundStyle(theme.colors.textSecondary)
-            EarthButton(title: action, role: .secondary, action: run)
+    /// A bell, big, and whether iOS lets the app ring it.
+    private var hero: some View {
+        VStack(spacing: theme.space.x8) {
+            EarthGlyph(systemName: status == .denied ? "bell.slash.fill" : "bell.fill", size: 56)
+            Text("Notifications")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(theme.colors.textPrimary)
+                .padding(.top, theme.space.x4)
+            if let line = statusLine {
+                Text(line)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(status == .denied ? theme.colors.warnInk : theme.colors.textTertiary)
+            }
         }
-        .padding(theme.space.x12)
-        .background(theme.colors.warnTint, in: .rect(cornerRadius: theme.space.radiusMd))
+        .frame(maxWidth: .infinity)
+        .padding(.top, theme.space.x24)
+    }
+
+    private var statusLine: String? {
+        switch status {
+        case .denied: "Off in iOS Settings"
+        case .notDetermined: "Not allowed yet"
+        default: nil
+        }
     }
 }

@@ -185,6 +185,16 @@ public struct WalletStore: Sendable {
         return wallets.count - 1
     }
 
+    /// Remove one wallet, keeping the rest sealed as they were; returns what
+    /// is left. The last one is not removed here: that is `delete()`, the vault itself.
+    public func remove(address: String, pin: String) throws -> [Entry] {
+        let opened = try open(pin: pin)
+        let rest = opened.wallets.filter { $0.address != address }
+        guard !rest.isEmpty, rest.count < opened.wallets.count else { throw Error.notFound }
+        try write(rest, dataKey: opened.dataKey, pin: pin)
+        return rest
+    }
+
     /// Every wallet held, given the PIN.
     ///
     /// A wrong PIN surfaces as `wrongPin` rather than as garbage, because

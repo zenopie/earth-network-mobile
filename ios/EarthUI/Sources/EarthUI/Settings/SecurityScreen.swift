@@ -59,43 +59,78 @@ struct SecurityScreen: View {
 
     private var form: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: theme.space.x12) {
-                Text("However you unlock it, the recovery phrase is the only way back if this device is lost.")
-                    .font(EarthType.bodySmall)
-                    .foregroundStyle(theme.colors.textTertiary)
+            VStack(spacing: 0) {
+                hero
 
-                row(.pin, "PIN", "Four digits. Asked for when you return after a minute away, and before your recovery phrase is shown.")
-                if WalletStore.biometricsAvailable {
-                    row(.biometrics, WalletStore.biometryName,
-                        "No PIN to remember. If \(WalletStore.biometryName) stops working, only your recovery phrase gets you back in.")
-                    row(.both, "Both", "Both are required every time. Neither one opens the wallet on its own.")
+                Spacer().frame(height: theme.space.x24)
+                VStack(spacing: theme.space.x8) {
+                    row(.pin, "PIN", "Four digits")
+                    if WalletStore.biometricsAvailable {
+                        row(.biometrics, name(.biometrics), "No PIN to remember")
+                        row(.both, "Both", "Both, every time")
+                    }
                 }
 
                 if let error {
                     Text(error)
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textError)
+                        .padding(.top, theme.space.x12)
                 }
                 if saved {
-                    Text("Saved.")
-                        .font(EarthType.bodySmall)
+                    Text("Saved")
+                        .font(EarthType.bodySmall).fontWeight(.semibold)
                         .foregroundStyle(theme.colors.accentInk)
+                        .padding(.top, theme.space.x12)
                 }
 
-                Spacer().frame(height: theme.space.x8)
-                EarthButton(title: "Save") { save() }
+                Spacer().frame(height: theme.space.x24)
+                EarthPillButton(title: "Save") { save() }
                     .disabled(choice == model.method)
+                Spacer().frame(height: theme.space.x32)
             }
-            .padding(theme.space.gutter)
+            .padding(.horizontal, theme.space.gutter)
         }
         .scrollContentBackground(.hidden)
     }
 
+    /// How it unlocks now, big. The one line is the backup warning: whichever
+    /// method is chosen, the phrase is the only way back on a lost device.
+    private var hero: some View {
+        VStack(spacing: theme.space.x8) {
+            EarthGlyph(systemName: glyph, size: 56)
+            Text(name(model.method))
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(theme.colors.textPrimary)
+                .padding(.top, theme.space.x4)
+            Text("Lost phone? Only your phrase recovers it.")
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, theme.space.x24)
+    }
+
+    private var glyph: String {
+        guard model.method.usesBiometrics else { return "lock.fill" }
+        return WalletStore.biometryName == "Touch ID" ? "touchid" : "faceid"
+    }
+
+    private func name(_ method: WalletStore.Method) -> String {
+        // biometryName's fallback is lowercase, for mid-sentence use.
+        let bio = WalletStore.biometryName.prefix(1).uppercased() + WalletStore.biometryName.dropFirst()
+        return switch method {
+        case .pin: "PIN"
+        case .biometrics: bio
+        case .both: "PIN + \(bio)"
+        }
+    }
+
     private func row(_ option: WalletStore.Method, _ title: String, _ detail: String) -> some View {
         Button { choice = option; saved = false } label: {
-            HStack(alignment: .top, spacing: theme.space.x12) {
+            HStack(spacing: theme.space.x12) {
                 Image(systemName: choice == option ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 20))
+                    .font(.system(size: 22))
                     .foregroundStyle(choice == option ? theme.colors.accentInk : theme.colors.textDisabled)
                 VStack(alignment: .leading, spacing: theme.space.x2) {
                     Text(title)
@@ -104,13 +139,12 @@ struct SecurityScreen: View {
                     Text(detail)
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
-                        .multilineTextAlignment(.leading)
                 }
                 Spacer()
             }
             .padding(theme.space.x16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.colors.bgSecondary, in: .rect(cornerRadius: theme.space.radiusMd))
+            .background(theme.colors.bgSecondary, in: .rect(cornerRadius: theme.space.radiusLg))
         }
         .buttonStyle(.plain)
     }

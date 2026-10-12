@@ -20,53 +20,44 @@ struct NotesScreen: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: theme.space.x16) {
-                    Text("A private payment can spend many notes at once, of any assets. Merge only when a balance is spread over more notes than one transaction carries, or to tidy staked ERTH into fewer notes.")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textTertiary)
-
-                    EarthDetailRow(label: "Shielded address", value: model.shieldedAddress)
+                VStack(spacing: 0) {
+                    hero
                     if let error = model.privacySyncError {
                         Text("Sync: \(error)")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textError)
+                            .padding(.top, theme.space.x12)
                     }
 
-                    ForEach(model.shielded.filter { $0.value > 0 }.sorted(by: { $0.key < $1.key }), id: \.key) { denom, amount in
-                        EarthCard {
-                            Text(label(denom))
-                                .font(EarthType.body).fontWeight(.semibold)
-                                .foregroundStyle(theme.colors.textPrimary)
-                            EarthDetailRow(label: "Balance", value: Figures.balance(BigInt(amount)))
-                            if let count = model.mergeable[denom] {
-                                EarthDetailRow(label: "Notes", value: "\(count)")
-                                EarthButton(title: "Merge smallest notes", role: .secondary) {
-                                    tx.requestPrivate(.private(action: "Merge notes", rows: [("Asset", label(denom))]),
-                                                      onSuccess: { await model.syncPrivacy() }) { w in
-                                        // Stake notes merge by a restake (owner-locked, two per proof).
-                                        denom.hasPrefix(PrivacyWallet.derthPrefix) ? try await w.mergeStake(denom: denom) : try await w.merge(denom: denom)
-                                    }
-                                }
-                            }
+                    Spacer().frame(height: theme.space.x24)
+                    VStack(spacing: 0) {
+                        ForEach(model.shielded.filter { $0.value > 0 }.sorted(by: { $0.key < $1.key }), id: \.key) { denom, amount in
+                            noteRow(denom: denom, amount: amount)
+                            EarthDivider()
                         }
                     }
 
                     VStack(alignment: .leading, spacing: theme.space.x8) {
                         EarthLabel("Shield ERTH")
-                        Text("Moves ERTH from your account into a private note. The amount is public as it enters; after that, what you do with it is not.")
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textTertiary)
                         TextField("0", text: $shieldAmount)
                             .font(EarthType.amountField)
                             .keyboardType(.decimalPad)
-                        Text("Account balance \(Token.erth.format(model.balance(.erth))) ERTH")
+                        Text("Available \(Token.erth.format(model.balance(.erth))) ERTH")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
-                        EarthButton(title: "Shield") { shield() }
-                            .disabled(shieldValue == nil)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, theme.space.x24)
+
+                    Spacer().frame(height: theme.space.x24)
+                    EarthPillButton(title: "Shield") { shield() }
+                        .disabled(shieldValue == nil)
+
+                    Spacer().frame(height: theme.space.x24)
+                    EarthDetailRow(label: "Shielded address", value: model.shieldedAddress)
+                    Spacer().frame(height: theme.space.x32)
                 }
-                .padding(theme.space.gutter)
+                .padding(.horizontal, theme.space.gutter)
             }
             .refreshable { await model.syncPrivacy() }
             .navigationTitle("Shielded notes")
@@ -75,6 +66,52 @@ struct NotesScreen: View {
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
         }
+    }
+
+    /// Private ERTH, big.
+    private var hero: some View {
+        VStack(spacing: 0) {
+            SplitAmount(amount: Figures.plain(BigInt(model.shielded[Constants.gasDenom] ?? 0)))
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            Text("Private ERTH")
+                .font(EarthType.body)
+                .foregroundStyle(theme.colors.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, theme.space.x24)
+    }
+
+    /// One asset: its name and balance, and Merge when its notes need it.
+    private func noteRow(denom: String, amount: UInt64) -> some View {
+        HStack(spacing: theme.space.x12) {
+            VStack(alignment: .leading, spacing: theme.space.x2) {
+                Text(label(denom))
+                    .font(EarthType.body).fontWeight(.semibold)
+                    .foregroundStyle(theme.colors.textPrimary)
+                    .lineLimit(1)
+                if let count = model.mergeable[denom] {
+                    Button {
+                        tx.requestPrivate(.private(action: "Merge notes", rows: [("Asset", label(denom))]),
+                                          onSuccess: { await model.syncPrivacy() }) { w in
+                            // Stake notes merge by a restake (owner-locked, two per proof).
+                            denom.hasPrefix(PrivacyWallet.derthPrefix) ? try await w.mergeStake(denom: denom) : try await w.merge(denom: denom)
+                        }
+                    } label: {
+                        Text("Merge \(count) notes")
+                            .font(EarthType.bodySmall).fontWeight(.semibold)
+                            .foregroundStyle(theme.colors.accentInk)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Spacer(minLength: theme.space.x8)
+            Text(Figures.balance(BigInt(amount)))
+                .font(.system(size: 17, weight: .semibold).monospacedDigit())
+                .foregroundStyle(theme.colors.textPrimary)
+                .lineLimit(1)
+        }
+        .padding(.vertical, theme.space.x12)
     }
 
     private var shieldValue: BigInt? {

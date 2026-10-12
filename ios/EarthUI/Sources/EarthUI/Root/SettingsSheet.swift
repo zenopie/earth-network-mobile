@@ -57,7 +57,7 @@ struct SettingsSheet: View {
                 }
                 .padding(.horizontal, theme.space.gutter)
 
-                Text("Version 0.1.0")
+                Text("Version \(AppVersion.text)")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
                     .padding(.vertical, theme.space.x24)
@@ -147,50 +147,42 @@ struct IdentityScreen: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: theme.space.x16) {
-                    EarthListRow(
-                        initial: model.isRegistered ? "✓" : "?",
-                        name: model.isRegistered ? "Verified human" : "Not registered",
-                        subtitle: subtitle,
-                        badgeBackground: model.isRegistered ? theme.colors.accentTint : theme.colors.bgSecondary,
-                        badgeForeground: model.isRegistered ? theme.colors.accentInk : theme.colors.textTertiary
-                    )
-
-                    Text("The proof shows a government signed your document and that you have not registered before. It does not carry your name, your photo, or your document number, and nothing about the passport leaves this phone. Your registration is not linked to this wallet on chain: claims and votes prove you are a registered person without saying which.")
-                        .font(EarthType.bodySmall)
+                VStack(spacing: 0) {
+                    Spacer().frame(height: theme.space.x32)
+                    Image(systemName: model.isRegistered ? "checkmark.shield.fill" : "person.crop.circle.badge.questionmark")
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(model.isRegistered ? theme.colors.accentInk : theme.colors.textTertiary)
+                        .frame(width: 72, height: 72)
+                        .background(model.isRegistered ? theme.colors.accentTint : theme.colors.bgTertiary, in: .circle)
+                    Spacer().frame(height: theme.space.x16)
+                    Text(model.isRegistered ? "Verified human" : ended ? "Registration ended" : "Not verified")
+                        .font(EarthType.header6).fontWeight(.semibold)
+                        .foregroundStyle(theme.colors.textPrimary)
+                    Text(line)
+                        .font(EarthType.body)
                         .foregroundStyle(theme.colors.textTertiary)
+                        .padding(.top, theme.space.x4)
 
-                    if model.isRegistered {
-                        EarthDetailRow(label: "Handle", value: model.handle.isEmpty ? "None" : "@\(model.handle)")
-                        EarthButton(title: model.handle.isEmpty ? "Claim a handle" : "Manage @\(model.handle)", role: .secondary) { handleOpen = true }
-                        if let moveOffer, moveOffer.anything {
-                            MoveOfferCard(offer: moveOffer) { self.moveOffer = await model.moveOffer() }
+                    Spacer().frame(height: theme.space.x32)
+                    VStack(spacing: theme.space.x12) {
+                        if model.isRegistered {
+                            EarthPillButton(title: model.handle.isEmpty ? "Claim a handle" : "@\(model.handle)") { handleOpen = true }
+                            EarthPillButton(title: "Switch identity", role: .secondary) { switching = true }
+                            if let moveOffer, moveOffer.anything {
+                                MoveOfferCard(offer: moveOffer) { self.moveOffer = await model.moveOffer() }
+                            }
+                        } else if ended {
+                            // The chain refuses an identity it registered before (used_idcs), so a
+                            // renewal registers this wallet's next identity from the same phrase;
+                            // the previous one's handle and vote move over afterwards.
+                            EarthPillButton(title: "Renew") { registering = true }
+                        } else {
+                            EarthPillButton(title: "Verify with passport") { registering = true }
                         }
-                        Text("Your registration lasts a year; renewing then registers this wallet's next identity, from the same recovery phrase. To move it to another wallet, or to a fresh identity in this one, switch identity, then bring your handle and caretaker vote over from the Identity screen. Nothing is paid the second time. A passport can switch once per day (UTC).")
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textTertiary)
-                        EarthButton(title: "Switch identity", role: .secondary) { switching = true }
-                        // Transparent fees (an LP, IBC, a contract call) come
-                        // from the public account: unshield ERTH there. The
-                        // membership-proved transparent gas grant is gone from
-                        // the chain and the backend.
-                        Text("Need ERTH in your public account for fees? Unshield some from Portfolio.")
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textSecondary)
-                    } else if model.privacy?.registeredBefore() == true {
-                        // The chain keeps every identity it ever registered (used_idcs) and
-                        // refuses it again (1130), so a renewal registers this wallet's next
-                        // identity (PrivacyKeys generations): one recovery phrase holds them
-                        // all, and the previous one's handle and vote move over.
-                        Text("Renew to count as a person again. The wallet registers your passport to its next identity, derived from the same recovery phrase: no new wallet or phrase is needed. A handle or caretaker vote your previous identity still holds can be brought over from this screen afterwards.")
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textSecondary)
-                        EarthButton(title: "Renew registration") { registering = true }
-                    } else {
-                        EarthButton(title: "Register with your passport") { registering = true }
                     }
                 }
-                .padding(theme.space.gutter)
+                .padding(.horizontal, theme.space.gutter)
+                .frame(maxWidth: .infinity)
             }
             .navigationTitle("Identity")
             .navigationBarTitleDisplayMode(.inline)
@@ -205,12 +197,22 @@ struct IdentityScreen: View {
         }
     }
 
-    private var subtitle: String {
-        switch model.identityStatus {
-        case .live: "Your registration is in the identity tree."
-        case .zeroed: "Your registration in this wallet has ended, or was switched to another wallet."
-        case .none: model.privacy?.registeredBefore() == true ? "Your registration in this wallet has ended, or was switched to another wallet." : "Prove you are a unique human to claim ANML and vote."
-        }
+    /// Registered here before, and no longer live: renewing, not registering.
+    private var ended: Bool { !model.isRegistered && model.privacy?.registeredBefore() == true }
+
+    private var line: String {
+        if model.isRegistered { return "Private · not linked to this wallet" }
+        return ended ? "Renew to claim ANML and vote" : "Verify to claim ANML and vote"
+    }
+}
+
+/// "1.0 (32)", from the bundle rather than written into a view.
+enum AppVersion {
+    static var text: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String
+        return build.map { "\(version) (\($0))" } ?? version
     }
 }
 
@@ -222,24 +224,29 @@ struct AboutScreen: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: theme.space.x16) {
-                    Text("Earth Wallet is a self-custody wallet for earth-1, a chain whose premise is proof of personhood: you prove you are a unique human by reading your passport's chip and generating a zero-knowledge proof on this device. No custodian, and no server sees the passport.")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textSecondary)
+                VStack(spacing: 0) {
+                    Spacer().frame(height: theme.space.x32)
+                    EarthAsset.logo?
+                        .resizable().scaledToFit()
+                        .frame(width: 72, height: 72)
+                    Spacer().frame(height: theme.space.x16)
+                    Text("Earth Wallet")
+                        .font(EarthType.header6).fontWeight(.semibold)
+                        .foregroundStyle(theme.colors.textPrimary)
+                    Text("Version \(AppVersion.text)")
+                        .font(EarthType.body)
+                        .foregroundStyle(theme.colors.textTertiary)
+                        .padding(.top, theme.space.x4)
 
+                    Spacer().frame(height: theme.space.x32)
                     VStack(spacing: 0) {
-                        link("Privacy policy", "https://erth.network/privacy")
-                        EarthDivider()
-                        link("Terms", "https://erth.network/terms")
+                        link("Privacy policy", "https://erth.network/privacy-policy")
                         EarthDivider()
                         link("Source", "https://github.com/zenopie/earth-network-mobile")
                     }
-
-                    Text("Version 0.1.0")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textTertiary)
                 }
-                .padding(theme.space.gutter)
+                .padding(.horizontal, theme.space.gutter)
+                .frame(maxWidth: .infinity)
             }
             .navigationTitle("About")
             .navigationBarTitleDisplayMode(.inline)

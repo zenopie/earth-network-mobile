@@ -43,6 +43,13 @@ enum PrivacySession {
 
     /// Deletes every wallet's private data (notes, identity, records, trees):
     /// forgetting the wallets forgets what they held privately too.
+    /// One wallet's private data, as `forgetAll` for one.
+    static func forget(mnemonic: String) throws {
+        let id = storeID(try PrivacyKeys.fromMnemonic(mnemonic))
+        lock.lock(); wallets[id] = nil; live[id] = nil; lock.unlock()
+        try PrivacyStore.delete(root: try dataRoot(), walletID: id)
+    }
+
     static func forgetAll() throws {
         lock.lock(); wallets = [:]; live = [:]; lock.unlock()
         try PrivacyStore.delete(root: try dataRoot())

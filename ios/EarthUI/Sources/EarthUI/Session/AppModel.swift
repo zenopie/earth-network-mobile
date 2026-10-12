@@ -642,6 +642,32 @@ public final class AppModel {
         await refresh()
     }
 
+    /// Remove one wallet from this phone: its phrase from the vault, its
+    /// private data, its record of sent txs. Behind a fresh confirmation,
+    /// whose secret reseals the vault. The last wallet goes the way
+    /// `forget` takes everything, back to setup.
+    public func deleteWallet(address victim: String, confirmation: Confirmation) async throws {
+        guard let entry = confirmation.wallets.first(where: { $0.address == victim }) else { throw WalletStore.Error.notFound }
+        if confirmation.wallets.count == 1 {
+            forget()
+            return
+        }
+        let wasCurrent = victim == address
+        if wasCurrent { closePrivacy() }
+        let store = self.store, secret = confirmation.secret
+        let rest = try await Task.detached { try store.remove(address: victim, pin: secret) }.value
+        do { try PrivacySession.forget(mnemonic: entry.mnemonic) } catch { privacySyncError = describe(error) }
+        SentTxLog.standard.clear(victim)
+        wallets = rest
+        let next = wasCurrent ? 0 : (rest.firstIndex { $0.address == address } ?? 0)
+        if wasCurrent {
+            await select(next)
+        } else {
+            selected = next
+            UserDefaults.standard.set(next, forKey: "selectedWallet")
+        }
+    }
+
     /// Add a wallet and switch to it.
     public func addWallet(mnemonic: String, name: String) async throws {
         guard let sessionPin else { throw WalletStore.Error.notFound }

@@ -68,6 +68,10 @@ struct WalletScreen: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(theme.colors.bgPrimary)
+        #if targetEnvironment(simulator)
+        // `-demoCoin uerth` opens a coin's sheet, as `-demoSheet` opens one from Settings.
+        .task { if let d = UserDefaults.standard.string(forKey: "demoCoin") { coin = CoinPick(denom: d) } }
+        #endif
         .sheet(isPresented: $sending) { SendSheet().earthThemed() }
         .sheet(isPresented: $receiving) { ReceiveSheet().earthThemed() }
         .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }

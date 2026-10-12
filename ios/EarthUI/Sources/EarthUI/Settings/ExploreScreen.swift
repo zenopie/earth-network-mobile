@@ -5,9 +5,9 @@ import SwiftUI
 
 /// Explore: the chain itself.
 ///
-/// Height and registered humans lead because they are the two counters that say
-/// what this chain is — one measures the chain running, the other measures the
-/// thing it exists to count. Blocks and validators follow as lists.
+/// Registered humans is the hero because it is the thing the chain exists to
+/// count; height, the chain running, is the row under it. Blocks and validators
+/// follow as lists.
 ///
 /// Registered humans is here rather than on the identity screen because it is a
 /// fact about the network, not about you; identity answers whether *this
@@ -22,19 +22,12 @@ struct ExploreScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Spacer().frame(height: theme.space.x16)
+                    hero
 
-                    HStack(spacing: theme.space.x8) {
-                        StatCard(label: "Block height", value: chain.height.map(Figures.grouped))
-                        StatCard(label: "Verified humans", value: chain.registrations.map(Figures.grouped))
-                    }
-
-                    if let chainID = chain.chainID {
-                        Spacer().frame(height: theme.space.x8)
-                        Text("Chain \(chainID)")
-                            .font(EarthType.caption)
-                            .foregroundStyle(theme.colors.textTertiary)
-                    }
+                    Spacer().frame(height: theme.space.x24)
+                    EarthDetailRow(label: "Block height", value: chain.height.map(Figures.grouped) ?? "—")
+                    EarthDivider()
+                    EarthDetailRow(label: "Chain", value: chain.chainID ?? "—")
 
                     Spacer().frame(height: theme.space.x24)
                     EarthLabel("Latest blocks")
@@ -60,7 +53,7 @@ struct ExploreScreen: View {
                         if index != chain.blocks.count - 1 { EarthDivider() }
                     }
                     if chain.blocks.isEmpty {
-                        Text("No blocks read yet.")
+                        Text("No blocks yet")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
                     }
@@ -95,6 +88,22 @@ struct ExploreScreen: View {
         }
     }
 
+    /// Verified humans, big.
+    private var hero: some View {
+        VStack(spacing: 0) {
+            Text(chain.registrations.map(Figures.grouped) ?? "—")
+                .font(EarthType.header2).fontWeight(.semibold)
+                .foregroundStyle(theme.colors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            Text("Verified humans")
+                .font(EarthType.body)
+                .foregroundStyle(theme.colors.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, theme.space.x24)
+    }
+
     /// Just the clock part. The date is the same for every block in the list.
     private func time(_ iso: String) -> String {
         String(iso.components(separatedBy: "T").last?.prefix(8) ?? "")
@@ -119,34 +128,5 @@ final class ChainModel {
         self.blocks = await blocks
         height = read?.height ?? self.blocks.first?.height
         self.registrations = await registrations
-    }
-}
-
-struct StatCard: View {
-    @Environment(\.earth) private var theme
-    let label: String
-    let value: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.x4) {
-            Text(label)
-                .font(EarthType.caption)
-                .foregroundStyle(theme.colors.textTertiary)
-                .lineLimit(1)
-            if let value {
-                Text(value)
-                    .font(EarthType.headline)
-                    .foregroundStyle(theme.colors.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-            } else {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(theme.colors.bgTertiary)
-                    .frame(width: 72, height: 22)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(theme.space.x16)
-        .background(theme.colors.bgSecondary, in: .rect(cornerRadius: 20))
     }
 }
