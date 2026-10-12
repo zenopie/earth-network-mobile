@@ -107,6 +107,24 @@ object PrivacySession {
     }
 
     /**
+     * [forgetPrivateData] for the wallet at [index], which is being deleted:
+     * its store and its sent-tx log go with it.
+     */
+    fun forgetPrivateDataAt(context: Context, index: Int) {
+        val app = context.applicationContext
+        val id = storeIdOf(app, index)
+        val address = SecureWalletManager.listWallets().getOrNull(index)?.address.orEmpty()
+        synchronized(this) {
+            clear()
+            wallets.remove(id)
+            live.remove(id)
+            PrivacyStore.delete(app.filesDir, id)
+        }
+        if (address.isNotEmpty()) SentTxLog.clear(app, address)
+        Explorer.forgetLookups()
+    }
+
+    /**
      * The privacy keys of the wallet at [index] (another of this phone's
      * wallets): what an identity switch names its moves to. The mnemonic is
      * read for the derivation only.

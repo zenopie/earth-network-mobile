@@ -43,9 +43,6 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         takeOpen(intent)
 
-        val version = runCatching {
-            packageManager.getPackageInfo(packageName, 0).versionName
-        }.getOrNull() ?: "dev"
 
         setContent {
             EarthTheme {
@@ -65,7 +62,7 @@ class MainActivity : FragmentActivity() {
                 // read through it. Catches a setup abandoned between choosing
                 // a PIN and creating a wallet.
                 LaunchedEffect(open) {
-                    if (open) onboarding.checkWallets()
+                    if (open) onboarding.checkWallets() else onboarding.recheckSetup()
                 }
 
                 when {
@@ -102,7 +99,7 @@ class MainActivity : FragmentActivity() {
                     // EarthApp owns the view models: each tab loads when it is
                     // first shown rather than all of them on launch.
                     else -> EarthApp(
-                        version = "Version $version",
+                        version = "Version ${network.erth.wallet.BuildConfig.VERSION_NAME} (${network.erth.wallet.BuildConfig.VERSION_CODE})",
                         onOpenUrl = ::openUrl,
                     )
                 }

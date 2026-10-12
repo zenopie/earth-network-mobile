@@ -97,6 +97,7 @@ import network.erth.wallet.ui.wallet.MoveSheet
 import network.erth.wallet.ui.wallet.TransactionDetailScreen
 import network.erth.wallet.ui.wallet.WalletUiState
 import network.erth.wallet.ui.wallet.WalletsScreen
+import network.erth.wallet.ui.wallet.DeleteWalletScreen
 import network.erth.wallet.ui.wallet.WalletsUiState
 import network.erth.wallet.ui.wallet.WalletsViewModel
 
@@ -150,6 +151,9 @@ internal fun EarthContent(
     // The validator a stake card's action names (null: the picker).
     var stakingFor by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<StreamId?>(null) }
+    // The wallet being deleted and its phrase, read after a fresh unlock;
+    // held only while its delete screen is up.
+    var deleteTarget by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var liquidity by remember { mutableStateOf<Pair<LiquidityAction, Dex.Pool>?>(null) }
     // Shield / Unshield from the wallet home.
     var moving by remember { mutableStateOf<MoveDirection?>(null) }
@@ -462,8 +466,7 @@ internal fun EarthContent(
 
         EarthRoute.About -> AboutScreen(
             version = version,
-            onPrivacyPolicy = { onOpenUrl("https://erth.network/privacy") },
-            onTerms = { onOpenUrl("https://erth.network/terms") },
+            onPrivacyPolicy = { onOpenUrl("https://erth.network/privacy-policy") },
             onSource = { onOpenUrl("https://github.com/zenopie/earth-network-mobile") },
             modifier = inset,
         )
@@ -509,9 +512,7 @@ internal fun EarthContent(
             }
             PersonhoodScreen(
                 registered = loaded.registered,
-                anmlBalance = loaded.anmlBalance,
                 onRegister = onRegister,
-                onClaim = onClaimAnml,
                 onHandle = { nav.push(EarthRoute.Handle) },
                 onSwitch = { nav.push(EarthRoute.SwitchIdentity) },
                 registeredBefore = loaded.registeredBefore,
@@ -611,8 +612,8 @@ internal fun EarthContent(
                         it.handle.takeIf { h -> h.isNotEmpty() }?.let { h -> "@$h" },
                         "your caretaker vote".takeIf { _ -> it.voteLive },
                     ).joinToString(" and ").ifEmpty { "a move still in flight" }
-                    if (it.withinWallet) "Your previous identity in this wallet still holds $what."
-                    else "${it.fromName}, the identity this one replaced, still holds $what."
+                    if (it.withinWallet) "Your previous identity still holds $what."
+                    else "${it.fromName} still holds $what."
                 }
             }
             val walletList = walletsState?.wallets.orEmpty()
@@ -625,9 +626,9 @@ internal fun EarthContent(
                     targetWarning = when {
                         info == null -> null
                         info.handleRefusal != null || info.voteRefusal != null ->
-                            listOfNotNull(info.handleRefusal?.let { "Your handle cannot be brought there: $it." }, info.voteRefusal?.let { "Your caretaker vote cannot be brought there: $it." }).joinToString(" ")
-                        info.live -> "That wallet has a live registration of its own. Switching there replaces it with that wallet's next identity; what its current identity holds stays with it unless moved."
-                        info.registered -> "That wallet sent a registration in the last two days that can still land. If it lands first, this switch is refused; try again once it has."
+                            listOfNotNull(info.handleRefusal?.let { "Handle can't move there: $it." }, info.voteRefusal?.let { "Vote can't move there: $it." }).joinToString(" ")
+                        info.live -> "That wallet is registered · its identity is replaced"
+                        info.registered -> "That wallet's registration may land first · then retry"
                         else -> null
                     }
                 }
@@ -727,6 +728,7 @@ internal fun EarthContent(
 
         EarthRoute.Wallets -> {
             LaunchedEffect(Unit) { wallets.refresh() }
+            var confirmingDelete by remember { mutableStateOf(false) }
             WalletsScreen(
                 state = walletsState,
                 // Switching wallets changes whose balance every other screen
@@ -745,8 +747,63 @@ internal fun EarthContent(
                     wallets.clearError()
                     nav.push(EarthRoute.ImportWallet)
                 },
+                onDelete = { confirmingDelete = true },
                 modifier = inset,
             )
+            if (confirmingDelete) {
+                network.erth.wallet.ui.unlock.ConfirmUnlockDialog(
+                    onConfirmed = {
+                        confirmingDelete = false
+                        val idx = walletsState?.selectedIndex ?: SecureWalletManager.getSelectedWalletIndex()
+                        val phrase = runCatching { SecureWalletManager.executeWithMnemonicAt(context, idx) { it } }.getOrNull()
+                        if (phrase != null) {
+                            deleteTarget = idx to phrase
+                            nav.push(EarthRoute.DeleteWallet)
+                        }
+                    },
+                    onDismiss = { confirmingDelete = false },
+                )
+            }
+        }
+
+        EarthRoute.DeleteWallet -> {
+            val target = deleteTarget
+            var deleting by remember { mutableStateOf(false) }
+            // The phrase goes when the screen does, and when the app is backgrounded.
+            val owner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+            androidx.compose.runtime.DisposableEffect(owner) {
+                val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+                    if (e == androidx.lifecycle.Lifecycle.Event.ON_STOP && !deleting) { deleteTarget = null; nav.pop() }
+                }
+                owner.lifecycle.addObserver(obs)
+                onDispose { owner.lifecycle.removeObserver(obs); if (!deleting) deleteTarget = null }
+            }
+            if (target == null) {
+                LaunchedEffect(Unit) { nav.pop() }
+            } else {
+                val list = walletsState?.wallets.orEmpty()
+                DeleteWalletScreen(
+                    name = list.getOrNull(target.first)?.name ?: "wallet",
+                    phrase = target.second,
+                    last = list.size <= 1,
+                    deleting = deleting,
+                    error = walletsError,
+                    onDelete = {
+                        deleting = true
+                        wallets.clearError()
+                        wallets.delete(target.first, onFailed = { deleting = false }) { erased ->
+                            deleteTarget = null
+                            deleting = false
+                            // Erased: the session has ended and first run takes over.
+                            if (!erased) {
+                                onSwitchWallet(-1)
+                                nav.popToRoot()
+                            }
+                        }
+                    },
+                    modifier = inset,
+                )
+            }
         }
 
         EarthRoute.CreateWallet -> CreateWalletScreen(

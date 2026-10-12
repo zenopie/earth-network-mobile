@@ -2,6 +2,7 @@ package network.erth.wallet.ui.wallet
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,33 +12,46 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import network.erth.wallet.ui.components.brandButtonColors
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import network.erth.wallet.privacy.handles.Handles
+import network.erth.wallet.ui.components.HeroColumn
+import network.erth.wallet.ui.components.HeroGap
+import network.erth.wallet.ui.components.HeroInitial
+import network.erth.wallet.ui.components.HeroLine
+import network.erth.wallet.ui.components.HeroTitle
+import network.erth.wallet.ui.components.SecureScreen
+import network.erth.wallet.ui.components.destructiveButtonColors
 import network.erth.wallet.ui.designsystem.component.EarthButton
-import network.erth.wallet.ui.designsystem.component.EarthButtonDefaults
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
+import network.erth.wallet.ui.earn.PillButton
+import network.erth.wallet.ui.onboarding.SeedGrid
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 
 /**
- * The wallets in this install.
+ * The wallets in this install: the current one as the hero, the others as
+ * rows (a tap switches), and two ways to add another.
  *
- * A list with the current one marked, and two ways to add another. Switching is
- * the whole reason the screen exists, so it happens on a tap of the row rather
- * than behind a menu — there is nothing else a row could usefully do.
- *
- * No delete: it would remove the only copy of a mnemonic. Until this can show
- * the phrase and make you acknowledge you have it, leaving a wallet in the
- * list costs nothing and removing one can cost everything.
+ * Delete is for the current wallet only, behind a fresh unlock and its
+ * phrase shown back ([DeleteWalletScreen]): it removes the only copy of a
+ * mnemonic this phone holds.
  */
 @Composable
 fun WalletsScreen(
@@ -46,9 +60,10 @@ fun WalletsScreen(
     onCreate: () -> Unit,
     onImport: () -> Unit,
     modifier: Modifier = Modifier,
+    onDelete: () -> Unit = {},
 ) {
     val dimens = EarthTheme.dimens
-
+    val current = state?.wallets?.getOrNull(state.selectedIndex)
     Column(
         modifier
             .fillMaxSize()
@@ -56,74 +71,104 @@ fun WalletsScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = dimens.gutter),
     ) {
-        Spacer(Modifier.height(dimens.space8))
-
-        state?.wallets?.forEachIndexed { index, wallet ->
-            val isSelected = index == state.selectedIndex
+        HeroColumn {
+            HeroInitial(current?.name.orEmpty())
+            HeroGap()
+            HeroTitle(current?.name ?: "Wallet")
+            HeroLine(current?.address?.let { Handles.truncate(it, 10, 6) }.orEmpty())
+        }
+        Spacer(Modifier.height(32.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PillButton("Create", modifier = Modifier.weight(1f), onClick = onCreate)
+            PillButton("Import", primary = false, modifier = Modifier.weight(1f), onClick = onImport)
+        }
+        Spacer(Modifier.height(dimens.space24))
+        state?.wallets?.filter { it.index != state.selectedIndex }?.forEach { wallet ->
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clickable { onSelect(index) }
-                    .padding(vertical = dimens.space12),
+                    .clickable { onSelect(wallet.index) }
+                    .padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    Modifier
-                        .size(dimens.space32)
-                        .background(
-                            if (isSelected) EarthAccent.tint else EarthColors.Surfaces.bgSecondary,
-                            CircleShape,
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = wallet.name.take(1).uppercase(),
-                        style = EarthTypography.textSm,
-                        color = if (isSelected) {
-                            EarthAccent.ink
-                        } else {
-                            EarthColors.Text.textTertiary
-                        },
-                    )
+                Box(Modifier.size(44.dp).background(EarthColors.Surfaces.bgTertiary, CircleShape), contentAlignment = Alignment.Center) {
+                    Text(wallet.name.take(1).uppercase(), style = EarthTypography.textMd, fontWeight = FontWeight.Bold,
+                        color = EarthColors.Text.textTertiary)
                 }
-                Column(Modifier.weight(1f).padding(start = dimens.space12)) {
-                    Text(
-                        text = wallet.name,
-                        style = EarthTypography.textMd,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                        color = EarthColors.Text.textPrimary,
-                    )
-                    Text(
-                        text = wallet.address,
-                        style = EarthTypography.textSm,
-                        color = EarthColors.Text.textTertiary,
-                        maxLines = 1,
-                        overflow = TextOverflow.MiddleEllipsis,
-                    )
-                }
-                if (isSelected) {
-                    Text(
-                        text = "✓",
-                        style = EarthTypography.textMd,
-                        color = EarthAccent.ink,
-                    )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(wallet.name, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold,
+                        color = EarthColors.Text.textPrimary, maxLines = 1)
+                    Text(Handles.truncate(wallet.address, 10, 6), style = EarthTypography.textXs,
+                        color = EarthColors.Text.textTertiary, maxLines = 1)
                 }
             }
         }
+        if (current != null) {
+            Spacer(Modifier.height(dimens.space32))
+            Text(
+                "Delete wallet",
+                style = EarthTypography.textMd,
+                fontWeight = FontWeight.SemiBold,
+                color = EarthColors.Utility.ErrorRed.utilityError700,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onDelete).padding(vertical = 12.dp),
+            )
+        }
+        Spacer(Modifier.height(dimens.space32))
+    }
+}
 
+/**
+ * The last look at a wallet's phrase before it is deleted. Reached only past
+ * a fresh unlock; kept out of screenshots and recents while shown.
+ */
+@Composable
+fun DeleteWalletScreen(
+    name: String,
+    phrase: String,
+    /** The only wallet: deleting it erases the install. */
+    last: Boolean,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+    deleting: Boolean = false,
+    error: String? = null,
+) {
+    SecureScreen()
+    val dimens = EarthTheme.dimens
+    var wrote by remember { mutableStateOf(false) }
+    val red = EarthColors.Utility.ErrorRed.utilityError700
+    Column(
+        modifier
+            .fillMaxSize()
+            .background(EarthColors.Surfaces.bgPrimary)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = dimens.gutter),
+    ) {
+        HeroColumn {
+            HeroTitle("Delete $name?")
+            HeroLine(if (last) "Your only wallet · the app resets" else "Without this phrase it's gone", color = red)
+        }
         Spacer(Modifier.height(dimens.space24))
+        SeedGrid(phrase.trim().split(Regex("\\s+")))
+        Spacer(Modifier.height(dimens.space16))
+        Row(Modifier.fillMaxWidth().clickable { wrote = !wrote }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("I wrote this phrase down", style = EarthTypography.textMd, color = EarthColors.Text.textPrimary, modifier = Modifier.weight(1f))
+            Switch(checked = wrote, onCheckedChange = { wrote = it }, colors = SwitchDefaults.colors(checkedTrackColor = EarthAccent.ink))
+        }
+        Spacer(Modifier.height(dimens.space24))
+        error?.let {
+            Text(it, style = EarthTypography.textSm, color = red, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(dimens.space8))
+        }
         EarthButton(
-            text = "Create a wallet",
-            onClick = onCreate,
-            modifier = Modifier.fillMaxWidth(),
-            colors = brandButtonColors(),
-        )
-        Spacer(Modifier.height(dimens.space8))
-        EarthButton(
-            text = "Import a recovery phrase",
-            onClick = onImport,
-            modifier = Modifier.fillMaxWidth(),
-            colors = EarthButtonDefaults.secondaryColors(),
+            text = "Delete",
+            onClick = onDelete,
+            enabled = wrote && !deleting,
+            isLoading = deleting,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+            colors = destructiveButtonColors(),
         )
         Spacer(Modifier.height(dimens.space32))
     }

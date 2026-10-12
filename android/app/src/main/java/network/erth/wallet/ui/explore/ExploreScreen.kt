@@ -45,9 +45,8 @@ data class ExploreUiState(
 /**
  * Explore: the chain itself.
  *
- * Height and registered humans lead because they are the two counters that say
- * what this chain is — one measures the chain running, the other measures the
- * thing it exists to count. Blocks and validators follow as lists.
+ * Verified humans lead: the thing the chain exists to count, with the
+ * height (the chain running) under it. Blocks and validators follow as lists.
  *
  * Registered humans is here rather than on the identity screen because it is a
  * fact about the network, not about you; the identity screen answers whether
@@ -69,33 +68,20 @@ fun ExploreScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = dimens.gutter),
     ) {
-        Spacer(Modifier.height(dimens.space16))
-
-        Row(Modifier.fillMaxWidth()) {
-            StatCard(
-                label = "Block height",
-                value = state?.height?.let { "%,d".format(it) },
-                shimmer = shimmer,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.padding(horizontal = dimens.space4))
-            StatCard(
-                label = "Verified humans",
-                value = state?.registrations?.let { "%,d".format(it) },
-                shimmer = shimmer,
-                modifier = Modifier.weight(1f),
-            )
+        // The count the chain exists to keep leads; the chain running is the line under it.
+        network.erth.wallet.ui.components.HeroColumn {
+            if (state == null) {
+                Column(Modifier.shimmer(shimmer)) { ShimmerRectangle(width = 120.dp, height = 48.dp) }
+            } else {
+                Text(
+                    "%,d".format(state.registrations),
+                    style = EarthTypography.header2.copy(fontWeight = FontWeight.SemiBold),
+                    color = EarthColors.Text.textPrimary,
+                )
+            }
+            Text("verified humans", style = EarthTypography.textMd, color = EarthColors.Text.textTertiary)
+            if (state != null) network.erth.wallet.ui.components.HeroLine("Block %,d · ${state.chainId}".format(state.height))
         }
-
-        if (state != null) {
-            Spacer(Modifier.height(dimens.space8))
-            Text(
-                text = "Chain ${state.chainId}",
-                style = EarthTypography.textXs,
-                color = EarthColors.Text.textTertiary,
-            )
-        }
-
         Spacer(Modifier.height(dimens.space24))
         EarthLabel("Latest blocks")
         Spacer(Modifier.height(dimens.space8))
@@ -158,43 +144,5 @@ fun ExploreScreen(
             }
         }
         Spacer(Modifier.height(dimens.space32))
-    }
-}
-
-@Composable
-private fun StatCard(
-    label: String,
-    value: String?,
-    shimmer: com.valentinilk.shimmer.Shimmer,
-    modifier: Modifier = Modifier,
-) {
-    val dimens = EarthTheme.dimens
-    Column(
-        modifier
-            .background(
-                EarthColors.Surfaces.bgSecondary,
-                RoundedCornerShape(EarthDimensions.Radius.radius3xl),
-            )
-            .padding(dimens.space16),
-    ) {
-        Text(
-            text = label,
-            style = EarthTypography.textXs,
-            color = EarthColors.Text.textTertiary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(dimens.space4))
-        if (value == null) {
-            Column(Modifier.shimmer(shimmer)) {
-                ShimmerRectangle(width = 72.dp, height = 22.dp)
-            }
-        } else {
-            Text(
-                text = value,
-                style = EarthTypography.header5,
-                color = EarthColors.Text.textPrimary,
-            )
-        }
     }
 }

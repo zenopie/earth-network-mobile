@@ -80,9 +80,7 @@ fun CreateWalletScreen(
     ) {
         Spacer(Modifier.height(dimens.space16))
         Text(
-            text = "Write these words down, in this order. They are the only " +
-                "way to recover this wallet — nobody can reset them for you, " +
-                "and anyone who has them has the wallet.",
+            text = "Anyone with this phrase can take your funds.",
             style = EarthTypography.textSm,
             color = EarthColors.Text.textSecondary,
         )
@@ -112,7 +110,7 @@ fun CreateWalletScreen(
 
         Spacer(Modifier.height(dimens.space16))
         EarthCheckbox(
-            text = stringRes("I have written the phrase down somewhere safe."),
+            text = stringRes("I wrote this phrase down"),
             isChecked = acknowledged,
             onClick = { acknowledged = !acknowledged },
         )
@@ -137,7 +135,7 @@ fun CreateWalletScreen(
  * columns is the single most common way a written-down phrase goes wrong.
  */
 @Composable
-private fun SeedGrid(words: List<String>) {
+internal fun SeedGrid(words: List<String>) {
     val dimens = EarthTheme.dimens
     Column(
         Modifier

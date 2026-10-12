@@ -22,8 +22,8 @@ android {
         applicationId = "network.erth.wallet"
         minSdk = 24
         targetSdk = 36
-        versionCode = 50
-        versionName = "1.0.43"
+        versionCode = 51
+        versionName = "1.0.44"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -41,6 +41,8 @@ android {
 
     buildFeatures {
         compose = true
+        // The version Settings and About show.
+        buildConfig = true
     }
 
     buildTypes {

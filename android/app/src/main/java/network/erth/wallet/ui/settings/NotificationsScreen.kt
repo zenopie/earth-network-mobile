@@ -69,7 +69,13 @@ fun NotificationsScreen(modifier: Modifier = Modifier) {
             .background(EarthColors.Surfaces.bgPrimary)
             .padding(horizontal = dimens.gutter),
     ) {
-        Spacer(Modifier.height(dimens.space16))
+        network.erth.wallet.ui.components.HeroColumn {
+            network.erth.wallet.ui.components.HeroIcon(network.erth.wallet.R.drawable.ic_notifications, muted = !allowed)
+            network.erth.wallet.ui.components.HeroGap()
+            network.erth.wallet.ui.components.HeroTitle("Notifications")
+            network.erth.wallet.ui.components.HeroLine(if (allowed) "Only from this phone" else "Off")
+        }
+        Spacer(Modifier.height(dimens.space24))
         if (!allowed) {
             Column(
                 Modifier

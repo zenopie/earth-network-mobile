@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -166,37 +167,23 @@ fun SecurityScreen(modifier: Modifier = Modifier) {
             .background(EarthColors.Surfaces.bgPrimary)
             .padding(horizontal = dimens.gutter),
     ) {
-        Spacer(Modifier.height(dimens.space24))
-        Text(
-            text = when (method) {
-                UnlockMethod.PIN -> "PIN"
-                UnlockMethod.BIOMETRIC -> "Biometrics"
-                UnlockMethod.BOTH -> "PIN and biometrics"
-            },
-            style = EarthTypography.header5,
-            color = EarthColors.Text.textPrimary,
-        )
-        Spacer(Modifier.height(dimens.space8))
-        Text(
-            text = when (method) {
-                UnlockMethod.PIN ->
-                    "Your PIN encrypts this wallet on this device."
-                UnlockMethod.BIOMETRIC ->
-                    "This wallet is sealed by a key your device only releases to " +
-                        "your fingerprint or face."
-                UnlockMethod.BOTH ->
-                    "This wallet is sealed by your PIN and a key held behind the " +
-                        "biometric prompt. Neither one opens it alone."
-            },
-            style = EarthTypography.textSm,
-            color = EarthColors.Text.textTertiary,
-        )
+        network.erth.wallet.ui.components.HeroColumn {
+            network.erth.wallet.ui.components.HeroIcon(network.erth.wallet.R.drawable.ic_lock)
+            network.erth.wallet.ui.components.HeroGap()
+            network.erth.wallet.ui.components.HeroTitle(
+                when (method) {
+                    UnlockMethod.PIN -> "PIN"
+                    UnlockMethod.BIOMETRIC -> "Biometrics"
+                    UnlockMethod.BOTH -> "PIN and biometrics"
+                },
+            )
+            network.erth.wallet.ui.components.HeroLine("Lost phone? Only your phrase recovers it.")
+        }
 
         if (method.usesBiometric && !biometricsUsable) {
             Spacer(Modifier.height(dimens.space12))
             Text(
-                text = "Biometrics are no longer available on this device. Change " +
-                    "this to a PIN while the wallet is still open.",
+                text = "Biometrics unavailable · switch to a PIN now",
                 style = EarthTypography.textSm,
                 color = EarthColors.Utility.ErrorRed.utilityError700,
             )
@@ -211,19 +198,8 @@ fun SecurityScreen(modifier: Modifier = Modifier) {
             )
         }
 
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = "Changing this re-encrypts the wallet on this device. Your " +
-                "recovery phrase does not change.",
-            style = EarthTypography.textXs,
-            color = EarthColors.Text.textTertiary,
-        )
-        Spacer(Modifier.height(dimens.space12))
-        EarthButton(
-            onClick = { confirming = true },
-            text = "Change how you unlock",
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Spacer(Modifier.height(32.dp))
+        network.erth.wallet.ui.earn.PillButton("Change how you unlock") { confirming = true }
         Spacer(Modifier.height(dimens.space32))
     }
 }

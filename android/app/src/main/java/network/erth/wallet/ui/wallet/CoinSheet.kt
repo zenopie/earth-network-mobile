@@ -35,6 +35,9 @@ import androidx.compose.ui.unit.sp
 import network.erth.wallet.R
 import network.erth.wallet.privacy.tx.ShieldMove
 import network.erth.wallet.ui.components.EarthSheet
+import network.erth.wallet.ui.components.HeroAmount
+import network.erth.wallet.ui.components.HeroLine
+import network.erth.wallet.ui.earn.PillButton
 import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
@@ -152,9 +155,9 @@ private fun AmountLine(amount: Long, locked: Boolean, visible: Boolean) {
 }
 
 /**
- * One coin: its private and public balances, and Shield / Unshield preset to
- * it. The moves themselves are [MoveSheet]'s; this only says which way, or
- * why a way is not open.
+ * One coin, laid out like a validator's stake sheet: the private amount big,
+ * the public one a line under it, Shield and Unshield. The moves themselves
+ * are [MoveSheet]'s. ANML has no public side, so no moves.
  */
 @Composable
 fun CoinSheet(
@@ -167,112 +170,40 @@ fun CoinSheet(
     onMove: (MoveDirection) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val dimens = EarthTheme.dimens
+    val anml = coin.denom == "uanml"
     EarthSheet(onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            CoinMark(coin.denom, coin.symbol, 64.dp)
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = coin.symbol,
-                style = EarthTypography.header6.copy(fontWeight = FontWeight.SemiBold),
-                color = EarthColors.Text.textPrimary,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(text = coin.role, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
-        }
-        Spacer(Modifier.height(dimens.space20))
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .background(EarthColors.Surfaces.bgSecondary, RoundedCornerShape(16.dp)),
-        ) {
-            BalanceLine("Private", "Invisible on chain", coin.private, coin.symbol, locked = true, visible = visible)
-            HorizontalDivider(Modifier.padding(horizontal = 14.dp), color = EarthColors.Surfaces.strokeSecondary)
-            BalanceLine("Public", "Seen by Keplr, exchanges and validators", coin.public, coin.symbol, locked = false, visible = visible)
-        }
-        Spacer(Modifier.height(dimens.space16))
-        MoveTile(
-            title = "Shield",
-            way = "Public → Private",
-            icon = R.drawable.ic_lock,
-            blocked = ShieldMove.shieldBlocked(coin.denom, coin.public, shieldFee),
-        ) { onMove(MoveDirection.Shield) }
-        Spacer(Modifier.height(dimens.space8))
-        MoveTile(
-            title = "Unshield",
-            way = "Private → Public",
-            icon = R.drawable.ic_lock_open,
-            blocked = ShieldMove.unshieldBlocked(
-                coin.denom, coin.private, if (coin.denom == "uerth") unshieldableUerth else 0L, unshieldFee,
-            ),
-        ) { onMove(MoveDirection.Unshield) }
-    }
-}
-
-@Composable
-private fun BalanceLine(label: String, detail: String, amount: Long, symbol: String, locked: Boolean, visible: Boolean) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Image(
-            painter = painterResource(if (locked) R.drawable.ic_lock else R.drawable.ic_public),
-            contentDescription = null,
-            modifier = Modifier.size(14.dp),
-            colorFilter = ColorFilter.tint(if (locked) EarthAccent.ink else EarthColors.Text.textTertiary),
-        )
-        Column(Modifier.weight(1f).padding(start = 10.dp, end = 8.dp)) {
-            Text(text = label, style = EarthTypography.textMd, color = EarthColors.Text.textPrimary)
-            Text(
-                text = detail,
-                style = EarthTypography.textXs,
-                color = EarthColors.Text.textTertiary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Text(
-            text = if (visible) "${formatUerth(amount)} $symbol" else "••••",
-            style = EarthTypography.textMd,
-            color = EarthColors.Text.textPrimary,
-            maxLines = 1,
-        )
-    }
-}
-
-/** The way across, or why not: the reason takes the direction's place. */
-@Composable
-private fun MoveTile(title: String, way: String, icon: Int, blocked: String?, onClick: () -> Unit) {
-    val enabled = blocked == null
-    val ink: Color = if (enabled) EarthColors.Btns.Secondary.btnSecondaryFg else EarthColors.Btns.Secondary.btnSecondaryFgDisabled
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (enabled) EarthColors.Btns.Secondary.btnSecondaryBg else EarthColors.Btns.Secondary.btnSecondaryBgDisabled)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Image(
-            painter = painterResource(icon),
-            contentDescription = null,
-            modifier = Modifier.size(18.dp),
-            colorFilter = ColorFilter.tint(ink),
-        )
-        Column(Modifier.weight(1f).padding(start = 12.dp)) {
-            Text(text = title, style = EarthTypography.textMd.copy(fontWeight = FontWeight.SemiBold), color = ink)
-            // A reason must stay readable: the disabled ink is too faint for a sentence.
-            Text(text = blocked ?: way, style = EarthTypography.textXs, color = if (enabled) ink else EarthColors.Text.textSecondary)
-        }
-        if (enabled) {
-            Image(
-                painter = painterResource(R.drawable.ic_chevron_right),
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-                colorFilter = ColorFilter.tint(ink),
-            )
+            Spacer(Modifier.height(8.dp))
+            CoinMark(coin.denom, coin.symbol, 56.dp)
+            Spacer(Modifier.height(12.dp))
+            Text(coin.symbol, style = EarthTypography.textMd.copy(fontSize = 17.sp), fontWeight = FontWeight.SemiBold,
+                color = EarthColors.Text.textPrimary, maxLines = 1)
+            Spacer(Modifier.height(24.dp))
+            HeroAmount(formatUerth(coin.private), visible)
+            HeroLine(if (anml) "Always private" else "Private", color = EarthAccent.ink, icon = R.drawable.ic_lock)
+            if (anml) return@Column
+            if (coin.showsPublic) {
+                HeroLine(
+                    "${if (visible) formatUerth(coin.public) else "••••"} public",
+                    icon = R.drawable.ic_public,
+                )
+            }
+            Spacer(Modifier.height(32.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PillButton(
+                    "Shield",
+                    enabled = ShieldMove.shieldBlocked(coin.denom, coin.public, shieldFee) == null,
+                    modifier = Modifier.weight(1f),
+                ) { onMove(MoveDirection.Shield) }
+                PillButton(
+                    "Unshield",
+                    enabled = ShieldMove.unshieldBlocked(
+                        coin.denom, coin.private, if (coin.denom == "uerth") unshieldableUerth else 0L, unshieldFee,
+                    ) == null,
+                    primary = false,
+                    modifier = Modifier.weight(1f),
+                ) { onMove(MoveDirection.Unshield) }
+            }
         }
     }
 }

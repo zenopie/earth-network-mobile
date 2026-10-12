@@ -24,7 +24,19 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import network.erth.wallet.R
 import network.erth.wallet.privacy.sync.PendingMove
+import network.erth.wallet.ui.components.HeroColumn
+import network.erth.wallet.ui.components.HeroGap
+import network.erth.wallet.ui.components.HeroIcon
+import network.erth.wallet.ui.components.HeroLine
+import network.erth.wallet.ui.components.HeroTitle
+import network.erth.wallet.ui.earn.PillButton
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.privacy.Reminders
 import network.erth.wallet.privacy.handles.HandleEntry
 import network.erth.wallet.privacy.handles.Handles
@@ -80,149 +92,102 @@ fun HandleScreen(
     val dimens = EarthTheme.dimens
     var input by remember { mutableStateOf("") }
     Page(modifier) {
-        EarthLabel("Your handle")
-        Spacer(Modifier.height(dimens.space8))
-        Note(
-            "A handle lets anyone pay you by name: their wallet looks it up in the chain's public " +
-                "directory and sends to your shielded address. Who holds a handle is not public. " +
-                "A handle lasts a year from each renewal and never renews on its own; the app reminds " +
-                "you before it ends.",
-        )
-        Spacer(Modifier.height(dimens.space12))
-        if (state == null) {
-            Note("Loading…")
-            return@Page
+        val e = state?.handleEntry
+        val held = state != null && state.handle.isNotEmpty()
+        val movingOut = state?.outgoingMoves?.any { it.kind == PendingMove.HANDLE && !it.confirmed } == true
+        val st = e?.statusAt(now)
+        HeroColumn {
+            HeroIcon(R.drawable.ic_public, muted = !held)
+            HeroGap()
+            HeroTitle(if (held) "@${state!!.handle}" else "No handle")
+            HeroLine(
+                when {
+                    state == null -> "Loading…"
+                    !state.identityLive -> "Verify to claim a handle"
+                    movingOut -> "Moving to your new identity"
+                    state.incomingMoves.any { it.kind == PendingMove.HANDLE } -> "Arriving · waiting for the chain"
+                    !held -> "Get paid by name"
+                    e == null -> "Not in the directory"
+                    e.address != state.shieldedAddress -> "Pays another address"
+                    st == HandleEntry.LIVE -> "Live · until ${date(e.expiresAt)}"
+                    st == HandleEntry.RENEWAL -> "Expired · renew by ${date(e.renewalUntil)}"
+                    else -> "Released"
+                },
+                color = if (st == HandleEntry.RENEWAL || (e != null && state != null && e.address != state.shieldedAddress)) EarthColors.Utility.ErrorRed.utilityError700
+                else EarthColors.Text.textTertiary,
+            )
         }
-        if (!state.identityLive) {
-            Note("Register this wallet (Identity) to claim a handle.")
-            return@Page
-        }
+        Spacer(Modifier.height(dimens.space24))
+        if (state == null || !state.identityLive) return@Page
         state.reminders.filter { it is Reminders.Reminder.HandleExpiring && it.handle == state.handle || it is Reminders.Reminder.HandlePaysElsewhere }.forEach {
             ReminderBanner(Reminders.text(it, now), onClick = onRenew)
         }
-        state.directoryError?.let { Note("Couldn't read the handle directory: $it") }
-        val e = state.handleEntry
-        val movingOut = state.outgoingMoves.any { it.kind == PendingMove.HANDLE && !it.confirmed }
-        if (movingOut) {
-            Note("A move of @${state.handle} to the identity that replaced this one was sent and is waiting for the chain. Check it on Identity in the new wallet.")
-            Spacer(Modifier.height(dimens.space12))
-        }
-        if (state.incomingMoves.any { it.kind == PendingMove.HANDLE }) {
-            Note("@${state.handle} was moved here and is waiting for the chain to confirm the move.")
-            Spacer(Modifier.height(dimens.space12))
-        }
+        state.directoryError?.let { Note("Couldn't read the handle directory") }
         // Entries naming this wallet's address that the store does not hold
         // (a restore loses track of a handle): renewing one is checked by the chain, at no cost if it is not ours.
         // Only while no handle is held (a bind of another would free it), and renew-only.
-        if (state.handle.isEmpty()) state.addressed.forEach { a ->
-            Card {
-                EarthDetailRow("Names this wallet", "@${a.handle}")
-                EarthDetailRow("Expires", date(a.expiresAt))
-                Spacer(Modifier.height(dimens.space8))
-                Note("If this identity holds it, renew it here. If it does not, the chain refuses and nothing is charged.")
-                Spacer(Modifier.height(dimens.space8))
-                EarthButton(text = "Renew @${a.handle}", onClick = { onRenewAddressed(a.handle) }, modifier = Modifier.fillMaxWidth(), colors = brandButtonColors())
-            }
-            Spacer(Modifier.height(dimens.space12))
-        }
-        if (state.handle.isNotEmpty() && !movingOut) {
-            Card {
-                EarthDetailRow("Handle", "@${state.handle}")
-                if (e != null) {
-                    val st = e.statusAt(now)
-                    EarthDetailRow(
-                        "Status",
-                        when (st) {
-                            HandleEntry.LIVE -> "Live"
-                            HandleEntry.RENEWAL -> "Expired: renewal period (only you may renew it)"
-                            else -> "Released"
-                        },
-                    )
-                    EarthDetailRow("Expires", date(e.expiresAt))
-                    EarthDetailRow("Renewable until", date(e.renewalUntil))
-                    if (st == HandleEntry.RENEWAL) {
-                        // Past expiry, a renewal is bounded like a claim, and the handle cannot be moved.
-                        val claimFrom = if (state.predecessorAt > 0) Handles.satAdd(Handles.satAdd(state.predecessorAt, state.handleLeaseSeconds), 86_400 + 3_600) else 0L
-                        Spacer(Modifier.height(dimens.space8))
-                        Note(
-                            "Past its expiry, renewing counts as a new claim" +
-                                (if (claimFrom > now) ", which this identity can make from ${date(claimFrom)} (it replaced another); renew before ${date(e.renewalUntil)} or the handle is freed." else ".") +
-                                " A handle in this period cannot be moved.",
-                        )
-                    }
-                    EarthDetailRow(
-                        "Pays",
-                        if (e.address == state.shieldedAddress) "this wallet (${Handles.truncate(e.address)})"
-                        else "another address (${Handles.truncate(e.address)})",
-                    )
-                } else {
-                    EarthDetailRow("Status", "Not in the directory")
+        if (!held) state.addressed.forEach { a ->
+            Row(Modifier.fillMaxWidth().padding(vertical = dimens.space8), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("@${a.handle}", style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary)
+                    Text("Names this wallet · free if not yours", style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
                 }
-                Spacer(Modifier.height(dimens.space12))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(dimens.space8)) {
-                    EarthButton(
-                        text = if (e != null && e.address != state.shieldedAddress) "Renew to this wallet" else "Renew for 1 year",
-                        onClick = onRenew,
-                        modifier = Modifier.weight(1f),
-                        colors = brandButtonColors(),
-                    )
-                    EarthButton(
-                        text = "Share",
-                        onClick = { onShare(state.handle) },
-                        modifier = Modifier.weight(1f),
-                        colors = EarthButtonDefaults.secondaryColors(),
-                    )
-                }
-                Spacer(Modifier.height(dimens.space8))
-                EarthButton(
-                    text = "Release @${state.handle}",
-                    onClick = onRelease,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = destructiveButtonColors(),
-                )
+                PillButton("Renew", modifier = Modifier.width(120.dp)) { onRenewAddressed(a.handle) }
             }
-            Spacer(Modifier.height(dimens.space16))
         }
-        if (state.handleMovedOut && state.handle.isEmpty()) {
-            Note("This identity moved its handle to another identity, so it cannot claim one again.")
+        if (held && !movingOut) {
+            if (st == HandleEntry.RENEWAL) {
+                // Past expiry, a renewal is bounded like a claim, and the handle cannot be moved.
+                val claimFrom = if (state.predecessorAt > 0) Handles.satAdd(Handles.satAdd(state.predecessorAt, state.handleLeaseSeconds), 86_400 + 3_600) else 0L
+                Note(if (claimFrom > now) "Renewable from ${date(claimFrom)}" else "Renewing now counts as a new claim")
+                Spacer(Modifier.height(dimens.space8))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(dimens.space8)) {
+                PillButton(if (e != null && e.address != state.shieldedAddress) "Renew here" else "Renew", modifier = Modifier.weight(1f), onClick = onRenew)
+                PillButton("Share", primary = false, modifier = Modifier.weight(1f)) { onShare(state.handle) }
+            }
+            Spacer(Modifier.height(dimens.space24))
+        }
+        if (state.handleMovedOut && !held) {
+            Note("Moved away · this identity can't claim again")
             return@Page
         }
         if (movingOut) return@Page
         // Clamped: a hostile lease param cannot overflow the date.
         val waitUntil = if (state.predecessorAt > 0) Handles.satAdd(Handles.satAdd(state.predecessorAt, state.handleLeaseSeconds), 86_400 + 3_600) else 0L
-        if (state.handle.isEmpty() && waitUntil > now) {
-            Note(
-                "This identity replaced another on ${date(state.predecessorAt)}, so it can claim a new handle " +
-                    "from ${date(waitUntil)} (anything the old one held has lapsed by then). Moving a handle " +
-                    "before a switch keeps it with no wait. If this identity already holds a handle (a restored " +
-                    "wallet can lose track of it), enter its name to renew it: the chain checks, and charges " +
-                    "nothing if it does not.",
-            )
-            Spacer(Modifier.height(dimens.space12))
+        if (!held && waitUntil > now) {
+            // A held handle a restore lost track of can still be renewed by name: the chain checks.
+            Note("New claims from ${date(waitUntil)} · renewals now")
+            Spacer(Modifier.height(dimens.space8))
         }
-        EarthLabel(if (state.handle.isEmpty()) (if (waitUntil > now) "Renew a handle this identity holds" else "Claim a handle") else "Change to another handle")
-        Spacer(Modifier.height(dimens.space8))
         val parsed = Handles.parse(input)
         EarthTextField(
             value = input,
             onValueChange = { input = it.trim() },
             modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("@name") },
-            error = if (input.isNotEmpty() && parsed == null) "3-32 of a-z, 0-9 and -, no dash at either end" else null,
+            placeholder = { Text(if (held) "Change to @name" else "@name") },
+            error = if (input.isNotEmpty() && parsed == null) "3–32 of a–z, 0–9, dash" else null,
         )
         Spacer(Modifier.height(dimens.space8))
-        Note(
-            if (state.handle.isEmpty()) "One handle per person. If it is taken the chain refuses the claim and nothing but the fee is spent."
-            else "Changing frees @${state.handle} at once: anyone may claim it.",
-        )
+        Note(if (!held) "One per person · fee spent if taken" else "Frees @${state.handle} for anyone")
         Spacer(Modifier.height(dimens.space12))
-        EarthButton(
-            text = if (state.handle.isEmpty()) "Claim ${parsed?.let { "@$it" } ?: "handle"}" else "Change to ${parsed?.let { "@$it" } ?: "…"}",
-            onClick = { parsed?.let(onClaim) },
+        PillButton(
+            text = if (!held) "Claim ${parsed?.let { "@$it" } ?: "handle"}" else "Change to ${parsed?.let { "@$it" } ?: "…"}",
             enabled = parsed != null && parsed != state.handle,
-            modifier = Modifier.fillMaxWidth(),
-            colors = brandButtonColors(),
-        )
+        ) { parsed?.let(onClaim) }
+        if (held) {
+            Spacer(Modifier.height(dimens.space24))
+            Note("Anyone can claim it after")
+            Spacer(Modifier.height(dimens.space8))
+            Text(
+                "Release @${state.handle}",
+                style = EarthTypography.textMd,
+                fontWeight = FontWeight.SemiBold,
+                color = EarthColors.Utility.ErrorRed.utilityError700,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onRelease).padding(vertical = dimens.space12),
+            )
+        }
     }
 }
 
@@ -237,7 +202,12 @@ const val SWITCH_TO_SELF = -1
  * handle and caretaker vote over ([MoveOfferCard], on Identity where it
  * registered): a move proves knowledge of both identities' secrets, so it
  * comes after the switch and needs both on this phone (one phrase, for a
- * fresh identity here).
+ * fresh identity here). A wallet whose phrase is lost can move nothing.
+ *
+ * A fresh identity here helps only when this identity's secret leaked by
+ * itself, off the phone: the wallet holds in memory the key every
+ * generation derives from, so a phone or phrase compromise calls for a new
+ * wallet instead.
  *
  * Another wallet's recovery phrase is shown only after a fresh unlock and
  * is dropped when the screen is paused or left; the backup box needs the
@@ -294,130 +264,90 @@ fun SwitchIdentityScreen(
             onDismiss = { confirming = false },
         )
     }
+    val red = EarthColors.Utility.ErrorRed.utilityError700
     Page(modifier) {
-        EarthLabel("Switch identity")
-        Spacer(Modifier.height(dimens.space8))
-        Note(SWITCH_NOTE)
-        Spacer(Modifier.height(dimens.space8))
-        Note(
-            "A switch from a wallet whose recovery phrase is lost cannot move anything: the move needs " +
-                "that wallet's secret. Its handle and caretaker vote wait out their leases. Back up every " +
-                "wallet's recovery phrase.",
-        )
+        HeroColumn {
+            HeroIcon(R.drawable.ic_swap_vertical)
+            HeroGap()
+            HeroTitle("Switch identity")
+            HeroLine("Register your passport elsewhere")
+        }
+        Spacer(Modifier.height(dimens.space24))
         if (renewFirst != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Expiring soon · renew before switching", style = EarthTypography.textSm, color = red, modifier = Modifier.weight(1f))
+                PillButton("Renew", primary = false, modifier = Modifier.width(120.dp), onClick = onRenewFirst)
+            }
             Spacer(Modifier.height(dimens.space8))
-            Text(renewFirst, style = EarthTypography.textSm, color = EarthColors.Utility.ErrorRed.utilityError700)
-            Spacer(Modifier.height(dimens.space8))
-            EarthButton(
-                text = "Renew first",
-                onClick = onRenewFirst,
-                modifier = Modifier.fillMaxWidth(),
-                colors = EarthButtonDefaults.secondaryColors(),
-            )
         }
         if (unmoved != null) {
-            Spacer(Modifier.height(dimens.space8))
-            Text(
-                "$unmoved A move goes only from an identity to the one that replaced it, so after another switch " +
-                    "it can never move. Bring it here first, from the Identity screen.",
-                style = EarthTypography.textSm,
-                color = EarthColors.Utility.ErrorRed.utilityError700,
-            )
+            Text("$unmoved Strands for good after this.", style = EarthTypography.textSm, color = red)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = strandAccepted, onCheckedChange = { strandAccepted = it })
-                Text("Switch anyway and leave it where it is", style = EarthTypography.textSm, color = EarthColors.Text.textPrimary)
+                Text("Switch anyway", style = EarthTypography.textSm, color = EarthColors.Text.textPrimary)
             }
         }
-        Spacer(Modifier.height(dimens.space16))
-        EarthLabel("Switch to")
         val others = wallets.filter { it.index != currentIndex }
-        run {
+        @Composable
+        fun Choice(index: Int, title: String, detail: String) {
             fun pick() {
-                if (target == SWITCH_TO_SELF) return
-                target = SWITCH_TO_SELF; phrase = null; backedUp = false
-                onTargetChange(SWITCH_TO_SELF)
+                if (target == index) return
+                target = index; phrase = null; backedUp = false
+                onTargetChange(index)
             }
             Row(
                 Modifier.fillMaxWidth().clickable { pick() }.padding(vertical = dimens.space8),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Checkbox(checked = target == SWITCH_TO_SELF, onCheckedChange = { pick() })
+                Checkbox(checked = target == index, onCheckedChange = { pick() })
                 Column {
-                    Text("A fresh identity in this wallet", style = EarthTypography.textMd, color = EarthColors.Text.textPrimary)
-                    Text("Same recovery phrase", style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
+                    Text(title, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary)
+                    Text(detail, style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
                 }
             }
         }
-        if (target == SWITCH_TO_SELF) Note(FRESH_IDENTITY_NOTE)
-        others.forEach { w ->
-            fun pick() {
-                if (target == w.index) return
-                target = w.index; phrase = null; backedUp = false
-                onTargetChange(w.index)
-            }
-            Row(
-                Modifier.fillMaxWidth().clickable { pick() }.padding(vertical = dimens.space8),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Checkbox(checked = target == w.index, onCheckedChange = { pick() })
-                Column {
-                    Text(w.name, style = EarthTypography.textMd, color = EarthColors.Text.textPrimary)
-                    Text(Handles.truncate(w.address, 10, 6), style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
-                }
-            }
-        }
-        if (others.isEmpty()) Note("You have no other wallet on this phone. Create one to switch to it.")
-        targetWarning?.let { Note(it) }
-        EarthButton(
-            text = "Create a new wallet",
-            onClick = onCreateWallet,
-            modifier = Modifier.fillMaxWidth(),
-            colors = EarthButtonDefaults.secondaryColors(),
+        Choice(SWITCH_TO_SELF, "Fresh identity here", "Only if its secret leaked off-phone")
+        others.forEach { w -> Choice(w.index, w.name, Handles.truncate(w.address, 10, 6)) }
+        targetWarning?.let { Text(it, style = EarthTypography.textSm, color = red) }
+        Text(
+            "Create a new wallet",
+            style = EarthTypography.textMd,
+            fontWeight = FontWeight.SemiBold,
+            color = EarthAccent.ink,
+            modifier = Modifier.clickable(onClick = onCreateWallet).padding(vertical = dimens.space12),
         )
-        Spacer(Modifier.height(dimens.space16))
         val self = target == SWITCH_TO_SELF
         val shown = phrase
         if (shown != null && !self) {
             // Kept out of screenshots and the recents thumbnail while shown.
             network.erth.wallet.ui.components.SecureScreen()
-            Card {
-                Text(
-                    shown.trim().split(Regex("\\s+")).mapIndexed { i, w -> "${i + 1}. $w" }.joinToString("   "),
-                    style = EarthTypography.textMd,
-                    color = EarthColors.Text.textPrimary,
-                )
-            }
-            Note("Write these words down, in order, and keep them offline. Anyone with them controls that wallet.")
+            Spacer(Modifier.height(dimens.space8))
+            network.erth.wallet.ui.onboarding.SeedGrid(shown.trim().split(Regex("\\s+")))
+            Spacer(Modifier.height(dimens.space8))
+            Note("Anyone with this phrase can take your funds.")
         }
         // Ticked only once the phrase was shown for this target. A fresh
         // identity here is this wallet's own phrase: nothing new to back up.
         val canTick = target != null && revealedFor == target
         if (!self) {
-            EarthButton(
-                text = if (shown == null) "Show the new wallet's recovery phrase" else "Hide the recovery phrase",
-                onClick = { if (shown == null) confirming = true else phrase = null },
-                enabled = target != null,
-                modifier = Modifier.fillMaxWidth(),
-                colors = EarthButtonDefaults.secondaryColors(),
-            )
             Spacer(Modifier.height(dimens.space8))
+            PillButton(if (shown == null) "Show its phrase" else "Hide phrase", enabled = target != null, primary = false) {
+                if (shown == null) confirming = true else phrase = null
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = backedUp && canTick, onCheckedChange = { backedUp = it }, enabled = canTick)
-                Text(
-                    if (canTick) "I have backed up the new wallet's recovery phrase" else "Show the new wallet's recovery phrase to confirm you have backed it up",
-                    style = EarthTypography.textSm, color = EarthColors.Text.textPrimary,
-                )
+                Text("I wrote this phrase down", style = EarthTypography.textSm,
+                    color = if (canTick) EarthColors.Text.textPrimary else EarthColors.Text.textTertiary)
             }
-            Spacer(Modifier.height(dimens.space16))
         }
+        Spacer(Modifier.height(dimens.space16))
+        Note("This identity stops counting. Move handle and vote after.")
+        Spacer(Modifier.height(dimens.space8))
         val t = target
-        EarthButton(
-            text = if (self) "Switch: register a fresh identity" else "Switch: register there",
-            onClick = { if (t != null) onContinue(t) },
+        PillButton(
+            text = "Switch",
             enabled = t != null && (self || (backedUp && canTick)) && (unmoved == null || strandAccepted),
-            modifier = Modifier.fillMaxWidth(),
-            colors = brandButtonColors(),
-        )
+        ) { if (t != null) onContinue(t) }
     }
 }
 
@@ -426,6 +356,7 @@ fun SwitchIdentityScreen(
  * wallet on this phone, same passport) still holds, and a move for each.
  * Each move is proven with both identities' secrets and paid from the
  * previous wallet's private ERTH; it shows as done only once confirmed.
+ * Once moved, the previous identity can never hold either again.
  */
 @Composable
 fun MoveOfferCard(
@@ -444,13 +375,8 @@ fun MoveOfferCard(
     early?.let { go ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { early = null },
-            title = { androidx.compose.material3.Text("Move before the suggested time?") },
-            text = {
-                androidx.compose.material3.Text(
-                    "A move soon after your switch can be linked to it by its timing. The wallet suggests waiting until " +
-                        "${moveTime(offer.suggestedAt)}. You can still move now.",
-                )
-            },
+            title = { androidx.compose.material3.Text("Move now?") },
+            text = { androidx.compose.material3.Text("Timing can link it to your switch. Suggested: ${moveTime(offer.suggestedAt)}.") },
             confirmButton = { androidx.compose.material3.TextButton(onClick = { early = null; go() }) { androidx.compose.material3.Text("Move now") } },
             dismissButton = { androidx.compose.material3.TextButton(onClick = { early = null }) { androidx.compose.material3.Text("Wait") } },
         )
@@ -458,83 +384,37 @@ fun MoveOfferCard(
     val handleInFlight = offer.inFlight.any { it.kind == PendingMove.HANDLE && !it.confirmed }
     val voteInFlight = offer.inFlight.any { it.kind == PendingMove.CARETAKER && !it.confirmed }
     Column(modifier.fillMaxWidth()) {
-        EarthLabel("From your previous identity")
-        Spacer(Modifier.height(dimens.space8))
-        Note(
-            if (offer.withinWallet) {
-                "This identity replaced your previous one in this wallet (a renewal or a fresh identity). You can " +
-                    "bring what it holds here with no wait, while this is still the passport's live identity. The fee " +
-                    "comes from this wallet's private ERTH."
-            } else {
-                "This identity replaced the one in ${offer.fromName}. You can bring what it holds here with no wait, " +
-                    "while this is still the passport's live identity. The fee comes from ${offer.fromName}'s private ERTH."
-            },
+        Text(
+            if (offer.withinWallet) "From your previous identity" else "From ${offer.fromName}",
+            style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary,
         )
-        if (offer.suggestedAt > 0) {
-            Spacer(Modifier.height(dimens.space8))
-            Note(moveTimingText(offer, now))
-        }
-        Spacer(Modifier.height(dimens.space8))
+        val d = offer.deadline
+        val urgent = d > 0 && d - now <= network.erth.wallet.privacy.PrivacyWallet.MOVE_DEADLINE_MARGIN_SECONDS
+        Text(
+            when {
+                urgent -> "Move now · lost after ${moveTime(d)}"
+                offer.suggestedAt > now -> "Suggested after ${moveTime(offer.suggestedAt)}" + (if (d > 0) " · by ${moveTime(d)}" else "")
+                d > 0 -> "Move by ${moveTime(d)}"
+                else -> "Move before switching again"
+            },
+            style = EarthTypography.textSm,
+            color = if (urgent) EarthColors.Utility.ErrorRed.utilityError700 else EarthColors.Text.textTertiary,
+        )
+        Spacer(Modifier.height(dimens.space12))
         if (offer.handle.isNotEmpty() && !handleInFlight) {
-            if (offer.handleLive) EarthButton(
-                text = "Bring your handle @${offer.handle} to this identity",
-                onClick = { move(onBringHandle) },
-                modifier = Modifier.fillMaxWidth(),
-                colors = brandButtonColors(),
-            ) else Note("@${offer.handle} is in its renewal period: only a live handle can move, and the old identity can no longer renew it.")
+            if (offer.handleLive) PillButton("Bring @${offer.handle}") { move(onBringHandle) }
+            else Note("@${offer.handle} expired · can't move")
             Spacer(Modifier.height(dimens.space8))
         }
         if (offer.voteLive && !voteInFlight) {
-            EarthButton(
-                text = "Bring your Caretaker split to this identity",
-                onClick = { move(onBringVote) },
-                modifier = Modifier.fillMaxWidth(),
-                colors = brandButtonColors(),
-            )
+            PillButton("Bring Caretaker split") { move(onBringVote) }
             Spacer(Modifier.height(dimens.space8))
         }
         if (offer.inFlight.isNotEmpty()) {
-            Note(
-                if (handleInFlight || voteInFlight) "A move was sent and the chain has not confirmed it yet; this identity already counts it as pending."
-                else "A confirmed move has not been recorded in this wallet yet. It finds it on its own when it syncs; you can also record it now.",
-            )
+            Note(if (handleInFlight || voteInFlight) "Move sent · waiting for the chain" else "Move confirmed · not recorded yet")
             Spacer(Modifier.height(dimens.space8))
-            EarthButton(
-                text = "Check the moves again",
-                onClick = onCheckMoves,
-                modifier = Modifier.fillMaxWidth(),
-                colors = EarthButtonDefaults.secondaryColors(),
-            )
+            PillButton("Check again", primary = false, onClick = onCheckMoves)
         }
-        Note("Once moved, the previous identity can never hold a handle or caretaker vote again.")
-    }
-}
-
-/**
- * When to move, and the deadline: the earliest lease end of what is still
- * to move, past which the old identity can neither move nor renew it.
- * Docs quote these.
- */
-internal fun moveTimingText(offer: network.erth.wallet.privacy.PrivacySession.MoveOffer, now: Long): String {
-    val d = offer.deadline
-    val lost = "after that your previous identity can neither move nor renew it, and this identity cannot claim a " +
-        "handle or cast a caretaker vote for up to a year."
-    return when {
-        d > 0 && d - now <= network.erth.wallet.privacy.PrivacyWallet.MOVE_DEADLINE_MARGIN_SECONDS ->
-            "Move now: ${offer.deadlineWhat} on ${moveTime(d)}, too soon to wait after your switch; $lost"
-        offer.suggestedAt > now && d > 0 ->
-            "Suggested: move after ${moveTime(offer.suggestedAt)}. A move right after a switch can be linked to it by " +
-                "its timing, so the wallet picked a random time for you. Move by ${moveTime(d)}, when ${offer.deadlineWhat}; " +
-                "$lost The wallet reminds you; it never moves anything on its own."
-        offer.suggestedAt > now ->
-            "Suggested: move after ${moveTime(offer.suggestedAt)}. A move right after a switch can be linked to it by " +
-                "its timing, so the wallet picked a random time for you. Move before what your previous identity holds " +
-                "lapses: it can no longer renew it. The wallet reminds you; it never moves anything on its own."
-        d > 0 ->
-            "The suggested time to move has come. Move by ${moveTime(d)}, when ${offer.deadlineWhat}; $lost Move before you switch again, too."
-        else ->
-            "The suggested time to move has come. Move before what your previous identity holds lapses (it can no " +
-                "longer renew it), and before you switch again."
     }
 }
 
@@ -557,23 +437,3 @@ internal fun renewSoonText(handle: String, handleExpiresAt: Long, voteExpiresAt:
 /** A suggested move time, in the phone's time zone. */
 private fun moveTime(at: Long): String =
     java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(at * 1000))
-
-internal const val SWITCH_NOTE = "Switching moves your personhood to a fresh identity: another wallet's, or this " +
-    "wallet's next one. Your passport is registered again and your current identity stops counting as you. Once the " +
-    "switch lands, open Identity where you registered to bring your handle and caretaker vote over; each is a private " +
-    "move proven with both identities' secrets, which stay on this phone. Do it before their leases end, since only a " +
-    "live handle or vote moves and the old identity can no longer renew them, and before switching again, since a move " +
-    "goes only to the passport's live identity. Anything not moved stays with the old identity until it lapses, and " +
-    "the new identity cannot claim a handle or cast a caretaker vote until then (up to a year)."
-
-/**
- * Which fresh identity a compromise calls for: the next generation only for
- * a secret that leaked by itself, outside the phone. The wallet holds the
- * key every generation derives from in memory, so a memory compromise
- * exposes them all, and so does the phrase: a new wallet then.
- */
-internal const val FRESH_IDENTITY_NOTE = "Your passport is registered to this wallet's next identity, derived from the " +
-    "same recovery phrase. This helps only if this identity's secret leaked by itself outside this phone, for example " +
-    "in a proof's witness file or a log. It does not help if this phone may be compromised or your recovery phrase may " +
-    "be exposed: the wallet holds the key every identity of this wallet derives from in memory, and anyone with that " +
-    "key or the phrase can derive them all. Then create a new wallet, with a new phrase, and switch to it."

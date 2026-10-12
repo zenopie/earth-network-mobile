@@ -15,7 +15,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import network.erth.wallet.ui.components.HeroAmount
+import network.erth.wallet.ui.components.HeroColumn
+import network.erth.wallet.ui.components.HeroLine
 import network.erth.wallet.chain.Allocation
 import network.erth.wallet.privacy.chain.PrivacyQueries
 import network.erth.wallet.ui.components.EarthDetailRow
@@ -156,25 +162,24 @@ fun NotesScreen(
     modifier: Modifier = Modifier,
 ) = Page(modifier) {
     val dimens = EarthTheme.dimens
-    Note(
-        "A private payment can spend many notes at once, of any assets. Merge only when a balance is " +
-            "spread over more notes than one transaction carries, or to tidy staked ERTH into fewer notes.",
-    )
-    Spacer(Modifier.height(dimens.space16))
+    HeroColumn {
+        HeroAmount(formatUerth(shielded["uerth"] ?: 0L))
+        Text("ERTH", style = EarthTypography.textMd, color = EarthColors.Text.textTertiary)
+        HeroLine("Private", color = network.erth.wallet.ui.theme.EarthAccent.ink, icon = network.erth.wallet.R.drawable.ic_lock)
+    }
+    Spacer(Modifier.height(dimens.space24))
     shielded.filterValues { it > 0 }.toSortedMap().forEach { (denom, amount) ->
         val count = state?.mergeable?.get(denom)
-        Card {
-            Text(text = denom.label(), style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary)
-            EarthDetailRow("Balance", formatUerth(amount))
-            if (count != null) {
-                EarthDetailRow("Notes", "$count")
-                Spacer(Modifier.height(dimens.space8))
-                EarthButton(
-                    text = "Merge smallest notes",
-                    onClick = { onMerge(denom) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = EarthButtonDefaults.secondaryColors(),
+        Row(Modifier.fillMaxWidth().padding(vertical = dimens.space12), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(denom.label(), style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary, maxLines = 1)
+                Text(
+                    formatUerth(amount) + (count?.let { " · $it notes" } ?: ""),
+                    style = EarthTypography.textXs, color = EarthColors.Text.textTertiary, maxLines = 1,
                 )
+            }
+            if (count != null) {
+                network.erth.wallet.ui.earn.PillButton("Merge", primary = false, modifier = Modifier.width(110.dp)) { onMerge(denom) }
             }
         }
     }

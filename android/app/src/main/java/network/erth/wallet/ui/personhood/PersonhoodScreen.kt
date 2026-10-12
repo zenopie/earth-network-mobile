@@ -1,56 +1,47 @@
 package network.erth.wallet.ui.personhood
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import network.erth.wallet.R
-import network.erth.wallet.ui.components.EarthDetailRow
-import network.erth.wallet.ui.components.brandButtonColors
-import network.erth.wallet.ui.designsystem.component.EarthButton
+import network.erth.wallet.ui.components.HeroColumn
+import network.erth.wallet.ui.components.HeroGap
+import network.erth.wallet.ui.components.HeroIcon
+import network.erth.wallet.ui.components.HeroLine
+import network.erth.wallet.ui.components.HeroTitle
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
-import network.erth.wallet.ui.designsystem.theme.dimensions.EarthDimensions
-import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
-import network.erth.wallet.ui.theme.EarthAccent
+import network.erth.wallet.ui.earn.PillButton
 import network.erth.wallet.ui.theme.EarthTheme
 
 /**
- * Identity: whether this wallet is a verified human, and the ANML it earns.
+ * Identity: whether this wallet is a verified human, and what to do next.
  *
- * Built on their ReceiveView composition — a large-radius panel with a circular
- * badge, a title and a subtitle — because this screen answers the same kind of
- * question: one piece of state, stated plainly, with the actions under it.
+ * There is no way to leave from here: the chain has no MsgUnregister.
+ * Retiring a registration would free its nullifier, and Register pays the
+ * registration reward to any nullifier not already live, so leaving and
+ * returning would draw the reward pool repeatedly. A registration moves by
+ * registering the passport elsewhere (Switch identity); the handle and
+ * caretaker vote follow with move proofs (MoveOfferCard).
  *
- * The claim of what the passport scan does and does not send is on the screen
- * rather than in a help page. It is the objection someone has at the moment
- * they are asked to hold their passport to their phone, and answering it a tap
- * away is answering it too late.
+ * A renewal registers this wallet's next identity (PrivacyKeys generations):
+ * the chain refuses an identity it has seen (used_idcs, 1130), and one
+ * recovery phrase holds them all.
  */
 @Composable
 fun PersonhoodScreen(
     registered: Boolean,
-    anmlBalance: String?,
     onRegister: () -> Unit,
-    onClaim: () -> Unit,
     modifier: Modifier = Modifier,
-    claiming: Boolean = false,
     /** Opens the handle screen; [handle] is this identity's ("" for none). */
     onHandle: () -> Unit = {},
     handle: String = "",
@@ -61,183 +52,50 @@ fun PersonhoodScreen(
     onBringHandle: () -> Unit = {},
     onBringVote: () -> Unit = {},
     onCheckMoves: () -> Unit = {},
-    /**
-     * Not registered now, but registered before (lapsed, or switched away):
-     * a renewal registers this wallet's next identity (same phrase).
-     */
+    /** Not registered now, but registered before (lapsed, or switched away). */
     registeredBefore: Boolean = false,
 ) {
     val dimens = EarthTheme.dimens
-    val shape = RoundedCornerShape(EarthDimensions.Radius.radius3xl)
-
     Column(
         modifier
             .fillMaxSize()
             .background(EarthColors.Surfaces.bgPrimary)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = dimens.gutter),
-        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(dimens.space24))
-
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .background(
-                    if (registered) EarthAccent.tint else EarthColors.Surfaces.bgSecondary,
-                    shape,
-                )
-                .padding(dimens.space24),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Box(
-                Modifier
-                    .size(dimens.space48)
-                    .background(EarthColors.Surfaces.bgPrimary, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Image(
-                    modifier = Modifier.size(dimens.space24),
-                    painter = painterResource(
-                        if (registered) R.drawable.ic_shield_check else R.drawable.ic_zk_proof,
-                    ),
-                    colorFilter = ColorFilter.tint(
-                        if (registered) EarthAccent.ink else EarthColors.Text.textTertiary,
-                    ),
-                    contentDescription = null,
-                )
-            }
-            Spacer(Modifier.height(dimens.space12))
-            Text(
-                text = if (registered) "Verified human" else "Not registered",
-                style = EarthTypography.header5,
-                color = EarthColors.Text.textPrimary,
-            )
-            Spacer(Modifier.height(dimens.space4))
-            Text(
-                text = if (registered) {
-                    "This wallet counts as one person in the human allocation stream, " +
-                        "and earns ANML."
-                } else if (registeredBefore) {
-                    RENEW_HEADLINE
-                } else {
-                    "Register to count as one person in the human allocation stream."
+        HeroColumn {
+            HeroIcon(if (registered) R.drawable.ic_shield_check else R.drawable.ic_zk_proof, muted = !registered)
+            HeroGap()
+            HeroTitle(
+                when {
+                    registered -> "Verified human"
+                    registeredBefore -> "Registration ended"
+                    else -> "Not verified"
                 },
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textSecondary,
-                textAlign = TextAlign.Center,
+            )
+            HeroLine(
+                when {
+                    registered -> "Private · not linked to this wallet"
+                    registeredBefore -> "Renew to claim ANML and vote"
+                    else -> "Verify to claim ANML and vote"
+                },
             )
         }
-
-        if (registered) {
-            Spacer(Modifier.height(dimens.space16))
-            EarthDetailRow("ANML balance", anmlBalance ?: "0")
-            Spacer(Modifier.height(dimens.space16))
-            EarthButton(
-                text = "Claim ANML",
-                onClick = onClaim,
-                isLoading = claiming,
-                modifier = Modifier.fillMaxWidth(),
-                colors = brandButtonColors(),
-            )
-            Spacer(Modifier.height(dimens.space16))
-            // Transparent fees (an LP, IBC, a contract call) come from the
-            // public account: unshield ERTH there. The membership-proved
-            // transparent gas grant is gone from the chain and the backend.
-            Text(
-                "Need ERTH in your public account for fees? Unshield some from Portfolio.",
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textSecondary,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(dimens.space16))
-            EarthDetailRow("Handle", if (handle.isNotEmpty()) "@$handle" else "None")
-            Spacer(Modifier.height(dimens.space8))
-            EarthButton(
-                text = if (handle.isNotEmpty()) "Manage @$handle" else "Claim a handle",
-                onClick = onHandle,
-                modifier = Modifier.fillMaxWidth(),
-                colors = network.erth.wallet.ui.designsystem.component.EarthButtonDefaults.secondaryColors(),
-            )
-
-            if (moveOffer != null && moveOffer.anything) {
-                Spacer(Modifier.height(dimens.space24))
-                network.erth.wallet.ui.privacy.MoveOfferCard(moveOffer, onBringHandle, onBringVote, onCheckMoves)
+        Spacer(Modifier.height(32.dp))
+        when {
+            registered -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PillButton(if (handle.isNotEmpty()) "@$handle" else "Claim a handle", modifier = Modifier.weight(1f), onClick = onHandle)
+                    PillButton("Switch identity", primary = false, modifier = Modifier.weight(1f), onClick = onSwitch)
+                }
+                if (moveOffer != null && moveOffer.anything) {
+                    Spacer(Modifier.height(dimens.space24))
+                    network.erth.wallet.ui.privacy.MoveOfferCard(moveOffer, onBringHandle, onBringVote, onCheckMoves)
+                }
             }
-
-            // There is no way to leave from here: the chain has no
-            // MsgUnregister. Retiring a registration would free its nullifier,
-            // and Register pays the registration reward to any nullifier that
-            // is not already live, so leaving and returning would draw the
-            // reward pool repeatedly.
-            //
-            // Moving a registration still works: register the same passport
-            // from another wallet. Once that lands, the new wallet brings the
-            // handle and caretaker vote over with move proofs (MoveOfferCard).
-            Spacer(Modifier.height(dimens.space32))
-            Text(
-                text = SWITCH_EXPLAINER,
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textTertiary,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(dimens.space12))
-            EarthButton(
-                text = "Switch identity",
-                onClick = onSwitch,
-                modifier = Modifier.fillMaxWidth(),
-                colors = network.erth.wallet.ui.designsystem.component.EarthButtonDefaults.secondaryColors(),
-            )
-        } else if (registeredBefore) {
-            // The chain keeps every identity it ever registered (used_idcs) and
-            // refuses it again (1130), so a renewal registers this wallet's
-            // next identity (PrivacyKeys generations): one recovery phrase
-            // holds them all, and the previous one's handle and vote move over.
-            Spacer(Modifier.height(dimens.space24))
-            Text(
-                text = RENEW_EXPLAINER,
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textSecondary,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(dimens.space16))
-            EarthButton(
-                text = "Renew registration",
-                onClick = onRegister,
-                modifier = Modifier.fillMaxWidth(),
-                colors = brandButtonColors(),
-            )
-        } else {
-            Spacer(Modifier.height(dimens.space24))
-            EarthButton(
-                text = "Scan passport",
-                onClick = onRegister,
-                modifier = Modifier.fillMaxWidth(),
-                colors = brandButtonColors(),
-            )
-            Spacer(Modifier.height(dimens.space16))
-            Text(
-                text = "Your passport is read over NFC and proved on this device. " +
-                    "The chip data never leaves your phone — only the proof is " +
-                    "broadcast, and it does not identify you.",
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textTertiary,
-                textAlign = TextAlign.Center,
-            )
+            registeredBefore -> PillButton("Renew", onClick = onRegister)
+            else -> PillButton("Verify with passport", onClick = onRegister)
         }
         Spacer(Modifier.height(dimens.space32))
     }
 }
-
-/** Not registered now, registered before. */
-internal const val RENEW_HEADLINE = "Your registration in this wallet has ended, or was switched to another wallet."
-
-internal const val RENEW_EXPLAINER = "Renew to count as a person again. The wallet registers your passport to its " +
-    "next identity, derived from the same recovery phrase: no new wallet or phrase is needed. A handle or caretaker " +
-    "vote your previous identity still holds can be brought over from this screen afterwards."
-
-internal const val SWITCH_EXPLAINER = "Your registration lasts a year; renewing then registers this wallet's next " +
-    "identity, from the same recovery phrase. To move it to another wallet, or to a fresh identity in this one, " +
-    "switch identity, then bring your handle and caretaker vote over from the Identity screen. Nothing is paid " +
-    "the second time. A passport can switch once per day (UTC)."

@@ -148,6 +148,20 @@ object SessionManager {
     }
 
     /**
+     * Deletes the sealed blob and everything beside it, and ends the session:
+     * the install is back to first run. For removing the last wallet, whose
+     * phrase the user confirmed they hold.
+     */
+    @Synchronized
+    fun erase(context: Context) {
+        requireActive()
+        if (!softwarePrefs(context).edit().clear().commit()) throw Exception("Failed to erase wallet storage")
+        BiometricVault.forget(context)
+        UnlockAttempts.recordSuccess(context)
+        endSession()
+    }
+
+    /**
      * Whether a wallet has been sealed on this device, i.e. whether there is
      * anything for an unlock secret to open. Reads only the blob's presence.
      */

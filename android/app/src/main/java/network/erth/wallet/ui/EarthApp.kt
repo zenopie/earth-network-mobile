@@ -430,5 +430,6 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.Wallets -> "Wallets"
     EarthRoute.CreateWallet -> "New wallet"
     EarthRoute.ImportWallet -> "Import wallet"
+    EarthRoute.DeleteWallet -> "Delete wallet"
     is EarthRoute.TransactionDetail -> "Transaction"
 }

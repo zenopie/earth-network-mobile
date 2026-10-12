@@ -151,6 +151,11 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Re-read whether anything is sealed: deleting the last wallet erases it. */
+    fun recheckSetup() {
+        _needsPin.value = !hasPin()
+    }
+
     fun walletReady() {
         _needsWallet.value = false
     }

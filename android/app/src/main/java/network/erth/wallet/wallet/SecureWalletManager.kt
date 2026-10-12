@@ -151,6 +151,19 @@ object SecureWalletManager {
         }
     }
 
+    /**
+     * Removes the wallet at [index] from the sealed list and re-seals the rest
+     * under the session's secret. Not the last one: removing that is
+     * [SessionManager.erase], back to first run.
+     */
+    fun deleteWallet(context: Context, index: Int) {
+        requireSession()
+        val (rest, selected) = WalletList.remove(SessionManager.wallets(), index, SessionManager.selectedWalletIndex())
+        check(rest.length() > 0) { "the last wallet is erased, not deleted" }
+        SessionManager.saveWallets(context, rest)
+        SessionManager.setSelectedWalletIndex(context, selected)
+    }
+
     fun selectWallet(context: Context, walletIndex: Int) {
         requireSession()
         val count = SessionManager.wallets().length()

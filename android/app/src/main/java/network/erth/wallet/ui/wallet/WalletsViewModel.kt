@@ -9,7 +9,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import network.erth.wallet.notify.Notifications
+import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.wallet.SecureWalletManager
+import network.erth.wallet.wallet.SessionManager
 
 data class WalletsUiState(
     val wallets: List<SecureWalletManager.WalletInfo>,
@@ -128,6 +131,36 @@ class WalletsViewModel(app: Application) : AndroidViewModel(app) {
             }
             refresh()
             onImported()
+        }
+    }
+
+    /**
+     * Deletes the wallet at [index]: its private store and sent-tx log, then
+     * its entry in the sealed list. The last wallet erases the install
+     * instead, which ends the session and returns to first run.
+     * [onDeleted] gets whether that happened.
+     */
+    fun delete(index: Int, onFailed: () -> Unit, onDeleted: (erased: Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val last = SecureWalletManager.getWalletCount() <= 1
+                    PrivacySession.forgetPrivateDataAt(ctx, index)
+                    if (last) {
+                        Notifications.syncAnml(ctx, null)
+                        SessionManager.erase(ctx)
+                    } else {
+                        SecureWalletManager.deleteWallet(ctx, index)
+                    }
+                    last
+                }
+            }
+            result.onFailure { _error.value = "Could not delete the wallet."; onFailed() }
+            result.onSuccess { erased ->
+                if (!erased) refresh()
+                onDeleted(erased)
+            }
         }
     }
 
