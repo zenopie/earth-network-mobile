@@ -138,7 +138,7 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { SecureWalletManager.getWalletAddress(ctx) }.getOrNull()
             } ?: return@launch
 
-            _state.value = withContext(Dispatchers.IO) {
+            val fresh = withContext(Dispatchers.IO) {
                 val proposals = runCatching { Gov.proposals() }.getOrDefault(emptyList())
                 AllocationUiState(
                     // The caretaker split is cast anonymously, so the chain
@@ -162,7 +162,27 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
                     assemblyTallies = assemblyTallies(proposals),
                 )
             }
+            _state.value = keepIfEmptied(_state.value, fresh)
         }
+    }
+
+    /**
+     * [fresh], except where it came back empty over data already shown: a
+     * stream always has its built-in options and the proposal list never
+     * shrinks to nothing, so an empty answer is a read that failed (an edge
+     * turning reads away after a tx), not the chain's state.
+     */
+    private fun keepIfEmptied(prev: AllocationUiState?, fresh: AllocationUiState): AllocationUiState {
+        if (prev == null) return fresh
+        fun stream(old: StreamUiState, new: StreamUiState) =
+            if (new.options.isEmpty() && old.options.isNotEmpty()) old.copy(mine = new.mine) else new
+        val keepProposals = fresh.proposals.isEmpty() && prev.proposals.isNotEmpty()
+        return fresh.copy(
+            human = stream(prev.human, fresh.human),
+            capital = stream(prev.capital, fresh.capital),
+            proposals = if (keepProposals) prev.proposals else fresh.proposals,
+            assemblyTallies = if (keepProposals) prev.assemblyTallies else fresh.assemblyTallies,
+        )
     }
 
     /**

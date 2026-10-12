@@ -122,7 +122,16 @@ object EarthRest {
         // outside the try below.
         if (base.isBlank()) return 0 to ""
         checkBase(base, allowLocal)
+        return BusyRetry.run("GET", { getOnce(base, path, height, maxBytes, headers) }, { it.first })
+    }
 
+    private fun getOnce(
+        base: String,
+        path: String,
+        height: Long?,
+        maxBytes: Int,
+        headers: (HttpURLConnection) -> Unit,
+    ): Pair<Int, String> {
         val conn = URL(base + path).openConnection() as HttpURLConnection
         return try {
             // Never followed. A redirect would take the request to
@@ -166,6 +175,42 @@ object EarthRest {
             code to readBounded(stream)
         } finally {
             conn.disconnect()
+        }
+    }
+}
+
+/**
+ * Retrying a read the edge turned away.
+ *
+ * Earth's edge admits a few concurrent queries per client and answers 503 at
+ * once past that (Cloudflare can answer 429). After a tx the app fires a
+ * dozen reads together, and a turned-away one read as empty data blanks the
+ * screen it fed. Either code means the node never ran the query, so a GET is
+ * asked again after a short, jittered wait. Never a POST: a broadcast the
+ * edge refused is the caller's to resend, never this layer's.
+ */
+internal object BusyRetry {
+    const val MAX_RETRIES = 4
+
+    fun shouldRetry(method: String, code: Int, attempt: Int): Boolean =
+        method == "GET" && (code == 503 || code == 429) && attempt <= MAX_RETRIES
+
+    /** 250ms per attempt, plus up to 250ms so retries from parallel reads do not land together. */
+    fun delayMs(attempt: Int, jitter: Long): Long = 250L * attempt + jitter
+
+    fun <T> run(
+        method: String,
+        once: () -> T,
+        code: (T) -> Int,
+        sleep: (Long) -> Unit = { Thread.sleep(it) },
+        jitter: () -> Long = { kotlin.random.Random.nextLong(0, 251) },
+    ): T {
+        var attempt = 0
+        while (true) {
+            val r = once()
+            attempt++
+            if (!shouldRetry(method, code(r), attempt)) return r
+            sleep(delayMs(attempt, jitter()))
         }
     }
 }
