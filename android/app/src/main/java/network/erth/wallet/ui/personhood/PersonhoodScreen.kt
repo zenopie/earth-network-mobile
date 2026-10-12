@@ -86,7 +86,7 @@ fun PersonhoodScreen(
             registered -> {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     PillButton(if (handle.isNotEmpty()) "@$handle" else "Claim a handle", modifier = Modifier.weight(1f), onClick = onHandle)
-                    PillButton("Switch identity", primary = false, modifier = Modifier.weight(1f), onClick = onSwitch)
+                    PillButton("Move to another wallet", primary = false, modifier = Modifier.weight(1f), onClick = onSwitch)
                 }
                 if (moveOffer != null && moveOffer.anything) {
                     Spacer(Modifier.height(dimens.space24))

@@ -10,8 +10,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import network.erth.earth.proto.allocation.StreamId
-import network.erth.wallet.chain.Allocation
 import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.privacy.PrivacyWallet
 import network.erth.wallet.privacy.Reminders
@@ -28,8 +26,6 @@ data class PrivacyActionsState(
     val groundworksLease: Reminders.GroundworksLease? = null,
     /** The Groundworks split this wallet votes with (empty: none). */
     val groundworksSplit: Map<Long, Long> = emptyMap(),
-    val groundworksOptions: List<Allocation.OptionInfo>,
-    val ballots: List<PrivacyQueries.RemovalBallot>,
     /** Spendable note counts per denom where a merge would help. */
     val mergeable: Map<String, Int>,
     /** This wallet's private stake per validator: what may move now, what waits for its window. */
@@ -74,10 +70,9 @@ data class PersonalState(
 )
 
 /**
- * What the private Groundworks, removal-ballot, handle and note screens
- * show. Every read is public and whole: all Groundworks votes (ours found
- * by our notes' tags), all open ballots, all options; nothing asked names
- * this wallet.
+ * What the private Groundworks, handle and note screens show. Every read
+ * is public and whole: all Groundworks votes (ours found by our notes'
+ * tags); nothing asked names this wallet.
  */
 class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow<PrivacyActionsState?>(null)
@@ -95,8 +90,6 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                 groundworksVotes = votes.orEmpty(),
                 groundworksLease = lease,
                 groundworksSplit = w?.groundworksSplit.orEmpty(),
-                groundworksOptions = runCatching { Allocation.stream(StreamId.STREAM_ID_GROUNDWORKS).options }.getOrDefault(emptyList()),
-                ballots = runCatching { PrivacyQueries.removalBallots() }.getOrDefault(emptyList()),
                 mergeable = w?.let { it.mergeable() + it.stakeMergeable() }.orEmpty(),
                 stake = w?.let { runCatching { it.stakeHoldings() }.getOrNull() }.orEmpty(),
                 labelWindowSeconds = w?.labelWindowSeconds ?: 0L,

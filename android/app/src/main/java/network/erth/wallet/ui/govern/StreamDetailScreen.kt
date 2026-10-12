@@ -49,8 +49,8 @@ private enum class Lens { Actual, Preferred }
  * point.
  *
  * [groundworks]: the Groundworks vote's controls ([GroundworksVoteControls]),
- * shown under both lenses in place of the allocation button: the lease and
- * its renewal are not a chart's.
+ * in place of the allocation button and, like it, under Preferred only: they
+ * change your split, not the tally Actual shows.
  */
 @Composable
 fun StreamDetailScreen(
@@ -60,9 +60,23 @@ fun StreamDetailScreen(
     onEdit: () -> Unit,
     modifier: Modifier = Modifier,
     groundworks: (@Composable () -> Unit)? = null,
+    /** Lists a new option (Caretaker only: anyone may, for a burn). */
+    onAddOption: (() -> Unit)? = null,
+    /** This wallet's public address: an option paying it, or naming it claimer, offers Claim. */
+    address: String = "",
+    /** Raises a claim's confirmation for an option and what it would pay (uerth); null: no claims here. */
+    onClaim: ((network.erth.wallet.chain.Allocation.OptionInfo, Long) -> Unit)? = null,
+    /**
+     * Open on Preferred: the Groundworks lease is lapsed or due, and its Renew
+     * is a Preferred control (a reminder leads here to renew). Read as it
+     * loads, so a lease read after the screen opens still switches it.
+     */
+    startPreferred: Boolean = false,
 ) {
     val dimens = EarthTheme.dimens
-    var lens by remember { mutableStateOf(Lens.Actual) }
+    var lens by remember { mutableStateOf(if (startPreferred) Lens.Preferred else Lens.Actual) }
+    androidx.compose.runtime.LaunchedEffect(startPreferred) { if (startPreferred) lens = Lens.Preferred }
+    var opened by remember { mutableStateOf<Long?>(null) }
 
     Column(
         modifier
@@ -116,7 +130,11 @@ fun StreamDetailScreen(
         }
 
         Spacer(Modifier.height(dimens.space16))
-        PieLegend(slices)
+        PieLegend(
+            slices,
+            unfunded = if (lens == Lens.Actual) stream.unfundedSlices else emptyList(),
+            onOpen = { opened = it.optionId },
+        )
 
         val caption = when {
             lens == Lens.Actual -> null
@@ -135,7 +153,7 @@ fun StreamDetailScreen(
         // editing everyone's split rather than your own.
         if (groundworks != null) {
             // Your stake votes: every stake tx carries the split onto the note it makes.
-            if (eligibility == null) {
+            if (lens == Lens.Preferred && eligibility == null) {
                 Spacer(Modifier.height(dimens.space24))
                 groundworks()
             }
@@ -143,8 +161,107 @@ fun StreamDetailScreen(
             Spacer(Modifier.height(dimens.space24))
             network.erth.wallet.ui.earn.PillButton(if (stream.slices.isEmpty()) "Allocate" else "Change allocation", onClick = onEdit)
         }
+        onAddOption?.let {
+            Spacer(Modifier.height(dimens.space24))
+            Text(
+                "Add an option",
+                style = EarthTypography.textMd,
+                fontWeight = FontWeight.SemiBold,
+                color = network.erth.wallet.ui.theme.EarthAccent.ink,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = it).padding(vertical = dimens.space12),
+            )
+        }
         Spacer(Modifier.height(dimens.space32))
     }
+
+    stream?.options?.firstOrNull { it.id == opened }?.let { o ->
+        OptionSheet(
+            fund = title,
+            option = o,
+            share = stream.actualShares[o.id] ?: 0,
+            yours = stream.mine[o.id]?.takeIf { it > 0 },
+            owed = o.owed(stream.rewardIndex).min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(),
+            address = address,
+            onClaim = onClaim?.let { claim -> { owed: Long -> opened = null; claim(o, owed) } },
+            onDismiss = { opened = null },
+        )
+    }
+}
+
+/** One option: its actual share big, its description in full, then what it pays and to whom. */
+@Composable
+private fun OptionSheet(
+    fund: String,
+    option: network.erth.wallet.chain.Allocation.OptionInfo,
+    share: Int,
+    yours: Long?,
+    /** What a claim would pay now, in uerth. */
+    owed: Long,
+    address: String,
+    onClaim: ((Long) -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val dimens = EarthTheme.dimens
+    network.erth.wallet.ui.components.EarthSheet(onDismiss = onDismiss, bottomPadding = dimens.space24, fitContent = true) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(fund, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary)
+            Spacer(Modifier.height(dimens.space16))
+            Text(
+                "$share%",
+                style = EarthTypography.header2.copy(fontWeight = FontWeight.SemiBold),
+                color = EarthColors.Text.textPrimary,
+            )
+            when {
+                option.removed -> Text("Removed", style = EarthTypography.textSm, color = EarthColors.Utility.ErrorRed.utilityError700)
+                option.integrated -> Text("of the fund · built in", style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
+                else -> Text("of the fund · listed by anyone", style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
+            }
+            Spacer(Modifier.height(dimens.space16))
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(option.name, style = EarthTypography.textMd, color = EarthColors.Text.textPrimary, textAlign = TextAlign.Center)
+            }
+            Spacer(Modifier.height(dimens.space16))
+        }
+        yours?.let { OptionRow("Your vote", "$it%") }
+        if (option.integrated) {
+            OptionRow("Pays", handlerName(option.handler))
+        } else {
+            OptionRow("Pays to", option.recipient.ifEmpty { "—" })
+            OptionRow("Claim by", option.claimer.ifEmpty { "Anyone" })
+        }
+        OptionRow("Waiting to be paid", "${network.erth.wallet.ui.components.formatUerth(owed)} ERTH")
+        OptionRow("Option", "#${option.id}")
+        // Offered only to whom it concerns: the payee, or the claimer it names.
+        // Anyone may claim an option without a claimer, but the button would be noise to everyone else.
+        val mine = address.isNotEmpty() && (option.recipient == address || option.claimer == address)
+        if (onClaim != null && !option.integrated && mine) {
+            Spacer(Modifier.height(dimens.space16))
+            network.erth.wallet.ui.earn.PillButton(
+                "Claim ${network.erth.wallet.ui.components.formatUerth(owed)} ERTH",
+                enabled = owed > 0 && (option.claimer.isEmpty() || option.claimer == address),
+            ) { onClaim(owed) }
+        }
+    }
+}
+
+@Composable
+private fun OptionRow(label: String, value: String) {
+    val dimens = EarthTheme.dimens
+    Row(Modifier.fillMaxWidth().padding(vertical = dimens.space8), verticalAlignment = Alignment.Top) {
+        Text(label, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
+        Spacer(Modifier.weight(1f).padding(horizontal = dimens.space8))
+        androidx.compose.foundation.text.selection.SelectionContainer {
+            Text(value, style = EarthTypography.textSm, color = EarthColors.Text.textPrimary, textAlign = TextAlign.End)
+        }
+    }
+}
+
+/** A module handler in words. */
+private fun handlerName(handler: String): String = when (handler) {
+    "registration_rewards" -> "Registration rewards"
+    "lp_rewards" -> "Liquidity providers"
+    else -> handler.replace('_', ' ').split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }.ifEmpty { "—" }
 }
 
 @Composable

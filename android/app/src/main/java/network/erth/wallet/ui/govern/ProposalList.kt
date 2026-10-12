@@ -143,49 +143,6 @@ private fun ProposalRow(
     }
 }
 
-/** An open removal ballot, as the proposal list shows it. */
-data class OpenBallot(val optionId: Long, val title: String, val yes: Long, val no: Long, val closesAt: Long)
-
-/**
- * A removal ballot in a proposal's card shape, voted on the card itself:
- * what it removes, its tally, Yes / No for a registered person. Each vote
- * raises its own confirmation.
- */
-@Composable
-internal fun BallotRow(ballot: OpenBallot, onVote: ((yes: Boolean) -> Unit)?) {
-    val dimens = EarthTheme.dimens
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(EarthDimensions.Radius.radius3xl))
-            .background(EarthColors.Surfaces.bgSecondary)
-            .padding(dimens.space16),
-    ) {
-        Text(
-            "Removal · Closes ${network.erth.wallet.ui.privacy.date(ballot.closesAt)}",
-            style = EarthTypography.textXs,
-            color = EarthColors.Text.textTertiary,
-        )
-        Spacer(Modifier.height(dimens.space4))
-        Text(
-            text = ballot.title,
-            style = EarthTypography.textMd,
-            fontWeight = FontWeight.Bold,
-            color = EarthColors.Text.textPrimary,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text("${ballot.yes} yes · ${ballot.no} no", style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
-        if (onVote != null) {
-            Spacer(Modifier.height(dimens.space12))
-            Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(dimens.space8)) {
-                network.erth.wallet.ui.earn.PillButton("Yes", modifier = Modifier.weight(1f)) { onVote(true) }
-                network.erth.wallet.ui.earn.PillButton("No", primary = false, modifier = Modifier.weight(1f)) { onVote(false) }
-            }
-        }
-    }
-}
-
 @Composable
 private fun androidx.compose.foundation.layout.RowScope.TallyPart(
     amount: Long,

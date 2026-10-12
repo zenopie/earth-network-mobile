@@ -82,8 +82,6 @@ sealed interface EarthRoute {
 
     data object Personhood : EarthRoute
 
-    /** The human chamber's ballots to remove Groundworks options. */
-    data object RemovalBallots : EarthRoute
 
     /** Shielded notes per asset, and merging small ones. */
     data object Notes : EarthRoute
@@ -97,6 +95,8 @@ sealed interface EarthRoute {
     data object CreateWallet : EarthRoute
     data object ImportWallet : EarthRoute
     data object DeleteWallet : EarthRoute
+    /** List a new Caretaker option. */
+    data object AddCaretakerOption : EarthRoute
 
     data class TransactionDetail(val txHash: String) : EarthRoute
 }

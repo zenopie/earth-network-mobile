@@ -4,6 +4,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,6 +16,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,43 +100,73 @@ fun PieChart(
  * a row to its arc.
  */
 @Composable
-fun PieLegend(slices: List<AllocationSlice>, modifier: Modifier = Modifier) {
+fun PieLegend(
+    slices: List<AllocationSlice>,
+    modifier: Modifier = Modifier,
+    /** Options with no votes: folded behind a toggle (anyone can list one, so there may be many). */
+    unfunded: List<AllocationSlice> = emptyList(),
+    /** Opens a row's option; null leaves the rows inert. */
+    onOpen: ((AllocationSlice) -> Unit)? = null,
+) {
     val dimens = EarthTheme.dimens
+    var showUnfunded by remember { mutableStateOf(false) }
     Column(modifier) {
-        slices.forEachIndexed { i, slice ->
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = dimens.space4),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    Modifier
-                        .size(10.dp)
-                        .background(EarthAccent.ink.stepped(i), CircleShape),
-                )
-                Spacer(Modifier.padding(horizontal = dimens.space4))
-                Text(
-                    text = slice.name,
-                    style = EarthTypography.textSm,
-                    color = EarthColors.Text.textPrimary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = "${slice.percent}%",
-                    style = EarthTypography.textSm,
-                    fontWeight = FontWeight.SemiBold,
-                    color = EarthColors.Text.textSecondary,
-                )
-            }
+        slices.forEachIndexed { i, slice -> LegendRow(slice, EarthAccent.ink.stepped(i), onOpen) }
+        if (unfunded.isNotEmpty()) {
+            if (showUnfunded) unfunded.forEach { LegendRow(it, EarthColors.Text.textTertiary.copy(alpha = 0.4f), onOpen) }
+            Text(
+                if (showUnfunded) "Hide options with no votes" else "Show ${unfunded.size} with no votes",
+                style = EarthTypography.textSm,
+                fontWeight = FontWeight.SemiBold,
+                color = EarthAccent.ink,
+                modifier = Modifier.clickable { showUnfunded = !showUnfunded }.padding(vertical = dimens.space8),
+            )
         }
-        if (slices.isEmpty()) {
+        if (slices.isEmpty() && unfunded.isEmpty()) {
             Spacer(Modifier.height(dimens.space8))
             Text(
                 text = "Nothing allocated.",
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
             )
+        }
+    }
+}
+
+/** A legend row: dot, the option's name with what it is under it, its share. */
+@Composable
+private fun LegendRow(slice: AllocationSlice, dot: Color, onOpen: ((AllocationSlice) -> Unit)?) {
+    val dimens = EarthTheme.dimens
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (onOpen != null) Modifier.clickable { onOpen(slice) } else Modifier)
+            .padding(vertical = dimens.space8),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(10.dp).background(dot, CircleShape))
+        Spacer(Modifier.padding(horizontal = dimens.space4))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = slice.name,
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (slice.source.isNotEmpty()) {
+                Text(slice.source, style = EarthTypography.textXs, color = EarthColors.Text.textTertiary, maxLines = 1)
+            }
+        }
+        Text(
+            text = "${slice.percent}%",
+            style = EarthTypography.textSm,
+            fontWeight = FontWeight.SemiBold,
+            color = EarthColors.Text.textSecondary,
+        )
+        if (onOpen != null) {
+            Spacer(Modifier.padding(horizontal = dimens.space2))
+            Text("›", style = EarthTypography.textLg, color = EarthColors.Text.textTertiary)
         }
     }
 }

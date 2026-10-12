@@ -72,40 +72,7 @@ internal fun Card(content: @Composable () -> Unit) {
     ) { content() }
 }
 
-private fun optionName(options: List<Allocation.OptionInfo>, id: Long) =
-    options.firstOrNull { it.id == id }?.description?.ifBlank { null } ?: "Option $id"
-
 internal fun date(unix: Long): String = SimpleDateFormat("d MMM yyyy, HH:mm", Locale.getDefault()).format(Date(unix * 1000))
-
-/**
- * Removal ballots: the human chamber's say over Groundworks options. Any
- * registered person may open one against an option (one open ballot per
- * option, no deposit) and vote in it; who opened or voted is never known,
- * and a second vote replaces the first. Open ballots are voted on from the
- * proposal list; this lists the options a ballot can still be opened against.
- */
-@Composable
-fun ProposeRemovalScreen(
-    state: PrivacyActionsState?,
-    onPropose: (optionId: Long) -> Unit,
-    modifier: Modifier = Modifier,
-) = Page(modifier) {
-    val dimens = EarthTheme.dimens
-    if (state == null) {
-        Note("Loading…")
-        return@Page
-    }
-    val open = state.ballots.map { it.optionId }.toSet()
-    val options = state.groundworksOptions.filter { !it.removed && it.id !in open }
-    if (options.isEmpty()) Note("No option to propose against")
-    options.forEach { o ->
-        Row(Modifier.fillMaxWidth().padding(vertical = dimens.space8), verticalAlignment = Alignment.CenterVertically) {
-            Text(o.description.ifBlank { "Option ${o.id}" }, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold,
-                color = EarthColors.Text.textPrimary, modifier = Modifier.weight(1f), maxLines = 2)
-            network.erth.wallet.ui.earn.PillButton("Propose", primary = false, modifier = Modifier.width(120.dp)) { onPropose(o.id) }
-        }
-    }
-}
 
 /**
  * Shielded notes, per asset. A private payment spends any number of notes,

@@ -76,12 +76,12 @@ fun AllocationEditSheet(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = option.description,
+                        text = option.name,
                         style = EarthTypography.textMd,
                         color = EarthColors.Text.textPrimary,
                     )
                     Text(
-                        text = option.kind.humanise(),
+                        text = option.source,
                         style = EarthTypography.textXs,
                         color = EarthColors.Text.textTertiary,
                     )
@@ -122,18 +122,6 @@ fun AllocationEditSheet(
         Spacer(Modifier.height(dimens.space16))
     }
 }
-
-/**
- * "ALLOCATION_KIND_INTEGRATED" -> "Integrated".
- *
- * The chain names its enums for the wire; leaving that on screen shows the
- * reader the protobuf rather than the choice they are making.
- */
-private fun String.humanise(): String =
-    removePrefix("ALLOCATION_KIND_")
-        .lowercase()
-        .replace('_', ' ')
-        .replaceFirstChar { it.uppercase() }
 
 /** Five at a time: 100 divides evenly, and twenty taps is the worst case. */
 private const val STEP = 5L

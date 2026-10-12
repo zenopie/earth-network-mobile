@@ -25,6 +25,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -192,13 +193,15 @@ fun HandleScreen(
 }
 
 /**
- * A voluntary switch of identity: the same passport registered to another
- * of this phone's wallets' next identity. The chain zeroes the live leaf and
- * makes a new one. Once the switch has landed, the new identity can bring this one's
- * handle and caretaker vote over ([MoveOfferCard], on Identity where it
- * registered): a move proves knowledge of both identities' secrets, so it
- * comes after the switch and needs both on this phone. A wallet whose
- * phrase is lost can move nothing.
+ * Moving to another wallet: the same passport registered to another of this
+ * phone's wallets' next identity, a new one or one already here. The chain
+ * zeroes the live leaf and makes a new one. Once that lands, the new identity
+ * brings this one's handle and caretaker vote over ([MoveOfferCard], on
+ * Identity where it registered): a move proves knowledge of both identities'
+ * secrets, so it needs both wallets on this phone, and a wallet whose phrase
+ * is lost can move nothing. Hence the recommended target is a new wallet
+ * (whose creation shows its phrase), and an existing one asks the user to
+ * say they hold its phrase.
  *
  * A fresh identity in this wallet is not offered: it derives from the same
  * phrase, so it helps only when an identity secret leaked by itself off the
@@ -206,21 +209,22 @@ fun HandleScreen(
  * key every generation derives from). Renewal (Identity) still registers
  * this wallet's next identity.
  *
- * Another wallet's recovery phrase is shown only after a fresh unlock and
- * is dropped when the screen is paused or left; the backup box needs the
- * phrase shown first.
+ * Two steps: where to ([target] null), then the passport scan for [target].
  */
 @Composable
-fun SwitchIdentityScreen(
+fun MoveToWalletScreen(
     wallets: List<SecureWalletManager.WalletInfo>,
     currentIndex: Int,
-    onContinue: (targetIndex: Int) -> Unit,
-    onCreateWallet: () -> Unit,
-    /** The recovery phrase of the wallet at an index, read for display only (after a fresh unlock). */
-    revealPhrase: (Int) -> String?,
+    /** The chosen wallet, or null while choosing. */
+    target: Int?,
+    /** Whether [target] was created in this flow (its phrase was just shown). */
+    targetIsNew: Boolean,
+    onPick: (Int) -> Unit,
+    onNewWallet: () -> Unit,
+    onBack: () -> Unit,
+    onScan: (Int) -> Unit,
     /** What the chosen target already holds, as a warning (null: nothing). */
     targetWarning: String?,
-    onTargetChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
     /**
      * What this identity's predecessor (on this phone) still holds that has
@@ -237,112 +241,103 @@ fun SwitchIdentityScreen(
     onRenewFirst: () -> Unit = {},
 ) {
     val dimens = EarthTheme.dimens
-    var target by remember { mutableStateOf<Int?>(null) }
-    var backedUp by remember { mutableStateOf(false) }
-    var phrase by remember { mutableStateOf<String?>(null) }
-    var revealedFor by remember { mutableStateOf<Int?>(null) }
-    var confirming by remember { mutableStateOf(false) }
-    var strandAccepted by remember { mutableStateOf(false) }
-    // The phrase lives only while the screen is in front: gone on pause and when left.
-    val owner = LocalLifecycleOwner.current
-    DisposableEffect(owner) {
-        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_PAUSE || e == Lifecycle.Event.ON_STOP) phrase = null }
-        owner.lifecycle.addObserver(obs)
-        onDispose { owner.lifecycle.removeObserver(obs); phrase = null }
-    }
-    if (confirming) {
-        network.erth.wallet.ui.unlock.ConfirmUnlockDialog(
-            onConfirmed = {
-                confirming = false
-                val t = target
-                phrase = t?.let(revealPhrase)
-                if (phrase != null) revealedFor = t
-            },
-            onDismiss = { confirming = false },
-        )
-    }
     val red = EarthColors.Utility.ErrorRed.utilityError700
+    var strandAccepted by remember { mutableStateOf(false) }
+    var hasPhrase by remember(target) { mutableStateOf(false) }
+    val chosen = target?.let { t -> wallets.firstOrNull { it.index == t } }
     Page(modifier) {
-        HeroColumn {
-            HeroIcon(R.drawable.ic_swap_vertical)
-            HeroGap()
-            HeroTitle("Switch identity")
-            HeroLine("Move your passport to another wallet")
-        }
-        Spacer(Modifier.height(dimens.space24))
-        if (renewFirst != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Expiring soon · renew before switching", style = EarthTypography.textSm, color = red, modifier = Modifier.weight(1f))
-                PillButton("Renew", primary = false, modifier = Modifier.width(120.dp), onClick = onRenewFirst)
+        if (target == null) {
+            HeroColumn {
+                HeroIcon(R.drawable.ic_swap_vertical)
+                HeroGap()
+                HeroTitle("Where to?")
+                HeroLine("This wallet stops counting as you")
             }
-            Spacer(Modifier.height(dimens.space8))
-        }
-        if (unmoved != null) {
-            Text("$unmoved Strands for good after this.", style = EarthTypography.textSm, color = red)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = strandAccepted, onCheckedChange = { strandAccepted = it })
-                Text("Switch anyway", style = EarthTypography.textSm, color = EarthColors.Text.textPrimary)
+            Spacer(Modifier.height(dimens.space24))
+            if (renewFirst != null) {
+                Text("Expiring soon · renew before moving", style = EarthTypography.textSm, color = red)
+                Text(
+                    "Renew first",
+                    style = EarthTypography.textSm,
+                    fontWeight = FontWeight.SemiBold,
+                    color = EarthAccent.ink,
+                    modifier = Modifier.clickable(onClick = onRenewFirst).padding(vertical = dimens.space8),
+                )
             }
-        }
-        val others = wallets.filter { it.index != currentIndex }
-        @Composable
-        fun Choice(index: Int, title: String, detail: String) {
-            fun pick() {
-                if (target == index) return
-                target = index; phrase = null; backedUp = false
-                onTargetChange(index)
-            }
-            Row(
-                Modifier.fillMaxWidth().clickable { pick() }.padding(vertical = dimens.space8),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Checkbox(checked = target == index, onCheckedChange = { pick() })
-                Column {
-                    Text(title, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary)
-                    Text(detail, style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
+            if (unmoved != null) {
+                Text("$unmoved Moving strands it.", style = EarthTypography.textSm, color = red)
+                Row(Modifier.fillMaxWidth().clickable { strandAccepted = !strandAccepted }.padding(vertical = dimens.space8), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Move anyway", style = EarthTypography.textMd, color = EarthColors.Text.textPrimary, modifier = Modifier.weight(1f))
+                    androidx.compose.material3.Switch(
+                        checked = strandAccepted,
+                        onCheckedChange = { strandAccepted = it },
+                        colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = EarthAccent.ink),
+                    )
                 }
             }
+            val open = unmoved == null || strandAccepted
+            @Composable
+            fun Option(title: String, detail: String, mark: String, recommended: Boolean, onClick: () -> Unit) {
+                Row(
+                    Modifier.fillMaxWidth().clickable(enabled = open, onClick = onClick).padding(vertical = dimens.space12),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    androidx.compose.foundation.layout.Box(
+                        Modifier.size(44.dp).background(if (recommended) EarthAccent.tint else EarthColors.Surfaces.bgTertiary, androidx.compose.foundation.shape.CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(mark, style = EarthTypography.textMd, fontWeight = FontWeight.Bold,
+                            color = if (recommended) EarthAccent.ink else EarthColors.Text.textTertiary)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(title, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold,
+                            color = if (open) EarthColors.Text.textPrimary else EarthColors.Text.textTertiary, maxLines = 1)
+                        Text(detail, style = EarthTypography.textXs,
+                            color = if (recommended && open) EarthAccent.ink else EarthColors.Text.textTertiary, maxLines = 1)
+                    }
+                    Text("›", style = EarthTypography.textLg, color = EarthColors.Text.textTertiary)
+                }
+            }
+            Option("New wallet", "Recommended", "+", recommended = true, onClick = onNewWallet)
+            wallets.filter { it.index != currentIndex }.forEach { w ->
+                Option(w.name, Handles.truncate(w.address, 10, 6), w.name.take(1).uppercase(), recommended = false) { onPick(w.index) }
+            }
+            return@Page
         }
-        if (others.isEmpty()) Note("No other wallets on this phone")
-        others.forEach { w -> Choice(w.index, w.name, Handles.truncate(w.address, 10, 6)) }
-        targetWarning?.let { Text(it, style = EarthTypography.textSm, color = red) }
+        val name = chosen?.name ?: "That wallet"
+        HeroColumn {
+            HeroIcon(R.drawable.ic_zk_proof)
+            HeroGap()
+            HeroTitle("Scan your passport")
+            HeroLine("$name will count as you")
+        }
+        Spacer(Modifier.height(dimens.space24))
+        targetWarning?.let {
+            Text(it, style = EarthTypography.textSm, color = red, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(dimens.space8))
+        }
+        // A move after the switch needs both wallets' secrets: a wallet whose phrase is lost moves nothing.
+        if (!targetIsNew) {
+            Row(Modifier.fillMaxWidth().clickable { hasPhrase = !hasPhrase }.padding(vertical = dimens.space8), verticalAlignment = Alignment.CenterVertically) {
+                Text("I have $name's phrase", style = EarthTypography.textMd, color = EarthColors.Text.textPrimary, modifier = Modifier.weight(1f))
+                androidx.compose.material3.Switch(
+                    checked = hasPhrase,
+                    onCheckedChange = { hasPhrase = it },
+                    colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = EarthAccent.ink),
+                )
+            }
+            Spacer(Modifier.height(dimens.space8))
+        }
+        PillButton("Scan passport", enabled = targetIsNew || hasPhrase) { onScan(target) }
         Text(
-            "Create a new wallet",
+            "Back",
             style = EarthTypography.textMd,
             fontWeight = FontWeight.SemiBold,
-            color = EarthAccent.ink,
-            modifier = Modifier.clickable(onClick = onCreateWallet).padding(vertical = dimens.space12),
+            color = EarthColors.Text.textTertiary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onBack).padding(vertical = dimens.space12),
         )
-        val shown = phrase
-        if (shown != null) {
-            // Kept out of screenshots and the recents thumbnail while shown.
-            network.erth.wallet.ui.components.SecureScreen()
-            Spacer(Modifier.height(dimens.space8))
-            network.erth.wallet.ui.onboarding.SeedGrid(shown.trim().split(Regex("\\s+")))
-            Spacer(Modifier.height(dimens.space8))
-            Note("Anyone with this phrase can take your funds.")
-        }
-        // Ticked only once the phrase was shown for this target.
-        val canTick = target != null && revealedFor == target
-        run {
-            Spacer(Modifier.height(dimens.space8))
-            PillButton(if (shown == null) "Show its phrase" else "Hide phrase", enabled = target != null, primary = false) {
-                if (shown == null) confirming = true else phrase = null
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = backedUp && canTick, onCheckedChange = { backedUp = it }, enabled = canTick)
-                Text("I wrote this phrase down", style = EarthTypography.textSm,
-                    color = if (canTick) EarthColors.Text.textPrimary else EarthColors.Text.textTertiary)
-            }
-        }
-        Spacer(Modifier.height(dimens.space16))
-        Note("This identity stops counting. Move handle and vote after.")
-        Spacer(Modifier.height(dimens.space8))
-        val t = target
-        PillButton(
-            text = "Switch",
-            enabled = t != null && backedUp && canTick && (unmoved == null || strandAccepted),
-        ) { if (t != null) onContinue(t) }
     }
 }
 

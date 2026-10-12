@@ -28,6 +28,7 @@ import network.erth.wallet.wallet.SecureWalletManager
 import network.erth.wallet.privacy.PrivacyWallet
 import network.erth.wallet.privacy.tx.ShieldMove
 import network.erth.wallet.privacy.tx.PrivateMsgs
+import network.erth.wallet.chain.Allocation
 import network.erth.wallet.chain.EarthTx
 import network.erth.earth.proto.shielded.MsgShield
 import cosmos.base.v1beta1.CoinOuterClass
@@ -66,10 +67,9 @@ import network.erth.wallet.ui.privacy.PrivacyActionsState
 import network.erth.wallet.ui.privacy.PrivacyActionsViewModel
 import network.erth.wallet.ui.privacy.HandleScreen
 import network.erth.wallet.ui.privacy.PersonalState
-import network.erth.wallet.ui.privacy.SwitchIdentityScreen
+import network.erth.wallet.ui.privacy.MoveToWalletScreen
 import network.erth.wallet.privacy.Reminders
 import network.erth.wallet.privacy.handles.Handles
-import network.erth.wallet.ui.privacy.ProposeRemovalScreen
 import network.erth.wallet.chain.math.SwapMath
 import cosmos.gov.v1.WeightedVoteOption
 import network.erth.wallet.ui.settings.AboutScreen
@@ -152,6 +152,11 @@ internal fun EarthContent(
     // The wallet being deleted and its phrase, read after a fresh unlock;
     // held only while its delete screen is up.
     var deleteTarget by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    // Moving to another wallet: the chosen wallet (null while choosing),
+    // whether this flow created it, and whether a create was started from it.
+    var moveTarget by remember { mutableStateOf<Int?>(null) }
+    var moveTargetNew by remember { mutableStateOf(false) }
+    var creatingForMove by remember { mutableStateOf(false) }
     var liquidity by remember { mutableStateOf<Pair<LiquidityAction, Dex.Pool>?>(null) }
     // Shield / Unshield from the wallet home.
     // The activity row whose detail sheet is open (by id: the live row is shown).
@@ -235,34 +240,6 @@ internal fun EarthContent(
         }
     }
 
-    // Removal ballots: a membership proof in the ballot's scope, so who
-    // opened or voted is never known; a second vote replaces the first.
-    fun proposeRemoval(optionId: Long) {
-        tx.requestPrivate(
-            details = TxConfirmDetails(
-                action = "Propose removing option $optionId",
-                msgTypeUrl = PrivateMsgs.PROPOSE_REMOVAL,
-                balanceUerth = 0L,
-            ),
-            shieldedErth = loaded.shieldedErthUerth,
-            onSuccess = { privacy.refresh() },
-            run = { ctx -> PrivacySession.wallet(ctx).proposeRemoval(optionId).hash },
-        )
-    }
-
-    fun voteRemoval(optionId: Long, yes: Boolean) {
-        tx.requestPrivate(
-            details = TxConfirmDetails(
-                action = "Vote ${if (yes) "Yes" else "No"} on removing option $optionId",
-                msgTypeUrl = PrivateMsgs.VOTE_REMOVAL,
-                balanceUerth = 0L,
-            ),
-            shieldedErth = loaded.shieldedErthUerth,
-            onSuccess = { privacy.refresh() },
-            run = { ctx -> PrivacySession.wallet(ctx).voteRemoval(optionId, yes).hash },
-        )
-    }
-
     // Votes all of this wallet's stake in Groundworks with [split] (empty:
     // stops): one restake per validator, sent one after the other on this one
     // confirmation (PrivacyWallet.castGroundworks).
@@ -276,7 +253,7 @@ internal fun EarthContent(
                 balanceUerth = 0L,
                 amountLabel = if (split.isEmpty()) null else "Split",
                 amountValue = split.entries.sortedByDescending { it.value }.joinToString(", ") { (id, pct) ->
-                    val name = options.firstOrNull { it.id == id }?.description?.ifBlank { null } ?: "Option $id"
+                    val name = options.firstOrNull { it.id == id }?.name ?: "Option $id"
                     "$name $pct%"
                 }.ifEmpty { null },
                 recipient = if (validators == 1) "At least 1 transaction" else "At least $validators transactions, one per validator",
@@ -470,7 +447,6 @@ internal fun EarthContent(
             stakedUerth = privateStake,
             onOpenStream = { nav.push(EarthRoute.Stream(it == StreamId.STREAM_ID_CARETAKER)) },
             onOpenProposals = { nav.push(EarthRoute.Proposals) },
-            openBallots = privacyState?.ballots?.size ?: 0,
             modifier = inset,
         )
 
@@ -588,7 +564,7 @@ internal fun EarthContent(
                 registered = loaded.registered,
                 onRegister = onRegister,
                 onHandle = { nav.push(EarthRoute.Handle) },
-                onSwitch = { nav.push(EarthRoute.SwitchIdentity) },
+                onSwitch = { moveTarget = null; moveTargetNew = false; nav.push(EarthRoute.SwitchIdentity) },
                 registeredBefore = loaded.registeredBefore,
                 handle = personal?.handle.orEmpty(),
                 moveOffer = moveOffer,
@@ -710,10 +686,14 @@ internal fun EarthContent(
             val renewFirst = personal?.takeIf { it.identityLive }?.let { p ->
                 network.erth.wallet.ui.privacy.renewSoonText(p.handle, p.handleEntry?.expiresAt ?: 0L, p.caretakerExpiresAt, now)
             }
-            SwitchIdentityScreen(
+            val current = walletsState?.selectedIndex ?: SecureWalletManager.getSelectedWalletIndex()
+            LaunchedEffect(Unit) { creatingForMove = false; moveTarget?.let(::check) }
+            MoveToWalletScreen(
                 wallets = walletList,
-                currentIndex = walletsState?.selectedIndex ?: SecureWalletManager.getSelectedWalletIndex(),
-                targetWarning = targetWarning,
+                currentIndex = current,
+                target = moveTarget,
+                targetIsNew = moveTargetNew,
+                targetWarning = targetWarning.takeIf { moveTarget != null },
                 unmoved = unmoved,
                 renewFirst = renewFirst,
                 onRenewFirst = {
@@ -722,30 +702,22 @@ internal fun EarthContent(
                         network.erth.wallet.ui.privacy.renewSoonText(p.handle, p.handleEntry?.expiresAt ?: 0L, 0L, now) != null
                     nav.push(if (handleSoon) EarthRoute.Handle else EarthRoute.Stream(true))
                 },
-                onTargetChange = ::check,
-                onContinue = { target ->
-                    // The target registers the same passport to its next
-                    // identity: the chain treats it as a switch (the live
-                    // leaf is zeroed).
-                    onSwitchWallet(target)
-                    nav.pop()
-                    onRegister()
-                },
-                onCreateWallet = {
+                onPick = { idx -> moveTarget = idx; moveTargetNew = false; targetWarning = null; check(idx) },
+                onNewWallet = {
+                    creatingForMove = true
                     wallets.beginCreate()
                     nav.push(EarthRoute.CreateWallet)
                 },
-                // Only after a fresh unlock (ConfirmUnlockDialog).
-                revealPhrase = { idx -> runCatching { SecureWalletManager.executeWithMnemonicAt(context, idx) { it } }.getOrNull() },
-                modifier = inset,
-            )
-        }
-
-        EarthRoute.RemovalBallots -> {
-            LaunchedEffect(Unit) { privacy.refresh() }
-            ProposeRemovalScreen(
-                state = privacyState,
-                onPropose = ::proposeRemoval,
+                onBack = { moveTarget = null; moveTargetNew = false; targetWarning = null },
+                onScan = { target ->
+                    // The target registers the same passport to its next
+                    // identity: the chain treats it as a switch (the live
+                    // leaf is zeroed).
+                    if (target != current) onSwitchWallet(target)
+                    moveTarget = null
+                    nav.pop()
+                    onRegister()
+                },
                 modifier = inset,
             )
         }
@@ -817,6 +789,33 @@ internal fun EarthContent(
             }
         }
 
+        EarthRoute.AddCaretakerOption -> network.erth.wallet.ui.govern.AddCaretakerOptionScreen(
+            address = loaded.address,
+            publicUerth = loaded.balanceUerth,
+            networkFee = TxController.DEFAULT_FEE_UERTH,
+            onReview = { name, recipient, burn ->
+                // Signed by the public account, which pays the burn; no registration asked.
+                tx.request(
+                    details = TxConfirmDetails(
+                        action = "Add Caretaker option",
+                        msgTypeUrl = Allocation.MSG_ADD_ADDRESS_OPTION_TYPE_URL,
+                        balanceUerth = loaded.balanceUerth,
+                        rows = listOf(
+                            "Description" to network.erth.wallet.chain.OptionText.clean(name, 0),
+                            "Pays to" to recipient,
+                            "Burned" to "${formatUerth(burn)} ERTH, public",
+                        ),
+                    ),
+                    // Back to the stream, which re-reads its options; only if still here.
+                    onSuccess = { allocation.refresh(); if (nav.current == EarthRoute.AddCaretakerOption) nav.pop() },
+                    build = { ctx ->
+                        listOf(EarthTx.anyOf(Allocation.MSG_ADD_ADDRESS_OPTION_TYPE_URL, Allocation.addCaretakerOption(walletAddress(ctx), name, recipient)))
+                    },
+                )
+            },
+            modifier = inset,
+        )
+
         EarthRoute.DeleteWallet -> {
             val target = deleteTarget
             var deleting by remember { mutableStateOf(false) }
@@ -864,6 +863,14 @@ internal fun EarthContent(
                     // createWallet selects the new wallet, so this is a switch
                     // and has to invalidate like one.
                     onSwitchWallet(-1)
+                    // Started from a move: on to its passport step, for the new wallet.
+                    if (creatingForMove) {
+                        creatingForMove = false
+                        moveTarget = SecureWalletManager.getSelectedWalletIndex()
+                        moveTargetNew = true
+                        nav.pop()
+                        return@confirmCreate
+                    }
                     // Back past the phrase, not onto it: the draft is gone
                     // once stored, and returning to a screen that would show
                     // it empty is worse than not returning.
@@ -904,6 +911,25 @@ internal fun EarthContent(
                 },
                 onEdit = { editing = id },
                 modifier = inset,
+                onAddOption = if (route.human) { { nav.push(EarthRoute.AddCaretakerOption) } } else null,
+                address = loaded.address,
+                startPreferred = !route.human && privacyState?.groundworksLease?.let { it.lapsed(now) || it.renewalDue(now) } == true,
+                onClaim = { o, owed ->
+                    tx.request(
+                        details = TxConfirmDetails(
+                            action = "Claim option payout",
+                            msgTypeUrl = Allocation.MSG_CLAIM_ALLOCATION_TYPE_URL,
+                            balanceUerth = loaded.balanceUerth,
+                            rows = listOf(
+                                "Option" to o.name,
+                                "Amount" to "About ${formatUerth(owed)} ERTH",
+                                "To" to network.erth.wallet.chain.OptionText.short(o.recipient),
+                            ),
+                        ),
+                        onSuccess = { allocation.refresh() },
+                        build = { ctx -> listOf(EarthTx.anyOf(Allocation.MSG_CLAIM_ALLOCATION_TYPE_URL, Allocation.claim(walletAddress(ctx), id, o.id))) },
+                    )
+                },
                 // Groundworks: every stake tx carries the split onto the note it
                 // makes. Vote / Change, its lease, Renew when due, Stop.
                 groundworks = if (route.human) null else {
@@ -936,14 +962,6 @@ internal fun EarthContent(
             proposals = allocationState?.proposals,
             modifier = inset,
             onOpen = { nav.push(EarthRoute.ProposalDetail(it.id)) },
-            ballots = privacyState?.let { ps ->
-                ps.ballots.map { b ->
-                    val name = ps.groundworksOptions.firstOrNull { it.id == b.optionId }?.description?.ifBlank { null } ?: "Option ${b.optionId}"
-                    network.erth.wallet.ui.govern.OpenBallot(b.optionId, "Remove $name?", b.yes, b.no, b.closesAt)
-                }
-            }.orEmpty(),
-            onVoteBallot = if (loaded.registered) ::voteRemoval else null,
-            onProposeRemoval = if (loaded.registered) { { nav.push(EarthRoute.RemovalBallots) } } else null,
         )
 
         is EarthRoute.ProposalDetail -> ProposalDetailScreen(

@@ -35,6 +35,10 @@ import network.erth.wallet.ui.theme.EarthTheme
 data class AllocationSlice(
     val name: String,
     val percent: Int,
+    /** The option it is: descriptions may repeat, ids do not. */
+    val optionId: Long = -1,
+    /** "Built in", or who a listed option pays (OptionInfo.source). */
+    val source: String = "",
 )
 
 /**
@@ -59,8 +63,6 @@ fun AllocationScreen(
     onOpenStream: (StreamId) -> Unit,
     onOpenProposals: () -> Unit,
     modifier: Modifier = Modifier,
-    /** Open removal ballots, counted with the proposals open for voting. */
-    openBallots: Int = 0,
 ) {
     val dimens = EarthTheme.dimens
     val shimmer = rememberEarthShimmer()
@@ -105,7 +107,7 @@ fun AllocationScreen(
             title = "Proposals",
             detail = "Chain upgrades and changes",
             status = state?.proposals?.let { proposals ->
-                val live = proposals.count { it.status == "PROPOSAL_STATUS_VOTING_PERIOD" } + openBallots
+                val live = proposals.count { it.status == "PROPOSAL_STATUS_VOTING_PERIOD" }
                 when {
                     live > 0 -> "$live open for voting"
                     proposals.isEmpty() -> "None yet"

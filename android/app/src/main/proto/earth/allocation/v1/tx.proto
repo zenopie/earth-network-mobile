@@ -23,3 +23,29 @@ message AllocationWeight {
   uint64 option_id = 1;
   uint64 percent = 2;
 }
+
+// Adds an ADDRESS option payable to `recipient`. Caretaker is permissionless:
+// any account may add one, params.address_option_fee (uerth) burned from the
+// submitter's public balance. Groundworks is governance-only.
+message MsgAddAddressOption {
+  string submitter = 1;
+  StreamId stream = 2;
+  string description = 3;
+  string recipient = 4;
+  // Who may trigger the payout; empty lets anyone, and it goes to recipient regardless.
+  string claimer = 5;
+}
+
+message MsgAddAddressOptionResponse {
+  uint64 id = 1;
+}
+
+// Triggers an ADDRESS option's payout of what it has accrued, to its
+// recipient. Anyone may, unless the option names a claimer.
+message MsgClaimAllocation {
+  string creator = 1;
+  StreamId stream = 2;
+  uint64 option_id = 3;
+}
+
+message MsgClaimAllocationResponse {}

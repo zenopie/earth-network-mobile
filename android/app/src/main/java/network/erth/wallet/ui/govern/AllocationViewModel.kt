@@ -23,6 +23,8 @@ data class StreamUiState(
     val options: List<Allocation.OptionInfo>,
     /** optionId to percent, as the chain holds it. */
     val mine: Map<Long, Long>,
+    /** The stream's reward index, for what an option is owed (OptionInfo.owed). */
+    val rewardIndex: String = "0",
 ) {
     /**
      * Where the stream actually goes, across every voter.
@@ -33,16 +35,25 @@ data class StreamUiState(
      * weights and not shares.
      */
     val actualSlices: List<AllocationSlice>
+        get() = actualShares.entries
+            .filter { it.value > 0 }
+            .mapNotNull { (id, pct) -> options.firstOrNull { it.id == id }?.let { AllocationSlice(it.name, pct, id, it.source) } }
+            .sortedByDescending { it.percent }
+
+    /** Each option's whole-percent share of the stream, by id. */
+    val actualShares: Map<Long, Int>
         get() {
             val weights = options.map { it.amountAllocated.toDoubleOrNull() ?: 0.0 }
             val total = weights.sum()
-            if (total <= 0) return emptyList()
-            val percents = apportion(weights, total)
-            return options.asSequence()
-                .zip(percents.asSequence())
-                .mapNotNull { (o, pct) -> if (pct > 0) AllocationSlice(o.description, pct) else null }
-                .sortedByDescending { it.percent }
-                .toList()
+            if (total <= 0) return options.associate { it.id to 0 }
+            return options.map { it.id }.zip(apportion(weights, total)).toMap()
+        }
+
+    /** Live options the tally gives nothing: listed after the charted ones, so a new option can be found. */
+    val unfundedSlices: List<AllocationSlice>
+        get() {
+            val shares = actualShares
+            return options.filter { !it.removed && (shares[it.id] ?: 0) == 0 }.map { AllocationSlice(it.name, 0, it.id, it.source) }
         }
 
     /**
@@ -77,7 +88,7 @@ data class StreamUiState(
 
     val slices: List<AllocationSlice>
         get() = options
-            .mapNotNull { o -> mine[o.id]?.takeIf { it > 0 }?.let { AllocationSlice(o.description, it.toInt()) } }
+            .mapNotNull { o -> mine[o.id]?.takeIf { it > 0 }?.let { AllocationSlice(o.name, it.toInt(), o.id, o.source) } }
             .sortedByDescending { it.percent }
 }
 
@@ -132,15 +143,21 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
                 AllocationUiState(
                     // The caretaker split is cast anonymously, so the chain
                     // cannot say which one is ours: the wallet remembers it.
-                    human = StreamUiState(
-                        options = runCatching { Allocation.stream(StreamId.STREAM_ID_CARETAKER).options }.getOrDefault(emptyList()),
-                        mine = runCatching { PrivacySession.wallet(ctx).store.state.caretakerSplit }.getOrDefault(emptyMap()),
-                    ),
+                    human = runCatching { Allocation.stream(StreamId.STREAM_ID_CARETAKER) }.getOrNull().let { s ->
+                        StreamUiState(
+                            options = s?.options.orEmpty(),
+                            mine = runCatching { PrivacySession.wallet(ctx).store.state.caretakerSplit }.getOrDefault(emptyMap()),
+                            rewardIndex = s?.rewardIndex ?: "0",
+                        )
+                    },
                     // Groundworks: the split this wallet's stake votes with.
-                    capital = StreamUiState(
-                        options = runCatching { Allocation.stream(StreamId.STREAM_ID_GROUNDWORKS).options }.getOrDefault(emptyList()),
-                        mine = runCatching { PrivacySession.wallet(ctx).groundworksSplit }.getOrDefault(emptyMap()),
-                    ),
+                    capital = runCatching { Allocation.stream(StreamId.STREAM_ID_GROUNDWORKS) }.getOrNull().let { s ->
+                        StreamUiState(
+                            options = s?.options.orEmpty(),
+                            mine = runCatching { PrivacySession.wallet(ctx).groundworksSplit }.getOrDefault(emptyMap()),
+                            rewardIndex = s?.rewardIndex ?: "0",
+                        )
+                    },
                     proposals = proposals,
                     assemblyTallies = assemblyTallies(proposals),
                 )
