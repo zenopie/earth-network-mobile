@@ -45,6 +45,7 @@ final class VintageFlowTests: PrivacyTestCase {
     /// own, never merged with the older vintage. One line per validator.
     func testDelegationCreditsTheCurrentVintage() async throws {
         let chain = chain()
+        defer { dump(chain, "vDelegate") }
         let a = try await funded(chain)
         _ = try await a.delegate(validator: vA, amount: 1_000_000); try await a.sync()
         let first = try XCTUnwrap(chain.lastMsg as? MsgShieldedDelegate)
@@ -114,6 +115,7 @@ final class VintageFlowTests: PrivacyTestCase {
     /// the hour the chain refuses it.
     func testAProofBuiltBeforeTheBoundaryLandsInTheGrace() async throws {
         let chain = chain()
+        defer { dump(chain, "vGrace") }
         let a = try await funded(chain)
         _ = try await a.delegate(validator: vA, amount: 2_000_000); try await a.sync()
         let dec = Vintage.start(202612)
@@ -162,6 +164,7 @@ final class VintageFlowTests: PrivacyTestCase {
     /// is unbonded; its Groundworks vote moves with it to the current vintage.
     func testCheckInMovesStakeToTheCurrentVintage() async throws {
         let chain = chain()
+        defer { dump(chain, "vCheckIn") }
         chain.minGroundworksVote = 100_000
         let a = try await funded(chain)
         _ = try await a.delegate(validator: vA, amount: 2_000_000); try await a.sync()
@@ -210,6 +213,7 @@ final class VintageFlowTests: PrivacyTestCase {
     /// "Check in" for everything: one tx per vintage, in turn, each validator's into its current vintage.
     func testCheckInAll() async throws {
         let chain = chain()
+        defer { dump(chain, "vCheckInAll") }
         let a = try await funded(chain)
         _ = try await a.delegate(validator: vA, amount: 1_000_000); try await a.sync()
         enter(chain, 202610)
@@ -227,6 +231,7 @@ final class VintageFlowTests: PrivacyTestCase {
     /// closes; then it checks in too.
     func testCheckInLeavesAnOpenExposureBehind() async throws {
         let chain = chain()
+        defer { dump(chain, "vCheckInExposure") }
         let a = try await funded(chain)
         _ = try await a.delegate(validator: vA, amount: 1_000_000)
         _ = try await a.delegate(validator: vB, amount: 2_000_000); try await a.sync()
@@ -270,6 +275,7 @@ final class VintageFlowTests: PrivacyTestCase {
     /// share of the held value as a pool note.
     func testRetiredVintageOnlyWithdraws() async throws {
         let chain = chain()
+        defer { dump(chain, "vWithdraw") }
         chain.minGroundworksVote = 100_000
         let a = try await funded(chain)
         _ = try await a.delegate(validator: vA, amount: 2_000_000); try await a.sync()
@@ -400,6 +406,7 @@ final class VintageFlowTests: PrivacyTestCase {
     /// snapshot's does not vote on it.
     func testStakeVotesNameTheirVintage() async throws {
         let chain = chain()
+        defer { dump(chain, "vVote") }
         let a = try await funded(chain)
         _ = try await a.delegate(validator: vA, amount: 1_000_000); try await a.sync()
         enter(chain, 202611)
@@ -440,6 +447,7 @@ final class VintageFlowTests: PrivacyTestCase {
     /// Undelegating and moving take one vintage a msg: the oldest that covers the amount.
     func testLeavingTakesTheOldestVintageThatCovers() async throws {
         let chain = chain()
+        defer { dump(chain, "vLeave") }
         let a = try await funded(chain)
         _ = try await a.delegate(validator: vA, amount: 500_000); try await a.sync()
         enter(chain, 202611)
