@@ -77,19 +77,34 @@ final class VintageFlowTests: PrivacyTestCase {
         XCTAssertEqual(VintageCtx(base: base, current: 202611), a.localVintages)
     }
 
-    /// A quote from last month is sent into the month read when it is sent
-    /// (the same derth: one rate per validator; the newer vintage retires later).
+    /// A quote from last month: in the new month's first hour (the chain's
+    /// grace) it is sent as it stands, naming last month; after the hour it
+    /// is shown again rather than sent into a vintage the chain refuses.
     func testAQuoteFromLastMonthCreditsTheNewMonth() async throws {
         let chain = chain()
         let a = try await funded(chain)
+        let oct = Vintage.start(202610)
         let q = try await a.quoteDelegate(validator: vA, amount: 1_000_000)
         XCTAssertEqual(base, q.vintage)
-        enter(chain, 202610)
+        chain.now = oct + 1_200
+        chain.emptyBlock()
         _ = try await a.delegate(q); try await a.sync()
         let m = try XCTUnwrap(chain.lastMsg as? MsgShieldedDelegate)
-        XCTAssertEqual(202610, m.vintage)
+        XCTAssertEqual(base, m.vintage)
         XCTAssertEqual(q.derth, m.derth)
-        XCTAssertEqual(q.derth, sum(notes(a, "derth/\(vA)/202610")))
+        XCTAssertEqual(q.derth, chain.vintageSupply[vA]?[base])
+
+        // Past the hour: the old quote is shown again, nothing sent; a new one credits October.
+        let q2 = try await a.quoteDelegate(validator: vA, amount: 1_000_000)
+        XCTAssertEqual(202610, q2.vintage)
+        let late = PrivacyWallet.DelegateQuote(validator: vA, amount: 1_000_000, derth: q2.derth, haircut: 0, vintage: base)
+        chain.now = oct + Vintage.graceSeconds
+        chain.emptyBlock()
+        let txs = chain.txs.count
+        await assertThrowsAsync({ try await a.delegate(late) }) { $0 is PrivacyWallet.QuoteChanged }
+        XCTAssertEqual(txs, chain.txs.count)
+        _ = try await a.delegate(try await a.quoteDelegate(validator: vA, amount: 1_000_000)); try await a.sync()
+        XCTAssertEqual(202610, (chain.lastMsg as? MsgShieldedDelegate)?.vintage)
     }
 
     /// The month-boundary grace: a proof built just before 00:00 UTC on the

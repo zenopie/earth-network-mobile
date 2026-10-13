@@ -2404,12 +2404,17 @@ public final class PrivacyWallet: @unchecked Sendable {
         let mx = await maxActions()
         let gw = try await groundworksContext()
         let c = try await vintageCtx()
-        // The delegation credits the current month as read now (a month that
-        // began since the quote: the newer vintage, retiring a month later;
-        // the derth is the same, one rate per validator). It names the month
-        // explicitly, so a proof built just before 00:00 UTC on the 1st still
-        // lands in the month's first hour (the chain's grace).
-        let vintage = c?.current ?? 0
+        // The delegation names the quote's month explicitly. A month that began
+        // since the quote: during its first hour (the chain's grace, by the
+        // latest block's time) the quote is sent as it stands, into last
+        // month's vintage; after it, the quote is shown again.
+        let vintage = q.vintage
+        if let c, vintage != c.current {
+            let t = await roots.latestBlock()?.time.map { Int64(clamping: $0) } ?? now()
+            guard Vintage.index(c.current) == Vintage.index(vintage) + 1, Vintage.creditAccepted(vintage, at: t) else {
+                throw QuoteChanged(message: "a new month began since the quote: stake now joins this month's vintage; review it again")
+            }
+        }
         return try await locked {
             noteVintages(c)
             let denom = Self.stakeDenom(q.validator, vintage, c)
