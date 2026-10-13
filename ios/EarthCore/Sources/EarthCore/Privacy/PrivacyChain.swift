@@ -32,20 +32,20 @@ public protocol PrivacyChainReads: Sendable {
     /// time): never a query about this wallet's undelegation. Nil: unknown.
     func unbondDueBy(epoch: UInt64) async -> Int64?
     /// The chain's stake vintages (v1.3.0): its base and current vintage, from
-    /// Query/Vintages asked of one fixed validator (the public list's first:
-    /// the same question from every wallet). Nil when the chain does not serve
-    /// the query (it predates v1.3.0); throws when the node cannot be read.
+    /// Query/VintageInfo (names no validator: the same question from every
+    /// wallet). Nil when the chain does not serve the query (it predates
+    /// v1.3.0); throws when the node cannot be read.
     func vintageContext() async throws -> VintageCtx?
-    /// Query/Vintages for every validator in the public list, whole: each
-    /// one's retired vintages not fully withdrawn, by denom (never a question
+    /// Query/VintageBooks read whole: every validator's live, retiring and
+    /// retired (not fully withdrawn) vintages, by denom (never a question
     /// about one validator this wallet holds). Nil before v1.3.0.
-    func retiredVintages() async throws -> [String: PrivacyReads.RetiredVintage]?
+    func vintageBooks() async throws -> [String: PrivacyReads.VintageBook]?
 }
 
 public extension PrivacyChainReads {
     func unbondDueBy(epoch: UInt64) async -> Int64? { nil }
     func vintageContext() async throws -> VintageCtx? { nil }
-    func retiredVintages() async throws -> [String: PrivacyReads.RetiredVintage]? { nil }
+    func vintageBooks() async throws -> [String: PrivacyReads.VintageBook]? { nil }
     func minGroundworksVote() async throws -> UInt64 { 1_000_000 }
     func groundworksOptions() async throws -> Set<UInt64>? { nil }
 }
@@ -154,8 +154,9 @@ public enum PrivacyReads {
         public let weight: UInt64
         public let tag: Fr
         public let splits: [UInt64: UInt64]
-        /// When the vote stops counting: 0 since v1.3.0 (a stake vote has no
-        /// lease; it ends with its vintage).
+        /// When the vote stops counting (a chain before v1.3.0); 0 since it:
+        /// the field is reserved and absent (a stake vote has no lease, it ends
+        /// with its vintage).
         public let splitExpiresAt: Int64
         /// Moved-in derth voting pending: counted from `maturesAt` (when its move's window closes).
         public let pending: UInt64
@@ -170,34 +171,62 @@ public enum PrivacyReads {
         }
     }
 
-    /// A retired stake vintage not fully withdrawn (Query/Vintages): what
-    /// its notes may still withdraw, pro rata, and its held payout's record.
-    public struct RetiredVintage: Sendable, Equatable {
+    /// One (validator, vintage) of Query/VintageBooks: a live vintage (msgs
+    /// accepted), a retiring one (past `retiresAt`, still earning in the
+    /// validator's book, refusing every msg; withdrawable from `withdrawFrom`,
+    /// the epoch end that books it) or a retired one not fully withdrawn,
+    /// which its notes withdraw from pro rata.
+    public struct VintageBook: Sendable, Equatable {
+        public enum State: String, Sendable { case live, retiring, retired }
         public let validator: String
         public let vintage: UInt32
         public let denom: String
+        public let state: State
+        /// 00:00 UTC on the 1st of vintage + 13 (unix seconds).
+        public let retiresAt: Int64
+        /// Retired: what is left to withdraw (supply and its value).
         public let remainingSupply: BigUInt
         public let remainingValue: BigUInt
-        /// When the retirement was booked (unix seconds).
+        /// Retired: when the retirement was booked (unix seconds; the epoch end).
         public let retiredAt: Int64
-        /// Whether the held payout's unbonding has matured: a withdrawal is
-        /// then paid in the next block; before, at `completesAt` (unix seconds,
-        /// 0 while the SDK undelegation is not made yet: about an epoch plus
-        /// the unbonding time).
-        public let matured: Bool
-        public let completesAt: Int64
-        public init(validator: String, vintage: UInt32, denom: String, remainingSupply: BigUInt, remainingValue: BigUInt,
-                    retiredAt: Int64, matured: Bool, completesAt: Int64) {
-            self.validator = validator; self.vintage = vintage; self.denom = denom; self.remainingSupply = remainingSupply
-            self.remainingValue = remainingValue; self.retiredAt = retiredAt; self.matured = matured; self.completesAt = completesAt
+        /// The chain's expected_completion (unix seconds): when a retiring or
+        /// retired vintage's held value is paid (exact while its unbonding
+        /// runs, an estimate before it is undelegated); 0 when it has matured
+        /// (a withdrawal is paid in the next block) or for a live vintage.
+        public let expectedCompletion: Int64
+        /// Retiring: about when it can be withdrawn (the current epoch's end; 0 otherwise).
+        public let withdrawFrom: Int64
+
+        public init(validator: String, vintage: UInt32, denom: String, state: State, retiresAt: Int64,
+                    remainingSupply: BigUInt = 0, remainingValue: BigUInt = 0, retiredAt: Int64 = 0,
+                    expectedCompletion: Int64 = 0, withdrawFrom: Int64 = 0) {
+            self.validator = validator; self.vintage = vintage; self.denom = denom; self.state = state; self.retiresAt = retiresAt
+            self.remainingSupply = remainingSupply; self.remainingValue = remainingValue; self.retiredAt = retiredAt
+            self.expectedCompletion = expectedCompletion; self.withdrawFrom = withdrawFrom
         }
 
+        /// Whether a retired vintage's held payout has matured: a withdrawal is then paid in the next block.
+        public var matured: Bool { state == .retired && expectedCompletion == 0 }
+
         /// What withdrawing `derth` pays: floor(derth x remaining_value /
-        /// remaining_supply), all of remaining_value for the whole supply (the chain's withdrawal).
-        public func value(_ derth: UInt64) -> UInt64 {
-            guard remainingSupply > 0, BigUInt(derth) <= remainingSupply else { return 0 }
+        /// remaining_supply), all of remaining_value for the whole supply (the
+        /// chain's withdrawal). Nil past one note's value (the chain refuses
+        /// it, 1103: withdraw in parts) or past the supply.
+        public func value(_ derth: UInt64) -> UInt64? {
+            guard state == .retired, remainingSupply > 0, BigUInt(derth) <= remainingSupply else { return nil }
             let w = BigUInt(derth) == remainingSupply ? remainingValue : BigUInt(derth) * remainingValue / remainingSupply
-            return UInt64(Swift.min(w, BigUInt(Int64.max)))
+            return w <= BigUInt(Int64.max) ? UInt64(w) : nil
+        }
+
+        /// The most derth one withdrawal takes: the largest d whose share
+        /// floor(d x remaining_value / remaining_supply) fits one note (2^63-1).
+        public var maxWithdrawal: UInt64 {
+            guard state == .retired, remainingSupply > 0 else { return 0 }
+            let cap = BigUInt(Int64.max)
+            if remainingValue <= cap { return UInt64(Swift.min(remainingSupply, BigUInt(UInt64.max))) }
+            // d x V < (cap + 1) x S  <=>  d <= ((cap + 1) x S - 1) / V
+            let d = ((cap + 1) * remainingSupply - 1) / remainingValue
+            return UInt64(Swift.min(d, remainingSupply, BigUInt(UInt64.max)))
         }
     }
 
@@ -549,32 +578,17 @@ public struct PrivacyQueries: PrivacyChainReads {
         return false
     }
 
-    /// Query/Vintages of `validator`: its first page, and every retired entry (100 a page, at most `retiredPages`).
-    private func vintagesOf(_ validator: String, retiredPages: Int) async throws -> (JSON, [JSON]) {
-        var first: JSON?
-        var key: String?
-        var keys = Set<String>()
-        var retired: [JSON] = []
-        for _ in 0 ..< max(1, retiredPages) {
-            let path = "/earth/shieldedstaking/v1/vintages/\(validator)?pagination.limit=100" +
-                (key.map { "&pagination.key=" + ($0.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0) } ?? "")
-            let j = try await rest.get(path)
-            if first == nil { first = j }
-            retired += j.retired.array
-            key = j.pagination.next_key.string.flatMap { $0.isEmpty || $0 == "null" ? nil : $0 }
-            guard let k = key, keys.insert(k).inserted else { break }
-        }
-        return (first ?? JSON(nil), retired)
-    }
+    /// Query/VintageBooks pages read before giving up (100 entries a page).
+    static let vintageBookPages = 1000
 
     public func vintageContext() async throws -> VintageCtx? {
-        // The list as last read (each sync and quote reads it whole): any validator answers for the chain's months.
-        var cached = Self.cachedValidators
-        if cached == nil { cached = try await validators() }
-        let list = cached!
-        guard let v = list.validators.map(\.validator).filter({ !$0.isEmpty }).sorted().first else { return nil }
         let j: JSON
-        do { j = try await vintagesOf(v, retiredPages: 1).0 } catch { if Self.notServed(error) { return nil }; throw error }
+        do { j = try await rest.get("/earth/shieldedstaking/v1/vintage_info") } catch { if Self.notServed(error) { return nil }; throw error }
+        return try Self.vintageCtx(j)
+    }
+
+    /// The vintage clock of a VintageInfo or VintageBooks response.
+    static func vintageCtx(_ j: JSON) throws -> VintageCtx {
         let cur = UInt32(clamping: j.current_vintage.uint64(default: 0)), base = UInt32(clamping: j.base_vintage.uint64(default: 0))
         guard Vintage.valid(cur), Vintage.valid(base), Vintage.index(base) <= Vintage.index(cur) else {
             throw PrivacyError("the node's stake vintages are not months (current \(cur), base \(base))")
@@ -582,27 +596,56 @@ public struct PrivacyQueries: PrivacyChainReads {
         return VintageCtx(base: base, current: cur)
     }
 
-    public func retiredVintages() async throws -> [String: PrivacyReads.RetiredVintage]? {
-        var cached = Self.cachedValidators
-        if cached == nil { cached = try await validators() }
-        let list = cached!
-        var out: [String: PrivacyReads.RetiredVintage] = [:]
-        for v in Set(list.validators.map(\.validator).filter { !$0.isEmpty }).sorted() {
-            let retired: [JSON]
-            do { retired = try await vintagesOf(v, retiredPages: 10).1 } catch { if Self.notServed(error) { return nil }; throw error }
-            for r in retired {
-                let rv = r.vintage
-                guard let m = UInt32(exactly: rv.vintage.uint64(default: 0)), Vintage.valid(m),
-                      let sup = BigUInt(rv.remaining_supply.string(default: "0")), let val = BigUInt(rv.remaining_value.string(default: "0"))
+    public func vintageBooks() async throws -> [String: PrivacyReads.VintageBook]? {
+        var key: String?
+        var keys = Set<String>()
+        var entries: [JSON] = []
+        var ctx: VintageCtx?
+        for page in 0 ... Self.vintageBookPages {
+            guard page < Self.vintageBookPages else { throw PrivacyError("the node's vintage list does not end") }
+            let path = "/earth/shieldedstaking/v1/vintage_books?pagination.limit=100" +
+                (key.map { "&pagination.key=" + ($0.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0) } ?? "")
+            let j: JSON
+            do { j = try await rest.get(path) } catch { if Self.notServed(error) { return nil }; throw error }
+            let c = try Self.vintageCtx(j)
+            // One clock for the whole list: a month that turns mid-read is read again.
+            if let ctx, ctx != c { return try await vintageBooks() }
+            ctx = c
+            entries += j.entries.array
+            key = j.pagination.next_key.string.flatMap { $0.isEmpty || $0 == "null" ? nil : $0 }
+            guard let k = key, keys.insert(k).inserted else { break }
+        }
+        let retiring = entries.contains { $0.state.string(default: "") == PrivacyReads.VintageBook.State.retiring.rawValue }
+        // The epoch end that books a retiring vintage (chain-wide timing: the same read from every wallet).
+        let epochEnd = retiring ? ((try? await epoch())?.endTime ?? 0) : 0
+        return Self.vintageBooks(entries, epochEnd: epochEnd)
+    }
+
+    /// Query/VintageBooks entries by denom; an entry that does not parse, or
+    /// whose denom is not its (validator, vintage)'s, is left out.
+    static func vintageBooks(_ entries: [JSON], epochEnd: Int64) -> [String: PrivacyReads.VintageBook] {
+        var out: [String: PrivacyReads.VintageBook] = [:]
+        for e in entries {
+            let v = e.validator.string(default: ""), denom = e.denom.string(default: "")
+            guard let m = UInt32(exactly: e.vintage.uint64(default: 0)), Vintage.valid(m),
+                  let state = PrivacyReads.VintageBook.State(rawValue: e.state.string(default: "")),
+                  let p = Vintage.parse(denom), p.valoper == v, p.month == 0 || p.month == m
+            else { continue }
+            let retiresAt = Vintage.retiresAt(m)
+            let completion = max(0, e.expected_completion.int64(default: 0))
+            switch state {
+            case .live:
+                out[denom] = .init(validator: v, vintage: m, denom: denom, state: .live, retiresAt: retiresAt)
+            case .retiring:
+                out[denom] = .init(validator: v, vintage: m, denom: denom, state: .retiring, retiresAt: retiresAt,
+                                   expectedCompletion: completion, withdrawFrom: max(epochEnd, retiresAt))
+            case .retired:
+                let rv = e.retired
+                guard let sup = BigUInt(rv.remaining_supply.string(default: "0")), let val = BigUInt(rv.remaining_value.string(default: "0"))
                 else { continue }
-                let denom = r.denom.string(default: "")
-                guard Vintage.parse(denom)?.valoper == v else { continue }
-                // The held payout's SDK entry completes at completion_time (unix ns), 0 until it is made.
-                let status = r.record.status.string(default: "")
-                let matured = !r.record.exists || status.contains("MATURED") || status == "2"
-                out[denom] = PrivacyReads.RetiredVintage(validator: v, vintage: m, denom: denom, remainingSupply: sup, remainingValue: val,
-                                                         retiredAt: rv.retired_at.int64(default: 0), matured: matured,
-                                                         completesAt: max(0, r.record.completion_time.int64(default: 0) / 1_000_000_000))
+                out[denom] = .init(validator: v, vintage: m, denom: denom, state: .retired, retiresAt: retiresAt,
+                                   remainingSupply: sup, remainingValue: val, retiredAt: rv.retired_at.int64(default: 0),
+                                   expectedCompletion: completion)
             }
         }
         return out
@@ -634,6 +677,21 @@ public struct PrivacyQueries: PrivacyChainReads {
     /// Every Groundworks vote (public); the wallet finds its own by its
     /// notes' tags. Each id once (the first served): a page repeated by a
     /// proxy or a node must not count a vote twice.
+    /// One GroundworksVote as the LCD serves it. split_expires_at (11) is
+    /// gone since v1.3.0 (reserved: a stake vote ends with its vintage); a
+    /// chain before it still sends the lease end, read when present.
+    static func groundworksVote(_ v: JSON) throws -> PrivacyReads.GroundworksVote {
+        var splits: [UInt64: UInt64] = [:]
+        for s in v.splits.array { splits[s.option_id.uint64(default: 0)] = s.percent.uint64(default: 0) }
+        let raw = Data(base64Encoded: v.tag.string ?? "") ?? Data()
+        return PrivacyReads.GroundworksVote(id: v.id.uint64(default: 0), validator: v.validator.string(default: ""),
+                                            derth: v.derth.uint64(default: 0), weight: v.weight.uint64(default: 0),
+                                            tag: raw.isEmpty ? .zero : try Fr(bytes: raw), splits: splits,
+                                            splitExpiresAt: max(0, v.split_expires_at.int64(default: 0)),
+                                            pending: v.pending.uint64(default: 0), maturesAt: max(0, v.matures_at.int64(default: 0)),
+                                            vintage: UInt32(clamping: v.vintage.uint64(default: 0)))
+    }
+
     public func groundworksVotes() async throws -> [PrivacyReads.GroundworksVote] {
         var out: [PrivacyReads.GroundworksVote] = []
         var seen = Set<UInt64>()
@@ -646,15 +704,8 @@ public struct PrivacyQueries: PrivacyChainReads {
                 (key.map { "?pagination.key=" + ($0.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0) } ?? "")
             let j = try await rest.get(path)
             for v in j.votes.array {
-                var splits: [UInt64: UInt64] = [:]
-                for s in v.splits.array { splits[s.option_id.uint64(default: 0)] = s.percent.uint64(default: 0) }
                 guard seen.insert(v.id.uint64(default: 0)).inserted else { continue }
-                out.append(PrivacyReads.GroundworksVote(id: v.id.uint64(default: 0), validator: v.validator.string(default: ""),
-                                                        derth: v.derth.uint64(default: 0), weight: v.weight.uint64(default: 0),
-                                                        tag: try field(v.tag), splits: splits,
-                                                        splitExpiresAt: max(0, v.split_expires_at.int64(default: 0)),
-                                                        pending: v.pending.uint64(default: 0), maturesAt: max(0, v.matures_at.int64(default: 0)),
-                                                        vintage: UInt32(clamping: v.vintage.uint64(default: 0))))
+                out.append(try Self.groundworksVote(v))
             }
             key = j.pagination.next_key.string.flatMap { $0.isEmpty || $0 == "null" ? nil : $0 }
             if let k = key, !keys.insert(k).inserted { throw PrivacyError("the node's groundworks votes listing repeats a page") }

@@ -461,8 +461,11 @@ struct HomePanel: View {
                             "shield.lefthalf.filled", Figures.balance(BigInt(line.value)) + " ERTH")
             }
             ForEach(model.stakeHoldings.flatMap(\.retired), id: \.denom) { r in
-                positionRow("Retired stake", "Not earning · withdraw on Earn", "pause.circle",
-                            Figures.when(model.retiredStake.first { $0.denom == r.denom }) { Figures.balance(BigInt($0.value)) + " ERTH" })
+                let q = model.retiredStake.first { $0.denom == r.denom }
+                let retiring = q?.retiring == true
+                positionRow(retiring ? "Retiring stake" : "Retired stake",
+                            retiring ? "Withdraw from \(StakeOverview.date(q?.withdrawFrom ?? 0))" : "Not earning · withdraw on Earn",
+                            "pause.circle", Figures.when(q) { Figures.balance(BigInt($0.value)) + " ERTH" })
             }
             // An undelegation waiting for its payout, from this wallet's own
             // record until the chain mints the payout to it.

@@ -1970,7 +1970,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return Vintage.valid(cur) ? VintageCtx(base: base, current: cur) : nil
     }
 
-    /// The chain's vintages now (Query/Vintages; nil before v1.3.0), read
+    /// The chain's vintages now (Query/VintageInfo; nil before v1.3.0), read
     /// before the wallet's lock and remembered (`noteVintages`) under it.
     func vintageCtx() async throws -> VintageCtx? {
         do { return try await reads.vintageContext() } catch {
@@ -2404,13 +2404,15 @@ public final class PrivacyWallet: @unchecked Sendable {
         let mx = await maxActions()
         let gw = try await groundworksContext()
         let c = try await vintageCtx()
-        // The chain takes a delegation only into the current month: a quote from last month is shown again.
-        if (c?.current ?? 0) != q.vintage {
-            throw QuoteChanged(message: "a new month began since the quote: stake now joins this month's vintage; review it again")
-        }
+        // The delegation credits the current month as read now (a month that
+        // began since the quote: the newer vintage, retiring a month later;
+        // the derth is the same, one rate per validator). It names the month
+        // explicitly, so a proof built just before 00:00 UTC on the 1st still
+        // lands in the month's first hour (the chain's grace).
+        let vintage = c?.current ?? 0
         return try await locked {
             noteVintages(c)
-            let denom = Self.stakeDenom(q.validator, q.vintage, c)
+            let denom = Self.stakeDenom(q.validator, vintage, c)
             let d = try await debtView(spendableStake(denom))
             let stake = try laneA(denom, spends: StakeSelection.merge(spendableStake(denom)) { Self.freeOf($0, d) }, vIn: q.derth, vOut: 0, d, gw: gw)
             if Self.haircutOf(stake) > q.haircut {
@@ -2421,7 +2423,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                 let b = try self.bundle(release: try Self.plus([Self.fee: q.amount], Self.fee, fee), maxActions: mx)
                 return Assembled(bundles: [b], stake: stake) { bs, sp, _ in
                     MsgShieldedDelegate(bundle: bs[0], validator: q.validator, amount: q.amount, derth: q.derth, stake: sp!,
-                                        groundworksSplit: gw.split(for: stake), vintage: q.vintage)
+                                        groundworksSplit: gw.split(for: stake), vintage: vintage)
                 }
             }
         }
@@ -2676,7 +2678,8 @@ public final class PrivacyWallet: @unchecked Sendable {
             let from = q.srcDenom.isEmpty ? leaveDenom(q.src, amount: q.amount, d, c) : q.srcDenom
             try require(Self.stakeKey(from, c)?.validator == q.src && Self.isLive(from, c),
                         "this stake's vintage has retired since the quote; withdraw it instead")
-            // The credit lands in dst's current vintage (the chain supplies its asset).
+            // The credit lands in dst's current vintage, named explicitly (credit_vintage): a
+            // proof built before a month's boundary still lands in its first hour.
             let dstDenom = Self.stakeDenom(q.dst, c?.current ?? 0, c)
             let target = creditTarget(dstDenom)
             let credit = try StakePlan.credit(keys, denom: dstDenom, spend: target,
@@ -2689,7 +2692,8 @@ public final class PrivacyWallet: @unchecked Sendable {
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake,
                           extraGas: Self.redelegateHeadroom(entries: q.pairEntries, counted: q.pairCounted)) { bs, sp, _ in
                     MsgRedelegate(bundle: bs[0], srcValidator: q.src, dstValidator: q.dst, amount: q.amount, stake: sp!,
-                                  dstDerth: q.dstDerth, moveTime: moveTime, groundworksSplit: gw.split(for: stake), vintage: Self.msgVintage(from, c))
+                                  dstDerth: q.dstDerth, moveTime: moveTime, groundworksSplit: gw.split(for: stake), vintage: Self.msgVintage(from, c),
+                                  creditVintage: c?.current ?? 0)
                 }
             }
         }
@@ -2765,7 +2769,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             return try await run(Act(kind: .checkIn, counterparty: k.validator)) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
                     MsgCheckIn(bundle: bs[0], validator: k.validator, fromVintage: k.month, amount: amount, stake: sp!,
-                               groundworksSplit: gw.split(for: stake))
+                               groundworksSplit: gw.split(for: stake), creditVintage: c.current)
                 }
             }
         }
@@ -2793,9 +2797,15 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// A retired vintage's withdrawal, for its confirm sheet: `derth` (up to
     /// two notes, a cleared label's retained part included) of `denom` paid
     /// as `value` uerth, its pro-rata share of what the vintage held when it
-    /// retired (less any slash since), at `paidAt` (0: the next block, the
-    /// held payout having matured; -1: about an epoch plus the unbonding time,
-    /// its undelegation not made yet).
+    /// retired (less any slash since), at `paidAt` (the chain's
+    /// expected_completion; 0: the next block, the held payout having
+    /// matured). A share past one note's value (2^63-1) is withdrawn in
+    /// `parts` txs, each its own fee (the chain refuses a larger one, 1103).
+    ///
+    /// A retiring vintage (past its retirement, its value not booked until
+    /// the next epoch end) is quoted too, at the validator's live rate (it
+    /// still earns), with `withdrawFrom` that epoch end: nothing can be sent
+    /// on it until then.
     public struct WithdrawQuote: Sendable, Equatable {
         public let validator: String
         public let month: UInt32
@@ -2804,22 +2814,31 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let value: UInt64
         public let paidAt: Int64
         public let retiredAt: Int64
+        /// Retiring: about when it can be withdrawn (unix seconds); 0: it can be now.
+        public var withdrawFrom: Int64 = 0
+        /// How many txs the withdrawal takes (1 unless its share is past one note's value).
+        public var parts: Int = 1
+
+        public var retiring: Bool { withdrawFrom > 0 }
     }
 
     public func quoteWithdraw(denom: String) async throws -> WithdrawQuote {
         let c = try await requireVintages()
         guard let k = Self.stakeKey(denom, c), c.retired(k.month) else { throw PrivacyError("this stake has not retired: it can be unstaked") }
-        guard let all = try await reads.retiredVintages() else { throw PrivacyError("this chain has no stake vintages yet") }
-        guard let q = try await withdrawQuote(denom, c, all) else {
+        guard let books = try await reads.vintageBooks() else { throw PrivacyError("this chain has no stake vintages yet") }
+        guard let q = try await withdrawQuote(denom, c, books) else {
             throw PrivacyError("the chain has not booked this vintage's retirement yet; try again in a few minutes")
+        }
+        if q.retiring {
+            throw PrivacyError("this stake is retiring: it can be withdrawn from \(Self.dateText(UInt64(q.withdrawFrom)))")
         }
         try require(q.derth > 0, "nothing here can be withdrawn now")
         return q
     }
 
-    /// A withdrawal's quote for every retired vintage this wallet holds,
-    /// from one read of every validator's (nil: a chain before vintages; a
-    /// vintage whose retirement is not booked yet is left out).
+    /// A withdrawal's quote for every retired or retiring vintage this
+    /// wallet holds, from one whole read of Query/VintageBooks (nil: a chain
+    /// before vintages; a vintage the chain does not list is left out).
     public func retiredStake() async throws -> [WithdrawQuote]? {
         guard let c = try await vintageCtx() else { return nil }
         let held = await locked { () -> [String] in
@@ -2827,30 +2846,91 @@ public final class PrivacyWallet: @unchecked Sendable {
             return Set(store.state.stakeNotes.filter { $0.spendable && Self.isRetired($0.denom, c) }.map(\.denom)).sorted()
         }
         guard !held.isEmpty else { return [] }
-        guard let all = try await reads.retiredVintages() else { return nil }
+        guard let books = try await reads.vintageBooks() else { return nil }
         var out: [WithdrawQuote] = []
-        for d in held { if let q = try await withdrawQuote(d, c, all), q.derth > 0 { out.append(q) } }
+        for d in held { if let q = try await withdrawQuote(d, c, books), q.derth > 0 { out.append(q) } }
         return out
     }
 
-    private func withdrawQuote(_ denom: String, _ c: VintageCtx, _ all: [String: PrivacyReads.RetiredVintage]) async throws -> WithdrawQuote? {
-        guard let k = Self.stakeKey(denom, c), let rv = all[Vintage.denom(k.validator, k.month, base: c.base)], rv.remainingSupply > 0 else { return nil }
+    private func withdrawQuote(_ denom: String, _ c: VintageCtx, _ books: [String: PrivacyReads.VintageBook]) async throws -> WithdrawQuote? {
+        guard let k = Self.stakeKey(denom, c), let b = books[Vintage.denom(k.validator, k.month, base: c.base)] else { return nil }
         let derth = try await locked { () -> UInt64 in
             let notes = spendableStake(denom)
             let d = try await debtView(notes)
             return StakeSelection.merge(notes) { Self.freeOf($0, d) }.reduce(UInt64(0)) { Snapshot.satAdd63($0, Self.freeOf($1, d)) }
         }
-        return WithdrawQuote(validator: k.validator, month: k.month, denom: denom, derth: derth, value: rv.value(derth),
-                             paidAt: rv.matured ? 0 : (rv.completesAt > 0 ? rv.completesAt : -1), retiredAt: rv.retiredAt)
+        switch b.state {
+        case .live:
+            return nil
+        case .retiring:
+            // Still in the validator's book, earning at its live rate until the epoch end books it.
+            let book = try? await reads.validators().of(k.validator)
+            let value = book.map { $0.supply > 0 ? BigUInt(derth) * $0.backing / $0.supply : 0 } ?? 0
+            return WithdrawQuote(validator: k.validator, month: k.month, denom: denom, derth: derth,
+                                 value: UInt64(Swift.min(value, BigUInt(Int64.max))), paidAt: b.expectedCompletion, retiredAt: 0,
+                                 withdrawFrom: max(1, b.withdrawFrom))
+        case .retired:
+            guard b.remainingSupply > 0 else { return nil }
+            let parts = Self.withdrawalParts(derth, b)
+            let value = parts.reduce(UInt64(0)) { Snapshot.satAdd63($0, b.value($1) ?? 0) }
+            return WithdrawQuote(validator: k.validator, month: k.month, denom: denom, derth: derth, value: value,
+                                 paidAt: b.expectedCompletion, retiredAt: b.retiredAt, parts: max(1, parts.count))
+        }
+    }
+
+    /// `derth` of `b` as withdrawals each paying at most one note's value
+    /// (the chain's 1103 otherwise), largest first. Pro rata, so a part's
+    /// value does not depend on the order.
+    static func withdrawalParts(_ derth: UInt64, _ b: PrivacyReads.VintageBook) -> [UInt64] {
+        guard derth > 0 else { return [] }
+        let most = b.maxWithdrawal
+        guard most > 0, most < derth else { return [derth] }
+        var out: [UInt64] = []
+        var left = derth
+        while left > 0, out.count < 64 {
+            let p = min(left, most)
+            out.append(p)
+            left -= p
+        }
+        return out
     }
 
     /// Withdraws a retired vintage's stake (MsgUndelegate naming the
-    /// retired month): the proof spends the notes whole into a zero note (no
-    /// split, no vote: the chain refuses either), and the chain splits their
-    /// share off the vintage's held payout to a fresh pool note of ours,
-    /// minted at the payout's maturity, or in the next block once matured.
-    /// Remembered like an undelegation until the note arrives.
+    /// retired month): the proof spends the notes into a zero note (or, for
+    /// a withdrawal in parts, the change back; no split, no vote: the chain
+    /// refuses either), and the chain splits their share off the vintage's
+    /// held payout to a fresh pool note of ours, minted at the payout's
+    /// maturity, or in the next block once matured. Remembered like an
+    /// undelegation until the note arrives. A share past one note's value
+    /// goes in parts, one tx each, syncing between them; the last tx is
+    /// returned (or the first that failed).
     public func withdrawRetired(_ q: WithdrawQuote) async throws -> TxResult {
+        try require(!q.retiring, "this stake is retiring: it can be withdrawn from \(Self.dateText(UInt64(q.withdrawFrom)))")
+        var left = q.derth
+        var r: TxResult?
+        for i in 0 ..< max(1, q.parts) + 1 {
+            guard left > 0 else { break }
+            if i > 0, let last = r { try await syncThrough(last) }
+            var part = left
+            if q.parts > 1 {
+                // Each part sized from the vintage as it is now.
+                let c = try await requireVintages()
+                if let b = try await reads.vintageBooks()?[Vintage.denom(q.validator, q.month, base: c.base)], b.state == .retired {
+                    part = Self.withdrawalParts(left, b).first ?? left
+                }
+            }
+            let res = try await withdrawPart(q, amount: part, expectFree: i == 0 ? left : nil)
+            r = res
+            guard res.code == 0 else { break }
+            left -= part
+        }
+        guard let r else { throw PrivacyError("nothing here can be withdrawn now") }
+        return r
+    }
+
+    /// One withdrawal tx of `amount` derth of `q.denom`, its notes' free
+    /// derth having to be `expectFree` still (the first part: else the sheet is stale).
+    private func withdrawPart(_ q: WithdrawQuote, amount: UInt64, expectFree: UInt64?) async throws -> TxResult {
         let mx = await maxActions()
         let c = try await requireVintages()
         let r = try await locked { () -> TxResult in
@@ -2859,13 +2939,13 @@ public final class PrivacyWallet: @unchecked Sendable {
             let notes = spendableStake(q.denom)
             let d = try await debtView(notes)
             let ins = StakeSelection.merge(notes) { Self.freeOf($0, d) }
-            let amount = ins.reduce(UInt64(0)) { Snapshot.satAdd63($0, Self.freeOf($1, d)) }
-            if amount != q.derth { throw QuoteChanged(message: "this stake changed since the sheet was shown; review it again") }
+            let free = ins.reduce(UInt64(0)) { Snapshot.satAdd63($0, Self.freeOf($1, d)) }
+            if expectFree.map({ free != $0 }) ?? false || amount > free { throw QuoteChanged(message: "this stake changed since the sheet was shown; review it again") }
             let stake = try laneA(q.denom, spends: ins, vIn: 0, vOut: amount, d)
             let payout = try mint(Self.fee)
             let pc = payout.pc
             let started = now()
-            let due: Int64? = q.paidAt > 0 ? q.paidAt + Self.payoutMarginSeconds : (q.paidAt == 0 ? started + Self.payoutMarginSeconds : nil)
+            let due: Int64 = q.paidAt > 0 ? q.paidAt + Self.payoutMarginSeconds : started + Self.payoutMarginSeconds
             store.mutate { s in if let rho = payout.note?.rho { s.activity.expect(rho, .unbondingPayout) } }
             return try await run(Act(kind: .withdrawStake, counterparty: k.validator), accepted: { [self] hash, timeout in
                 recordUnbond(PendingUnbond(txHash: hash, validator: k.validator, derth: amount, pc: pc, startedAt: started, until: timeout,

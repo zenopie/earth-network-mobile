@@ -230,17 +230,22 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     // MARK: stake vintages (v1.3.0)
 
     /// The base vintage (nil: a chain before v1.3.0, which serves no
-    /// Query/Vintages and refuses a msg naming a vintage as an unknown field).
+    /// Query/VintageInfo and refuses a msg naming a vintage as an unknown field).
     var vintageBase: UInt32?
     /// The chain's vintages at its last block time.
     var vintageCtx: VintageCtx? { vintageBase.map { VintageCtx(base: $0, current: Vintage.monthOf(now)) } }
-    /// S_{v,m}: derth per validator per vintage.
+    /// S_{v,m}: derth per validator per vintage (live, or retiring until the epoch end books it).
     var vintageSupply: [String: [UInt32: UInt64]] = [:]
     /// A retired vintage not fully withdrawn: what its notes may still take, and whether its held payout has matured.
-    struct Retired { let validator: String; let vintage: UInt32; var remainingSupply: UInt64; var remainingValue: UInt64; let retiredAt: Int64; var matured: Bool }
+    struct Retired { let validator: String; let vintage: UInt32; var remainingSupply: BigUInt; var remainingValue: BigUInt; let retiredAt: Int64; var matured: Bool }
     var retired: [String: Retired] = [:]
-    /// Every Query/Vintages read (validator asked).
-    var vintageAsks: [String] = []
+    /// Every Query/VintageInfo and Query/VintageBooks read.
+    var vintageInfoReads = 0
+    var vintageBookReads = 0
+    /// Run once when the next tx is broadcast, after it was proven and signed.
+    var beforeBroadcast: (() -> Void)?
+    /// The current epoch's end as Query/Epoch says (0: a day after the latest boundary).
+    var epochEndTime: Int64 = 0
 
     private func supplyAdd(_ v: String, _ m: UInt32, _ d: UInt64) { vintageSupply[v, default: [:]][m, default: 0] += d }
     private func supplySub(_ v: String, _ m: UInt32, _ d: UInt64) throws {
@@ -249,37 +254,64 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         vintageSupply[v]![m] = have - d
     }
 
-    /// The month boundary's sweep: every vintage due retires, its value
-    /// (supply at the 10/9 rate) held for its notes, its votes dropped.
+    /// The epoch end after a month boundary (retireDue): every retiring
+    /// vintage is booked, its value (supply at the 10/9 rate) held for its
+    /// notes; its votes went at the boundary.
     func retireDue() {
         guard let c = vintageCtx else { return }
         for (v, ms) in vintageSupply {
             for (m, sup) in ms where Vintage.retired(m, current: c.current) {
                 vintageSupply[v]![m] = nil
                 guard sup > 0 else { continue }
-                retired[Vintage.denom(v, m, base: c.base)] = Retired(validator: v, vintage: m, remainingSupply: sup, remainingValue: sup * 10 / 9,
-                                                                    retiredAt: now, matured: false)
+                retired[Vintage.denom(v, m, base: c.base)] = Retired(validator: v, vintage: m, remainingSupply: BigUInt(sup),
+                                                                    remainingValue: BigUInt(sup) * 10 / 9, retiredAt: now, matured: false)
             }
         }
-        for (t, g) in gwVotes where g.vintage != 0 && Vintage.retired(g.vintage, current: c.current) { gwVotes[t] = nil }
+        dropRetiredVotes()
         block()
     }
 
-    /// Query/Vintages (its chain-wide part).
-    func vintagesRead(_ validator: String) -> VintageCtx? { vintageAsks.append(validator); return vintageCtx }
+    /// The boundary's monthly pass: a retired vintage's votes count no more.
+    func dropRetiredVotes() {
+        guard let c = vintageCtx else { return }
+        for (t, g) in gwVotes where g.vintage != 0 && Vintage.retired(g.vintage, current: c.current) { gwVotes[t] = nil }
+    }
 
-    /// Every validator's retired vintages (Query/Vintages asked of each).
-    func retiredRead() -> [String: PrivacyReads.RetiredVintage]? {
-        guard vintageBase != nil else { return nil }
-        for v in stakingValidators + validators { vintageAsks.append(v) }
-        return retired.mapValues { r in
-            PrivacyReads.RetiredVintage(validator: r.validator, vintage: r.vintage, denom: Vintage.denom(r.validator, r.vintage, base: vintageBase!),
-                                        remainingSupply: BigUInt(r.remainingSupply), remainingValue: BigUInt(r.remainingValue),
-                                        retiredAt: r.retiredAt, matured: r.matured, completesAt: r.matured ? 0 : r.retiredAt + 21 * 86_400)
+    /// Query/VintageInfo.
+    func vintageInfoRead() -> VintageCtx? { vintageInfoReads += 1; return vintageCtx }
+
+    /// Query/VintageBooks, read whole: every validator's live, retiring and retired vintages.
+    func vintageBooksRead() -> [String: PrivacyReads.VintageBook]? {
+        guard let c = vintageCtx else { return nil }
+        vintageBookReads += 1
+        var out: [String: PrivacyReads.VintageBook] = [:]
+        let epochEnd = epochEndTime > 0 ? epochEndTime : Vintage.start(c.current) + 86_400
+        for (v, ms) in vintageSupply {
+            for (m, _) in ms {
+                let d = Vintage.denom(v, m, base: c.base)
+                if c.live(m) {
+                    out[d] = .init(validator: v, vintage: m, denom: d, state: .live, retiresAt: Vintage.retiresAt(m))
+                } else {
+                    out[d] = .init(validator: v, vintage: m, denom: d, state: .retiring, retiresAt: Vintage.retiresAt(m),
+                                   expectedCompletion: epochEnd + 21 * 86_400, withdrawFrom: max(epochEnd, Vintage.retiresAt(m)))
+                }
+            }
         }
+        for (d, r) in retired {
+            out[d] = .init(validator: r.validator, vintage: r.vintage, denom: d, state: .retired, retiresAt: Vintage.retiresAt(r.vintage),
+                           remainingSupply: r.remainingSupply, remainingValue: r.remainingValue, retiredAt: r.retiredAt,
+                           expectedCompletion: r.matured ? 0 : r.retiredAt + 21 * 86_400)
+        }
+        return out
     }
 
     func vintageContext() async -> VintageRead? { vintageBase == nil ? .notServed : .ctx(vintageCtx!) }
+
+    /// A credit's month (credit_vintage: 0 names the current one) and the chain's CheckCredit.
+    private func creditMonth(_ m: UInt32) -> UInt32 { m == 0 ? Vintage.monthOf(now) : m }
+    private func checkCredit(_ m: UInt32) throws {
+        try need(Vintage.creditAccepted(creditMonth(m), at: now), "a credit lands in the current vintage, not \(m) (code 1122)")
+    }
 
     /// A stake msg's vintage rules (the msg server's and the ante's): the
     /// month it names, live (a delegation the current one), or a retired one
@@ -297,25 +329,30 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         }
         switch m {
         case let m as MsgShieldedDelegate:
-            try need(try month(m.vintage) == c.current, "a delegation credits the current vintage only (code 1122)")
+            try checkCredit(c.resolve(m.vintage))
         case let m as MsgRestake:
             try need(c.live(try month(m.vintage)), "a retired vintage (code 1121)")
         case let m as MsgRedelegate:
             try need(c.live(try month(m.vintage)), "a retired vintage (code 1121)")
+            try need(m.creditVintage == 0 || m.vintage != 0, "a credit_vintage needs an explicit vintage")
+            try checkCredit(m.creditVintage)
         case let m as MsgCheckIn:
             try need(m.fromVintage != 0, "from_vintage names a month (code 1122)")
+            try checkCredit(m.creditVintage)
             let f = try month(m.fromVintage)
             try need(c.live(f), "a retired vintage (code 1121)")
-            try need(Vintage.index(f) < Vintage.index(c.current), "a check-in from the current month (code 1122)")
+            try need(Vintage.index(f) < Vintage.index(creditMonth(m.creditVintage)), "a check-in not older than its credit (code 1122)")
             try need(m.amount <= vintageSupply[m.validator]?[f] ?? 0, "more derth than the vintage holds (code 1103)")
         case let m as MsgShieldedUndelegate:
             let from = try month(m.vintage)
             if !c.live(from) {
                 try need(m.groundworksSplit.isEmpty && m.stake.voteTag.allSatisfy { $0 == 0 }, "a withdrawal neither votes nor splits (code 1121)")
                 guard let r = retired[Vintage.denom(m.validator, from, base: c.base)], r.remainingSupply > 0 else {
-                    throw Refused(why: "the vintage's retirement is not booked (code 1121)")
+                    throw Refused(why: "the vintage's retirement is booked at the next epoch end (code 1121)")
                 }
-                try need(m.amount <= r.remainingSupply, "more than the vintage holds (code 1103)")
+                try need(BigUInt(m.amount) <= r.remainingSupply, "more than the vintage holds (code 1103)")
+                let w = BigUInt(m.amount) == r.remainingSupply ? r.remainingValue : BigUInt(m.amount) * r.remainingValue / r.remainingSupply
+                try need(w <= BigUInt(Int64.max), "a withdrawal's share must fit one note: withdraw in parts (code 1103)")
             }
         case let m as MsgStakeVote:
             let f = try month(m.vintage)
@@ -618,6 +655,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var answeringLcd = ""
 
     func broadcast(_ tx: Data, accepted: @Sendable (String) -> Void) async throws -> TxResult {
+        // Time passing between the proof and its block (a month boundary, say).
+        if let h = beforeBroadcast { beforeBroadcast = nil; h() }
         if let u = usedOnBroadcast { usedIdcs.insert(u); usedOnBroadcast = nil }
         // CheckTx answers with the code and codespace (a simulate with the text alone).
         do { _ = try check(tx, simulate: true) } catch let e as Refused where e.why.hasSuffix("(code 1130)") {
@@ -750,8 +789,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     private func outputVintages(_ m: any PrivateMsg) -> (UInt32, UInt32) {
         guard let c = vintageCtx else { return (0, 0) }
         switch m {
-        case let m as MsgCheckIn: return (m.fromVintage, c.current)
-        case let m as MsgRedelegate: return (c.resolve(m.vintage), c.current)
+        case let m as MsgCheckIn: return (m.fromVintage, creditMonth(m.creditVintage))
+        case let m as MsgRedelegate: return (c.resolve(m.vintage), creditMonth(m.creditVintage))
         default: return (c.resolve(Self.msgVintage(m)), 0)
         }
     }
@@ -1203,23 +1242,24 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             votes.append((m.proposalID, m.option.rawValue))
         case let m as MsgShieldedDelegate:
             noteValidator(m.validator)
-            if let c = vintageCtx { supplyAdd(m.validator, c.current, m.derth) }
+            let to = vintageCtx.map { $0.resolve(m.vintage) } ?? 0
+            if vintageCtx != nil { supplyAdd(m.validator, to, m.derth) }
             events.append((type: "shieldedstaking_delegate", attributes: ["validator": m.validator, "amount": String(m.amount), "derth": String(m.derth),
-                                                                          "vintage": String(vintageCtx?.current ?? 0)]))
+                                                                          "vintage": String(to)]))
         case is MsgRestake: break
         case let m as MsgCheckIn:
-            let c = vintageCtx!
+            let to = creditMonth(m.creditVintage)
             try supplySub(m.validator, m.fromVintage, m.amount)
-            supplyAdd(m.validator, c.current, m.amount)
+            supplyAdd(m.validator, to, m.amount)
             events.append((type: "shieldedstaking_check_in", attributes: ["validator": m.validator, "from_vintage": String(m.fromVintage),
-                                                                          "to_vintage": String(c.current), "derth": String(m.amount)]))
+                                                                          "to_vintage": String(to), "derth": String(m.amount)]))
         case let m as MsgRedelegate:
             let key = try f(m.stake.creditNullifier)
             noteValidator(m.srcValidator); noteValidator(m.dstValidator)
             moves[key] = Move(key: key, src: m.srcValidator, dst: m.dstValidator, moveTime: m.moveTime, credited: m.dstDerth)
             if let c = vintageCtx {
                 try supplySub(m.srcValidator, c.resolve(m.vintage), m.amount)
-                supplyAdd(m.dstValidator, c.current, m.dstDerth)
+                supplyAdd(m.dstValidator, creditMonth(m.creditVintage), m.dstDerth)
             }
             events.append((type: "shieldedstaking_redelegate", attributes: ["src_validator": m.srcValidator, "dst_validator": m.dstValidator,
                                                                              "derth": String(m.amount), "credited": String(m.dstDerth),
@@ -1229,9 +1269,10 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             let c = vintageCtx!
             let denom = Vintage.denom(m.validator, c.resolve(m.vintage), base: c.base)
             var r = retired[denom]!
-            let value = m.amount == r.remainingSupply ? r.remainingValue : m.amount * r.remainingValue / r.remainingSupply
-            r.remainingSupply -= m.amount; r.remainingValue -= value
+            let w = BigUInt(m.amount) == r.remainingSupply ? r.remainingValue : BigUInt(m.amount) * r.remainingValue / r.remainingSupply
+            r.remainingSupply -= BigUInt(m.amount); r.remainingValue -= w
             retired[denom] = r.remainingSupply == 0 ? nil : r
+            let value = UInt64(w)
             let id = nextPayoutID
             nextPayoutID += 1
             unbondPayouts.append(Payout(id: id, validator: m.validator, value: value, pc: try f(m.pc), ct: m.ciphertext))
@@ -1617,12 +1658,9 @@ struct FakeReads: PrivacyChainReads, @unchecked Sendable {
 
     func minDelegation() async throws -> UInt64 { chain.minDelegation }
 
-    func vintageContext() async throws -> VintageCtx? {
-        // One fixed validator: the public list's first.
-        chain.vintagesRead(chain.stakingValidators.sorted().first ?? "")
-    }
+    func vintageContext() async throws -> VintageCtx? { chain.vintageInfoRead() }
 
-    func retiredVintages() async throws -> [String: PrivacyReads.RetiredVintage]? { chain.retiredRead() }
+    func vintageBooks() async throws -> [String: PrivacyReads.VintageBook]? { chain.vintageBooksRead() }
 }
 
 /// The chain's layout of the stake and vote circuits' public inputs
@@ -1643,17 +1681,18 @@ enum ChainLayout {
     /// Each msg's StakeLanes under `vc` (types.VintageCtx; nil: a chain before vintages, every denom unsuffixed).
     static func lanes(_ m: any PrivateMsg, _ vc: VintageCtx? = nil) -> Lanes {
         func d(_ v: String, _ month: UInt32) -> String { vc.map { $0.denom(v, month) } ?? PrivacyWallet.derthDenom(v) }
-        func current(_ v: String) -> String { vc.map { Vintage.denom(v, $0.current, base: $0.base) } ?? PrivacyWallet.derthDenom(v) }
+        // credit_vintage: 0 names the current month (vc.Credit).
+        func credit(_ v: String, _ m: UInt32) -> String { vc.map { Vintage.denom(v, m == 0 ? $0.current : m, base: $0.base) } ?? PrivacyWallet.derthDenom(v) }
         switch m {
         case let m as MsgShieldedDelegate: return Lanes(denom: d(m.validator, m.vintage), vIn: m.derth, vOut: 0)
         case let m as MsgRestake: return Lanes(denom: d(m.validator, m.vintage), vIn: 0, vOut: 0)
         case let m as MsgShieldedUndelegate: return Lanes(denom: d(m.validator, m.vintage), vIn: 0, vOut: m.amount)
         case let m as MsgRedelegate:
-            return Lanes(denom: d(m.srcValidator, m.vintage), vIn: 0, vOut: m.amount, crDenom: current(m.dstValidator),
+            return Lanes(denom: d(m.srcValidator, m.vintage), vIn: 0, vOut: m.amount, crDenom: credit(m.dstValidator, m.creditVintage),
                          crVIn: m.dstDerth, crMoveTime: m.moveTime)
         case let m as MsgCheckIn:
             return Lanes(denom: vc.map { Vintage.denom(m.validator, m.fromVintage, base: $0.base) } ?? PrivacyWallet.derthDenom(m.validator),
-                         vIn: 0, vOut: m.amount, crDenom: current(m.validator), crVIn: m.amount, crMoveTime: 0)
+                         vIn: 0, vOut: m.amount, crDenom: credit(m.validator, m.creditVintage), crVIn: m.amount, crMoveTime: 0)
         default: return Lanes(denom: nil, vIn: 0, vOut: 0)
         }
     }

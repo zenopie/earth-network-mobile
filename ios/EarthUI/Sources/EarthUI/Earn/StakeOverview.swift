@@ -214,9 +214,18 @@ struct StakeOverview: View {
         return Date(timeIntervalSince1970: TimeInterval(unix)).formatted(style)
     }
 
-    /// A retired vintage: not earning, its withdrawal value (Query/Vintages), Withdraw.
+    /// A retired vintage's line: "Retiring · withdraw from Nov 2" until the
+    /// epoch end books it (nothing can be sent on it), then "Not earning since
+    /// Nov 1 · Withdraw". Nil `q` (not read yet): the retired form.
+    static func retiredLine(_ r: PrivacyWallet.StakeVintage, _ q: PrivacyWallet.WithdrawQuote?) -> (text: String, withdrawable: Bool) {
+        if let q, q.retiring { return ("Retiring · withdraw from \(date(q.withdrawFrom))", false) }
+        return ("Not earning since \(date(r.retiresAt)) · Withdraw", true)
+    }
+
+    /// A retired or retiring vintage: its withdrawal value (Query/VintageBooks), Withdraw once booked.
     private func retiredRow(_ r: PrivacyWallet.StakeVintage) -> some View {
         let q = model.retiredStake.first { $0.denom == r.denom }
+        let line = Self.retiredLine(r, q)
         let validator = (try? PrivacyWallet.parseDerth(r.denom)) ?? ""
         return Button { withdraw(r.denom) } label: {
             HStack(spacing: theme.space.x12) {
@@ -226,9 +235,9 @@ struct StakeOverview: View {
                         .font(EarthType.body).fontWeight(.semibold)
                         .foregroundStyle(theme.colors.textPrimary)
                         .lineLimit(1)
-                    Text("Not earning since \(Self.date(r.retiresAt)) · Withdraw")
+                    Text(line.text)
                         .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.accentInk)
+                        .foregroundStyle(line.withdrawable ? theme.colors.accentInk : theme.colors.textTertiary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: theme.space.x8)
@@ -241,7 +250,7 @@ struct StakeOverview: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .disabled(model.privacy == nil)
+        .disabled(model.privacy == nil || !line.withdrawable)
     }
 
     private func amount(_ uerth: UInt64) -> String {
@@ -438,12 +447,14 @@ struct ValidatorStakeSheet: View {
                         .foregroundStyle(v.dueSoon(now) ? theme.colors.warnInk : theme.colors.textTertiary)
                 }
                 ForEach(holding?.retired ?? [], id: \.denom) { r in
+                    let line = StakeOverview.retiredLine(r, model.retiredStake.first { $0.denom == r.denom })
                     Button { withdraw(r.denom) } label: {
-                        Text("Not earning since \(StakeOverview.date(r.retiresAt)) · Withdraw")
+                        Text(line.text)
                             .font(EarthType.bodySmall).fontWeight(.semibold)
-                            .foregroundStyle(theme.colors.accentInk)
+                            .foregroundStyle(line.withdrawable ? theme.colors.accentInk : theme.colors.textTertiary)
                     }
                     .buttonStyle(.plain)
+                    .disabled(!line.withdrawable)
                 }
             }
             .padding(.top, theme.space.x12)

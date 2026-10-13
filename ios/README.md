@@ -101,7 +101,10 @@ each VK against the chain's genesis VK, and writes one proof per circuit for
 
 Stake vintages (chain v1.3.0: `derth/<valoper>/<YYYYMM>`, the base month
 unsuffixed, `MsgCheckIn`, retired-vintage withdrawals, `vintage` on every
-stake msg) are pinned by their own vectors, iOS only, from the chain's code:
+stake msg; since the chain's fix pass 1 the month-boundary grace,
+`credit_vintage`, and the LCD's `VintageInfo` / `VintageBooks` JSON) are
+pinned by their own vectors, iOS only, from the chain's code (last generated
+at chain `418208b`):
 
     EarthCore/Scripts/vintagevectors/gen.sh <chain checkout> [ref]
     # writes Tests/EarthCoreTests/Resources/vintages/vectors.json (VintageTests)

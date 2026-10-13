@@ -3,7 +3,10 @@
 // vectors.json): the vintage month maths and denoms, every stake msg's
 // encoding and sighash with its vintage field (and vintage 0 hashing as
 // before), MsgCheckIn's, a retired withdrawal's, and the public inputs the
-// chain lays out for each under a VintageCtx. Run it through gen.sh, which
+// chain lays out for each under a VintageCtx; since fix pass 1, the
+// month-boundary grace (NewVintageCtx, CheckCredit), credit_vintage on
+// MsgRedelegate and MsgCheckIn, and the LCD's JSON for Query/VintageInfo,
+// Query/VintageBooks and a GroundworksVote (no split_expires_at). Run it through gen.sh, which
 // points a throwaway module at a committed chain ref. The helpers below are
 // tools/privacyvectors/main.go's, so a msg here is the one its vectors name.
 package main
@@ -16,10 +19,13 @@ import (
 	"os"
 	"time"
 
+	"cosmossdk.io/math"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/query"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+	"github.com/cosmos/gogoproto/jsonpb"
 	"github.com/cosmos/gogoproto/proto"
 
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
@@ -80,7 +86,7 @@ func stakeProof(seed uint64, spends int, creates, credits, clears bool) stakingt
 	zero := make([]byte, 32)
 	p := stakingtypes.StakeProof{Proof: []byte{0x5e, byte(seed)}, Anchor: fb(seed),
 		GroundworksTags: [][]byte{fb(seed + 8), fb(seed + 9)},
-		Commitment: zero, CreditNullifier: zero, CreditCommitment: zero, DebtRoot: zero,
+		Commitment:      zero, CreditNullifier: zero, CreditCommitment: zero, DebtRoot: zero,
 		CreditGroundworksTag: zero, VoteTag: zero, CreditVoteTag: zero, PendingKey: zero}
 	for i := 0; i < 2; i++ {
 		nf := zero
@@ -118,6 +124,9 @@ type msgVec struct {
 }
 
 func main() {
+	cfg := sdk.GetConfig()
+	cfg.SetBech32PrefixForAccount("earth", "earthpub")
+	cfg.SetBech32PrefixForValidator("earthvaloper", "earthvaloperpub")
 	ac := addresscodec.NewBech32Codec("earth")
 	out := map[string]any{"chain_id": chainID}
 	valRaw := make([]byte, 20)
@@ -166,6 +175,29 @@ func main() {
 		monthOf[fmt.Sprint(t)] = stakingtypes.MonthOf(time.Unix(t, 0))
 	}
 	out["month_of"] = monthOf
+
+	// ---- month-boundary grace (fix pass 1) ----------------------------------
+	out["grace_seconds"] = stakingtypes.VintageGraceSeconds
+	type graceV struct {
+		T       int64    `json:"t"`
+		Current uint32   `json:"current"`
+		Grace   uint32   `json:"grace"`
+		Accepts []uint32 `json:"accepts"`
+	}
+	var graces []graceV
+	curStart := stakingtypes.VintageStart(cur).Unix()
+	for _, t := range []int64{curStart - 1, curStart, curStart + 600, curStart + 3599, curStart + 3600, curStart + 86_400,
+		stakingtypes.VintageStart(202701).Unix() + 10} {
+		g := stakingtypes.NewVintageCtx(base, time.Unix(t, 0))
+		gv := graceV{T: t, Current: g.Current, Grace: g.Grace, Accepts: []uint32{}}
+		for _, m := range []uint32{stakingtypes.AddMonths(g.Current, -2), stakingtypes.AddMonths(g.Current, -1), g.Current, stakingtypes.AddMonths(g.Current, 1)} {
+			if g.CheckCredit(m) == nil {
+				gv.Accepts = append(gv.Accepts, m)
+			}
+		}
+		graces = append(graces, gv)
+	}
+	out["grace"] = graces
 	type parseV struct {
 		Denom   string `json:"denom"`
 		OK      bool   `json:"ok"`
@@ -214,7 +246,35 @@ func main() {
 	withdraw := &stakingtypes.MsgUndelegate{Bundle: fee(190, 2000), Validator: val, Amount: 400000, Stake: stakeProof(190, 1, true, false, true),
 		Pc: fb(191), Ciphertext: bct(191), Vintage: 202602}
 	add("withdraw_retired", withdraw)
+	// credit_vintage (fix pass 1): the current month explicit, and the
+	// previous month in the grace; appended to the sighash when non-zero.
+	prev := stakingtypes.AddMonths(cur, -1)
+	redCredit := func(cv uint32) *stakingtypes.MsgRedelegate {
+		return &stakingtypes.MsgRedelegate{Bundle: fee(175, 2000), SrcValidator: val, DstValidator: val2, Amount: 400000,
+			Stake: stakeProof(175, 1, true, true, true), DstDerth: 380_000, MoveTime: 1_790_000_123, Vintage: base, CreditVintage: cv}
+	}
+	checkCredit := func(cv uint32) *stakingtypes.MsgCheckIn {
+		return &stakingtypes.MsgCheckIn{Bundle: fee(180, 2000), Validator: val, FromVintage: base, Amount: 400000,
+			Stake: stakeProof(180, 1, true, true, true), CreditVintage: cv}
+	}
+	add("redelegate_credit", redCredit(cur))
+	add("redelegate_credit_grace", redCredit(prev))
+	add("check_in_credit", checkCredit(cur))
+	add("check_in_credit_grace", checkCredit(prev))
 	out["msgs"] = msgs
+	// ValidateBasic: a credit_vintage needs an explicit vintage.
+	noVin := redCredit(cur)
+	noVin.Vintage = 0
+	validate := map[string]string{}
+	for name, m := range map[string]sdk.HasValidateBasic{"redelegate_credit": redCredit(cur), "redelegate_credit_no_vintage": noVin,
+		"check_in_credit": checkCredit(cur), "check_in_credit_bad": checkCredit(202613)} {
+		if err := m.ValidateBasic(); err != nil {
+			validate[name] = err.Error()
+		} else {
+			validate[name] = ""
+		}
+	}
+	out["validate"] = validate
 
 	// ---- public inputs under vc --------------------------------------------
 	pis := map[string][]string{}
@@ -235,11 +295,62 @@ func main() {
 	} {
 		pis[name] = enc(m.StakeProofOf().PublicInputs(m.StakeLanes(vc), fe(77)))
 	}
+	// In the grace (10 minutes into cur): the credit lane proves the previous month's asset.
+	gvc := stakingtypes.NewVintageCtx(base, time.Unix(curStart+600, 0))
+	for name, m := range map[string]stakingtypes.StakeMsg{
+		"redelegate_credit":       redCredit(cur),
+		"redelegate_credit_grace": redCredit(prev),
+		"check_in_credit":         checkCredit(cur),
+		"check_in_credit_grace":   checkCredit(prev),
+	} {
+		pis[name] = enc(m.StakeProofOf().PublicInputs(m.StakeLanes(gvc), fe(77)))
+	}
 	for _, vin := range []uint32{base, 202612} {
 		vm := &stakingtypes.MsgStakeVote{ProposalId: 6, Validator: val, Weight: 999, VoteNullifiers: [][]byte{fb(128), fb(129)}, DebtRoot: fb(130), Vintage: vin}
 		pis[fmt.Sprintf("stake_vote_%d", vin)] = enc(vm.VotePublicInputs(vc, fb(131), fb(132), fe(77)))
 	}
 	out["public_inputs"] = pis
+
+	// ---- the LCD's JSON (gateway: original names, defaults emitted) ---------
+	jm := jsonpb.Marshaler{OrigName: true, EmitDefaults: true}
+	js := func(m proto.Message) json.RawMessage {
+		var buf bytes.Buffer
+		must(jm.Marshal(&buf, m))
+		return json.RawMessage(buf.Bytes())
+	}
+	nextRet := stakingtypes.VintageStart(stakingtypes.AddMonths(cur, 1)).Unix()
+	out["vintage_info"] = js(&stakingtypes.QueryVintageInfoResponse{CurrentVintage: cur, BaseVintage: base, NextRetirement: nextRet})
+	i := func(v int64) *math.Int { x := math.NewInt(v); return &x }
+	zero := math.ZeroInt()
+	rec := func(st stakingtypes.UnbondStatus, done int64) *stakingtypes.UnbondRecord {
+		return &stakingtypes.UnbondRecord{Validator: val2, Epoch: 400, Status: st, Requested: math.NewInt(5_000_000), Target: math.NewInt(5_000_000),
+			Undelegated: math.NewInt(5_000_000), CompletionTime: done * int64(time.Second), Payout: zero, Outstanding: math.NewInt(5_000_000), Paid: zero}
+	}
+	retiredAt := stakingtypes.VintageRetiresAt(202601).Unix() + 3000 // booked at the epoch end after its boundary
+	books := &stakingtypes.QueryVintageBooksResponse{CurrentVintage: cur, BaseVintage: base, NextRetirement: nextRet,
+		Pagination: &query.PageResponse{NextKey: []byte{0x01, 0x02, 0xfe}},
+		Entries: []stakingtypes.VintageBookEntry{
+			{Validator: val, Vintage: base, Denom: stakingtypes.VintageDenom(val, base, base), State: "live", Supply: i(7_000_000),
+				RetiresAt: stakingtypes.VintageRetiresAt(base).Unix()},
+			{Validator: val, Vintage: cur, Denom: stakingtypes.VintageDenom(val, cur, base), State: "live", Supply: i(1_000_000),
+				RetiresAt: stakingtypes.VintageRetiresAt(cur).Unix()},
+			{Validator: val, Vintage: 202602, Denom: stakingtypes.VintageDenom(val, 202602, base), State: "retiring", Supply: i(3_000_000),
+				RetiresAt: stakingtypes.VintageRetiresAt(202602).Unix(), ExpectedCompletion: curStart + 86_400 + 21*86_400},
+			{Validator: val2, Vintage: 202601, Denom: stakingtypes.VintageDenom(val2, 202601, base), State: "retired",
+				RetiresAt: stakingtypes.VintageRetiresAt(202601).Unix(),
+				Retired: &stakingtypes.RetiredVintage{Validator: val2, Vintage: 202601, Supply: math.NewInt(4_500_000), Value: math.NewInt(5_000_000),
+					PayoutId: 9, Epoch: 400, RemainingSupply: math.NewInt(4_500_000), RemainingValue: math.NewInt(5_000_000), RetiredAt: retiredAt},
+				Record: rec(stakingtypes.UNBOND_STATUS_UNBONDING, retiredAt+21*86_400), ExpectedCompletion: retiredAt + 21*86_400},
+			{Validator: val2, Vintage: 202512, Denom: stakingtypes.VintageDenom(val2, 202512, base), State: "retired",
+				RetiresAt: stakingtypes.VintageRetiresAt(202512).Unix(),
+				Retired: &stakingtypes.RetiredVintage{Validator: val2, Vintage: 202512, Supply: math.NewInt(2_000_000), Value: math.NewInt(2_200_000),
+					PayoutId: 8, Epoch: 370, RemainingSupply: math.NewInt(1_000_000), RemainingValue: math.NewInt(1_100_000), RetiredAt: stakingtypes.VintageRetiresAt(202512).Unix() + 3000},
+				Record: rec(stakingtypes.UNBOND_STATUS_MATURED, stakingtypes.VintageRetiresAt(202512).Unix()+3000+21*86_400)},
+		}}
+	out["vintage_books"] = js(books)
+	out["groundworks_vote"] = js(&stakingtypes.GroundworksVote{Id: 12, Validator: val, Derth: math.NewInt(1_500_000), Weight: math.NewInt(1_650_000),
+		Splits: []allocationtypes.AllocationWeight{{OptionId: 2, Percent: 100}}, CreatedHeight: 77, SplitEpoch: 3, Tag: fb(140),
+		Pending: math.ZeroInt(), Vintage: cur})
 
 	enc2 := json.NewEncoder(os.Stdout)
 	enc2.SetIndent("", " ")

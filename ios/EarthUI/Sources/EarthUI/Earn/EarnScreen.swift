@@ -136,15 +136,19 @@ struct EarnScreen: View {
                 case let t where t > 0: paid = StakeRoundModel.day(t)
                 default: paid = "When the unbonding period ends"
                 }
+                var rows: [(String, String)] = [
+                    ("Amount", "\(Figures.balance(BigInt(q.derth))) derth (\(Figures.balance(BigInt(q.value))) ERTH)"),
+                    ("From validator", moniker(q.validator)),
+                    ("Paid", paid),
+                ]
+                // A share past one note's value goes in parts, one transaction each.
+                if q.parts > 1 { rows.append(("Sends", "\(q.parts) transactions")) }
+                rows.append(("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH\(q.parts > 1 ? " each" : ""), shielded"))
+                let stopped = q.retiredAt > 0 ? q.retiredAt : Vintage.retiresAt(q.month)
                 tx.requestPrivate(.private(
                     action: "Withdraw retired stake",
-                    rows: [
-                        ("Amount", "\(Figures.balance(BigInt(q.derth))) derth (\(Figures.balance(BigInt(q.value))) ERTH)"),
-                        ("From validator", moniker(q.validator)),
-                        ("Paid", paid),
-                        ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
-                    ],
-                    notes: ["This stake stopped earning on \(StakeOverview.date(Vintage.retiresAt(q.month))). Withdrawing pays out its share as private ERTH."]
+                    rows: rows,
+                    notes: ["This stake stopped earning on \(StakeOverview.date(stopped)). Withdrawing pays out its share as private ERTH."]
                 )) { w in
                     try await w.withdrawRetired(q)
                 }

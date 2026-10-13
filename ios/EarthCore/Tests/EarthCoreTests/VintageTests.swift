@@ -1,3 +1,4 @@
+import BigInt
 import Foundation
 import XCTest
 @testable import EarthCore
@@ -7,7 +8,10 @@ import XCTest
 /// both denom forms, every stake msg's vintage field in its encoding and
 /// sighash (0 hashing as before), MsgCheckIn's and a retired withdrawal's
 /// shape and sighash, the public inputs the chain supplies each under a
-/// VintageCtx, and the check-in reminder's dates.
+/// VintageCtx, and the check-in reminder's dates. Since the chain's fix pass
+/// 1: the month-boundary grace, credit_vintage on MsgRedelegate and
+/// MsgCheckIn (sighash and the credit lane's asset), and the LCD's JSON for
+/// Query/VintageInfo, Query/VintageBooks and a GroundworksVote.
 final class VintageTests: XCTestCase {
     static let json: [String: Any] = {
         let url = Bundle.module.url(forResource: "vintages", withExtension: nil)!.appendingPathComponent("vectors.json")
@@ -128,8 +132,22 @@ final class VintageTests: XCTestCase {
                               vintage: 202602)
     }
 
+    var prev: UInt32 { Vintage.addMonths(current, -1) }
+
+    func redelegateCredit(_ cv: UInt32, vintage: UInt32? = nil) -> MsgRedelegate {
+        MsgRedelegate(bundle: fee(175, 2000), srcValidator: validator, dstValidator: validator2, amount: 400_000,
+                      stake: stake(175, 1, credits: true), dstDerth: 380_000, moveTime: 1_790_000_123, vintage: vintage ?? base, creditVintage: cv)
+    }
+
+    func checkInCredit(_ cv: UInt32) -> MsgCheckIn {
+        MsgCheckIn(bundle: fee(180, 2000), validator: validator, fromVintage: base, amount: 400_000, stake: stake(180, 1, credits: true),
+                   creditVintage: cv)
+    }
+
     func msgs() -> [String: any PrivateMsg] {
-        var out: [String: any PrivateMsg] = ["check_in": checkIn, "check_in_vote": checkInVote, "withdraw_retired": withdraw]
+        var out: [String: any PrivateMsg] = ["check_in": checkIn, "check_in_vote": checkInVote, "withdraw_retired": withdraw,
+                                             "redelegate_credit": redelegateCredit(current), "redelegate_credit_grace": redelegateCredit(prev),
+                                             "check_in_credit": checkInCredit(current), "check_in_credit_grace": checkInCredit(prev)]
         for v in [UInt32(0), base, current] {
             out["delegate_\(v)"] = MsgShieldedDelegate(bundle: fee(90, 502_000), validator: validator, amount: 500_000, derth: 449_995, stake: stake(90, 1),
                                                        vintage: v)
@@ -189,6 +207,119 @@ final class VintageTests: XCTestCase {
         XCTAssertThrowsError(try zero.sighashFields())
         XCTAssertEqual(0, m.movedUerth)
         XCTAssertEqual(2000, m.privateFee)
+    }
+
+    /// credit_vintage (MsgRedelegate 10, MsgCheckIn 7): appended to the
+    /// sighash after everything else when non-zero (0 hashes and encodes as
+    /// before); a move's needs an explicit vintage, a check-in's must be a month.
+    func testCreditVintageSighash() throws {
+        let m = msgs()
+        let plain = m["redelegate_\(base)"]!, credited = m["redelegate_credit"]!
+        XCTAssertEqual(Array(try credited.sighashFields().dropLast()), try plain.sighashFields())
+        XCTAssertEqual(PrivacyHash.u64(UInt64(current)), try credited.sighashFields().last)
+        XCTAssertNotEqual(try m["redelegate_credit"]!.sighash(chainID: "earth-1", tx: .init()),
+                          try m["redelegate_credit_grace"]!.sighash(chainID: "earth-1", tx: .init()))
+        XCTAssertFalse(try ProtoFields(plain.encoded()).has(10))
+        XCTAssertTrue(try ProtoFields(credited.encoded()).has(10))
+        let ci = try m["check_in_credit"]!.sighashFields()
+        XCTAssertEqual(Array(ci.dropLast()), try m["check_in"]!.sighashFields())
+        XCTAssertEqual(PrivacyHash.u64(UInt64(current)), ci.last)
+        XCTAssertFalse(try ProtoFields(checkIn.encoded()).has(7))
+        XCTAssertTrue(try ProtoFields(checkInCredit(current).encoded()).has(7))
+        // The chain's ValidateBasic: no credit_vintage without a vintage; a credit that is no month.
+        let v = json["validate"] as! [String: String]
+        XCTAssertTrue(v["redelegate_credit_no_vintage"]!.contains("credit_vintage needs an explicit vintage"))
+        XCTAssertThrowsError(try redelegateCredit(current, vintage: 0).sighashFields())
+        XCTAssertTrue(v["check_in_credit_bad"]!.contains("not a vintage"))
+        XCTAssertThrowsError(try checkInCredit(202613).sighashFields())
+    }
+
+    /// The month-boundary grace: in a month's first hour a credit may name
+    /// the previous month (types.NewVintageCtx, CheckCredit), and the credit
+    /// lane then proves that month's asset.
+    func testGraceMatchesTheChain() throws {
+        XCTAssertEqual((json["grace_seconds"] as! NSNumber).int64Value, Vintage.graceSeconds)
+        for g in json["grace"] as! [[String: Any]] {
+            let t = (g["t"] as! NSNumber).int64Value
+            let cur = (g["current"] as! NSNumber).uint32Value
+            XCTAssertEqual(cur, Vintage.monthOf(t), "\(t)")
+            XCTAssertEqual((g["grace"] as! NSNumber).uint32Value, Vintage.grace(at: t), "\(t)")
+            let accepts = Set((g["accepts"] as! [NSNumber]).map(\.uint32Value))
+            for m in [Vintage.addMonths(cur, -2), Vintage.addMonths(cur, -1), cur, Vintage.addMonths(cur, 1)] {
+                XCTAssertEqual(accepts.contains(m), Vintage.creditAccepted(m, at: t), "\(t) \(m)")
+            }
+        }
+        let want = json["public_inputs"] as! [String: [String]]
+        let cases: [String: any PrivateMsg] = [
+            "redelegate_credit": redelegateCredit(current), "redelegate_credit_grace": redelegateCredit(prev),
+            "check_in_credit": checkInCredit(current), "check_in_credit_grace": checkInCredit(prev),
+        ]
+        for (name, m) in cases {
+            let got = try ChainLayout.stakePublicInputs(m.stakeProof!, ChainLayout.lanes(m, ctx), Vectors.fe(77))
+            XCTAssertEqual(want[name], got.map(\.hex), name)
+        }
+        XCTAssertEqual("derth/\(validator2)/\(prev)", ChainLayout.lanes(redelegateCredit(prev), ctx).crDenom)
+    }
+
+    /// Query/VintageInfo and Query/VintageBooks as the LCD serves them: the
+    /// clock, and each entry's state; a retiring one's withdrawal date the
+    /// epoch end, a retired one's remaining share and expected_completion (0:
+    /// matured). A GroundworksVote carries no split_expires_at.
+    func testVintageQueriesParse() throws {
+        func j(_ k: String) -> JSON { JSON(json[k]) }
+        XCTAssertEqual(ctx, try PrivacyQueries.vintageCtx(j("vintage_info")))
+        XCTAssertEqual(ctx, try PrivacyQueries.vintageCtx(j("vintage_books")))
+        let epochEnd = Vintage.start(current) + 86_400
+        let books = PrivacyQueries.vintageBooks(j("vintage_books").entries.array, epochEnd: epochEnd)
+        XCTAssertEqual(5, books.count)
+        let baseBook = try XCTUnwrap(books[PrivacyWallet.derthDenom(validator)])
+        XCTAssertEqual(.live, baseBook.state)
+        XCTAssertEqual(base, baseBook.vintage)
+        let retiring = try XCTUnwrap(books["derth/\(validator)/202602"])
+        XCTAssertEqual(.retiring, retiring.state)
+        XCTAssertEqual(epochEnd, retiring.withdrawFrom)
+        XCTAssertEqual(epochEnd + 21 * 86_400, retiring.expectedCompletion)
+        XCTAssertNil(retiring.value(1))
+        let held = try XCTUnwrap(books["derth/\(validator2)/202601"])
+        XCTAssertEqual(.retired, held.state)
+        XCTAssertFalse(held.matured)
+        XCTAssertEqual(Vintage.retiresAt(202601) + 3000 + 21 * 86_400, held.expectedCompletion)
+        XCTAssertEqual(Vintage.retiresAt(202601) + 3000, held.retiredAt)
+        XCTAssertEqual(5_000_000, held.value(4_500_000))
+        XCTAssertEqual(1_111_111, held.value(1_000_000))
+        let matured = try XCTUnwrap(books["derth/\(validator2)/202512"])
+        XCTAssertTrue(matured.matured)
+        XCTAssertEqual(0, matured.expectedCompletion)
+        XCTAssertEqual(550_000, matured.value(500_000))
+        // No split_expires_at on the wire: the vote has no lease.
+        XCTAssertNil((json["groundworks_vote"] as! [String: Any])["split_expires_at"])
+        let vote = try PrivacyQueries.groundworksVote(j("groundworks_vote"))
+        XCTAssertEqual(0, vote.splitExpiresAt)
+        XCTAssertEqual(current, vote.vintage)
+        XCTAssertEqual(1_500_000, vote.derth)
+        XCTAssertEqual([2: 100], vote.splits)
+    }
+
+    /// A withdrawal's share must fit one note (the chain's 1103): a larger
+    /// one is cut into parts, each paying at most 2^63-1.
+    func testWithdrawalParts() {
+        let cap = BigUInt(Int64.max)
+        let small = PrivacyReads.VintageBook(validator: validator, vintage: 202601, denom: "d", state: .retired, retiresAt: 0,
+                                             remainingSupply: 1_000_000, remainingValue: 1_100_000)
+        XCTAssertEqual([400_000], PrivacyWallet.withdrawalParts(400_000, small))
+        let big = PrivacyReads.VintageBook(validator: validator, vintage: 202601, denom: "d", state: .retired, retiresAt: 0,
+                                           remainingSupply: 1_000_000, remainingValue: cap * 5 / 2)
+        let most = big.maxWithdrawal
+        XCTAssertNotNil(big.value(most))
+        XCTAssertNil(big.value(most + 1))
+        let parts = PrivacyWallet.withdrawalParts(1_000_000, big)
+        XCTAssertEqual(3, parts.count)
+        XCTAssertEqual(1_000_000, parts.reduce(0, +))
+        XCTAssertTrue(parts.allSatisfy { big.value($0) != nil })
+        // Pro rata: the parts' shares add up to the whole less floor rounding.
+        let paid = parts.reduce(BigUInt(0)) { $0 + BigUInt(big.value($1)!) }
+        XCTAssertLessThanOrEqual(paid, big.remainingValue)
+        XCTAssertGreaterThan(paid + BigUInt(parts.count), big.remainingValue - 1)
     }
 
     /// The circuits' public inputs as the chain lays them out under a

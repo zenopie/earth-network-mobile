@@ -10,7 +10,10 @@ import Foundation
 /// is the unsuffixed derth/<valoper> every note made before v1.3.0 carries.
 /// One denom per (validator, vintage). A vintage is live in its own month and
 /// the 12 after it and retires at 00:00 UTC on the 1st of its month + 13: from
-/// then on it earns nothing and can only be withdrawn. Mirrors
+/// then on every msg on it is refused. Until the next epoch end books its
+/// value it is *retiring* (still earning in the validator's book, not yet
+/// withdrawable); after that it is retired, earns nothing and can only be
+/// withdrawn. Mirrors
 /// x/shieldedstaking/types/vintage.go; VintageTests pins it to the chain's
 /// output.
 public enum Vintage {
@@ -18,6 +21,23 @@ public enum Vintage {
     public static let liveMonths: Int64 = 13
     /// The check-in reminder opens this long before a vintage holding stake retires.
     public static let checkInLeadSeconds: Int64 = 30 * 86_400
+    /// How long into a month a credit (a delegation, a move's credit, a
+    /// check-in) may still name the previous month (types.VintageGraceSeconds,
+    /// = ClearBeforeSlackSeconds): a proof built before 00:00 UTC on the 1st
+    /// and included after it lands in the vintage it was built for.
+    public static let graceSeconds: Int64 = 3600
+
+    /// The month a credit may name besides the current one at block time `t`
+    /// (the previous month in the first `graceSeconds` of a month; 0 otherwise).
+    public static func grace(at t: Int64) -> UInt32 {
+        let cur = monthOf(t)
+        return valid(cur) && t - start(cur) < graceSeconds ? addMonths(cur, -1) : 0
+    }
+
+    /// Whether a credit naming `m` is taken at block time `t` (types.VintageCtx.CheckCredit).
+    public static func creditAccepted(_ m: UInt32, at t: Int64) -> Bool {
+        m != 0 && (m == monthOf(t) || m == grace(at: t))
+    }
 
     /// Whether `m` is a YYYYMM month the chain takes (year 2000-9999).
     public static func valid(_ m: UInt32) -> Bool {
@@ -101,7 +121,7 @@ public enum Vintage {
 /// What resolves a stake msg's vintages to assets (types.VintageCtx): the
 /// base vintage (the unsuffixed denom's month) and the current month (the
 /// vintage a delegation, a move's credit or a check-in lands in), read from
-/// Query/Vintages. Nil wherever the chain predates v1.3.0: every msg then
+/// Query/VintageInfo. Nil wherever the chain predates v1.3.0: every msg then
 /// names vintage 0 and every denom is unsuffixed, byte for byte as before.
 public struct VintageCtx: Sendable, Equatable {
     public let base: UInt32
@@ -125,6 +145,9 @@ public struct VintageCtx: Sendable, Equatable {
 public enum VintageStanding: Sendable, Equatable {
     /// Earning; checks in by `retiresAt` (`dueSoon`: within `Vintage.checkInLeadSeconds`).
     case live(retiresAt: Int64, dueSoon: Bool)
+    /// Past its retirement, its value booked at the next epoch end: refuses
+    /// every msg, withdrawable from `withdrawFrom`.
+    case retiring(withdrawFrom: Int64)
     /// Retired at `retiredAt`: earns nothing, can only be withdrawn.
     case retired(retiredAt: Int64)
 }

@@ -86,7 +86,7 @@ public final class AppModel {
     public private(set) var groundworksVotes: [PrivacyWallet.GroundworksVoteView] = []
     /// This wallet's private stake per validator: what may move now, what waits for its window, each vintage apart.
     public private(set) var stakeHoldings: [PrivacyWallet.StakeHolding] = []
-    /// Retired stake: what withdrawing each retired vintage pays and when (Query/Vintages; `.retired` once read).
+    /// Retired stake: what withdrawing each retired vintage pays and when (Query/VintageBooks, read whole; `.retired` once read).
     public private(set) var retiredStake: [PrivacyWallet.WithdrawQuote] = []
     /// The chain's label window as last read (0: never): how long moved stake stays put.
     public private(set) var labelWindowSeconds: UInt64 = 0

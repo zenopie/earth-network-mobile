@@ -73,7 +73,7 @@ public protocol ChainRoots: Sendable {
     /// carries derth/<valoper>'s asset id only, so a wallet restored from the
     /// mnemonic names its stake by trying each (nil: the node cannot say).
     func validatorOperators() async -> [String]?
-    /// The chain's stake vintages (Query/Vintages of one fixed validator):
+    /// The chain's stake vintages (Query/VintageInfo, naming no validator):
     /// a stake ciphertext names derth/<valoper>/<YYYYMM> by its asset id
     /// only, so a note of a vintage is named by trying each month from the
     /// base vintage on. Nil: the node cannot say.

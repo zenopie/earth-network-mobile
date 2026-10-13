@@ -1184,10 +1184,13 @@ public struct MsgStakeVote: DecodablePrivateMsg, Equatable {
 /// the owner's unlabelled derth/<dst> note (or pads), labelled with the move
 /// (move_key = credit_nullifier, move_time, exposed = dst_derth). `moveTime`:
 /// unix seconds, within 600 s before the block time. `vintage`: the source
-/// notes' (live); the credit lands in dst's current vintage. sighash fields:
-/// StakeFields, Bytes(src_validator), Bytes(dst_validator), amount,
-/// dst_derth, move_time, Bytes(SplitsBytes(groundworks_split)), then
-/// vintage when non-zero.
+/// notes' (live). `creditVintage`: the vintage of dst's asset the credit lane
+/// proves and the credit lands in (0: the current month; non-zero: the current
+/// month, or the previous one in a month's first hour; it needs a non-zero
+/// vintage). sighash fields: StakeFields, Bytes(src_validator),
+/// Bytes(dst_validator), amount, dst_derth, move_time,
+/// Bytes(SplitsBytes(groundworks_split)), then vintage when non-zero, then
+/// credit_vintage when non-zero.
 public struct MsgRedelegate: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgRedelegate"
     public var bundle: ShieldedBundle
@@ -1199,12 +1202,14 @@ public struct MsgRedelegate: DecodablePrivateMsg, StakingMsg, Equatable {
     public var moveTime: UInt64
     public var groundworksSplit: [Msg.AllocationWeight]
     public var vintage: UInt32
+    public var creditVintage: UInt32
 
     public init(bundle: ShieldedBundle, srcValidator: String, dstValidator: String, amount: UInt64, stake: StakeProof,
-                dstDerth: UInt64, moveTime: UInt64, groundworksSplit: [Msg.AllocationWeight] = [], vintage: UInt32 = 0) {
+                dstDerth: UInt64, moveTime: UInt64, groundworksSplit: [Msg.AllocationWeight] = [], vintage: UInt32 = 0,
+                creditVintage: UInt32 = 0) {
         self.bundle = bundle; self.srcValidator = srcValidator; self.dstValidator = dstValidator; self.amount = amount
         self.stake = stake; self.dstDerth = dstDerth; self.moveTime = moveTime; self.groundworksSplit = groundworksSplit
-        self.vintage = vintage
+        self.vintage = vintage; self.creditVintage = creditVintage
     }
 
     public func encoded() -> Data {
@@ -1218,6 +1223,7 @@ public struct MsgRedelegate: DecodablePrivateMsg, StakingMsg, Equatable {
         w.uint64(7, moveTime)
         w.repeatedMessage(8, groundworksSplit)
         w.uint64(9, UInt64(vintage))
+        w.uint64(10, UInt64(creditVintage))
         return w.data
     }
 
@@ -1225,14 +1231,17 @@ public struct MsgRedelegate: DecodablePrivateMsg, StakingMsg, Equatable {
         let f = try ProtoFields(d)
         return Self(bundle: try f.message(1, ShieldedBundle.decode), srcValidator: f.string(2), dstValidator: f.string(3),
                     amount: f.uint64(4), stake: try f.message(5, StakeProof.decode), dstDerth: f.uint64(6), moveTime: f.uint64(7),
-                    groundworksSplit: try f.repeatedMessage(8, Msg.AllocationWeight.decode), vintage: UInt32(truncatingIfNeeded: f.uint64(9)))
+                    groundworksSplit: try f.repeatedMessage(8, Msg.AllocationWeight.decode), vintage: UInt32(truncatingIfNeeded: f.uint64(9)),
+                    creditVintage: UInt32(truncatingIfNeeded: f.uint64(10)))
     }
 
     public func sighashFields() throws -> [Fr] {
-        PrivateMsgs.withVintage(try PrivateMsgs.stakeFields(stake) + [
+        // credit_vintage needs an explicit vintage, so the two never hash alike (ValidateBasic).
+        guard creditVintage == 0 || vintage != 0 else { throw PrivateMsgs.Error.shape("a credit_vintage needs an explicit vintage") }
+        return PrivateMsgs.withVintage(PrivateMsgs.withVintage(try PrivateMsgs.stakeFields(stake) + [
             PrivateMsgs.bytes(srcValidator), PrivateMsgs.bytes(dstValidator), PrivateMsgs.u(amount),
             PrivateMsgs.u(dstDerth), PrivateMsgs.u(moveTime), PrivateMsgs.bytes(PrivateMsgs.splitsBytes(groundworksSplit)),
-        ], vintage)
+        ], vintage), creditVintage)
     }
 }
 
@@ -1245,9 +1254,12 @@ public struct MsgRedelegate: DecodablePrivateMsg, StakingMsg, Equatable {
 /// (the current vintage's asset, cr_v_in = amount, cr_move_time 0: the
 /// credit is unlabelled) merges into our unlabelled current-vintage note or
 /// pads. Every input's Groundworks vote is cancelled; the outputs may vote
-/// with `groundworksSplit`. The bundle pays the fee only. sighash fields:
+/// with `groundworksSplit`. The bundle pays the fee only. `creditVintage`:
+/// the vintage the credit lane proves and the stake moves into (0: the
+/// current month; non-zero: the current month, or the previous one in a
+/// month's first hour; `fromVintage` is before it). sighash fields:
 /// StakeFields, Bytes(validator), from_vintage, amount,
-/// Bytes(SplitsBytes(groundworks_split)).
+/// Bytes(SplitsBytes(groundworks_split)), then credit_vintage when non-zero.
 public struct MsgCheckIn: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgCheckIn"
     public var bundle: ShieldedBundle
@@ -1256,11 +1268,12 @@ public struct MsgCheckIn: DecodablePrivateMsg, StakingMsg, Equatable {
     public var amount: UInt64
     public var stake: StakeProof
     public var groundworksSplit: [Msg.AllocationWeight]
+    public var creditVintage: UInt32
 
     public init(bundle: ShieldedBundle, validator: String, fromVintage: UInt32, amount: UInt64, stake: StakeProof,
-                groundworksSplit: [Msg.AllocationWeight] = []) {
+                groundworksSplit: [Msg.AllocationWeight] = [], creditVintage: UInt32 = 0) {
         self.bundle = bundle; self.validator = validator; self.fromVintage = fromVintage; self.amount = amount
-        self.stake = stake; self.groundworksSplit = groundworksSplit
+        self.stake = stake; self.groundworksSplit = groundworksSplit; self.creditVintage = creditVintage
     }
 
     public func encoded() -> Data {
@@ -1271,6 +1284,7 @@ public struct MsgCheckIn: DecodablePrivateMsg, StakingMsg, Equatable {
         w.uint64(4, amount)
         w.message(5, stake)
         w.repeatedMessage(6, groundworksSplit)
+        w.uint64(7, UInt64(creditVintage))
         return w.data
     }
 
@@ -1278,15 +1292,19 @@ public struct MsgCheckIn: DecodablePrivateMsg, StakingMsg, Equatable {
         let f = try ProtoFields(d)
         return Self(bundle: try f.message(1, ShieldedBundle.decode), validator: f.string(2), fromVintage: UInt32(truncatingIfNeeded: f.uint64(3)),
                     amount: f.uint64(4), stake: try f.message(5, StakeProof.decode),
-                    groundworksSplit: try f.repeatedMessage(6, Msg.AllocationWeight.decode))
+                    groundworksSplit: try f.repeatedMessage(6, Msg.AllocationWeight.decode),
+                    creditVintage: UInt32(truncatingIfNeeded: f.uint64(7)))
     }
 
     public func sighashFields() throws -> [Fr] {
         guard Vintage.valid(fromVintage) else { throw PrivateMsgs.Error.shape("from_vintage \(fromVintage) is not a vintage (YYYYMM)") }
-        return try PrivateMsgs.stakeFields(stake) + [
+        guard creditVintage == 0 || Vintage.valid(creditVintage) else {
+            throw PrivateMsgs.Error.shape("credit_vintage \(creditVintage) is not a vintage (YYYYMM)")
+        }
+        return PrivateMsgs.withVintage(try PrivateMsgs.stakeFields(stake) + [
             PrivateMsgs.bytes(validator), PrivateMsgs.u(UInt64(fromVintage)), PrivateMsgs.u(amount),
             PrivateMsgs.bytes(PrivateMsgs.splitsBytes(groundworksSplit)),
-        ]
+        ], creditVintage)
     }
 }
 

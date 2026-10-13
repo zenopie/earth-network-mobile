@@ -1,3 +1,4 @@
+import BigInt
 import Foundation
 import XCTest
 @testable import EarthCore
@@ -76,18 +77,68 @@ final class VintageFlowTests: PrivacyTestCase {
         XCTAssertEqual(VintageCtx(base: base, current: 202611), a.localVintages)
     }
 
-    /// A quote from last month is shown again rather than sent into a vintage the chain refuses.
-    func testAQuoteFromLastMonthIsShownAgain() async throws {
+    /// A quote from last month is sent into the month read when it is sent
+    /// (the same derth: one rate per validator; the newer vintage retires later).
+    func testAQuoteFromLastMonthCreditsTheNewMonth() async throws {
         let chain = chain()
         let a = try await funded(chain)
         let q = try await a.quoteDelegate(validator: vA, amount: 1_000_000)
         XCTAssertEqual(base, q.vintage)
         enter(chain, 202610)
-        let txs = chain.txs.count
-        await assertThrowsAsync({ try await a.delegate(q) }) { $0 is PrivacyWallet.QuoteChanged }
-        XCTAssertEqual(txs, chain.txs.count)
-        _ = try await a.delegate(try await a.quoteDelegate(validator: vA, amount: 1_000_000))
-        XCTAssertEqual(202610, (chain.lastMsg as? MsgShieldedDelegate)?.vintage)
+        _ = try await a.delegate(q); try await a.sync()
+        let m = try XCTUnwrap(chain.lastMsg as? MsgShieldedDelegate)
+        XCTAssertEqual(202610, m.vintage)
+        XCTAssertEqual(q.derth, m.derth)
+        XCTAssertEqual(q.derth, sum(notes(a, "derth/\(vA)/202610")))
+    }
+
+    /// The month-boundary grace: a proof built just before 00:00 UTC on the
+    /// 1st and included in the next month's first hour lands in the vintage
+    /// it was built for, each credit naming its month explicitly (a
+    /// delegation's vintage, a move's and a check-in's credit_vintage); past
+    /// the hour the chain refuses it.
+    func testAProofBuiltBeforeTheBoundaryLandsInTheGrace() async throws {
+        let chain = chain()
+        let a = try await funded(chain)
+        _ = try await a.delegate(validator: vA, amount: 2_000_000); try await a.sync()
+        let dec = Vintage.start(202612)
+        func lateNov() { chain.now = dec - 60; chain.emptyBlock() }
+
+        // A move: the credit lane proves vB's Nov asset; included 5 minutes into Dec (move_time within 600 s).
+        enter(chain, 202611)
+        lateNov()
+        chain.beforeBroadcast = { chain.now = dec + 300 }
+        _ = try await a.redelegate(try await a.quoteMove(src: vA, dst: vB, amount: 300_000)); try await a.sync()
+        let mv = try XCTUnwrap(chain.lastMsg as? MsgRedelegate)
+        XCTAssertEqual(base, mv.vintage)
+        XCTAssertEqual(202611, mv.creditVintage)
+        XCTAssertEqual(PrivacyHash.u64(202611), try mv.sighashFields().last)
+        XCTAssertEqual(mv.dstDerth, chain.vintageSupply[vB]?[202611])
+        XCTAssertEqual(mv.dstDerth, sum(notes(a, "derth/\(vB)/202611")))
+
+        // A delegation and a check-in, both built in Nov, included in Dec's first hour.
+        lateNov()
+        let q = try await a.quoteDelegate(validator: vA, amount: 500_000)
+        chain.beforeBroadcast = { chain.now = dec + 3000 }
+        _ = try await a.delegate(q); try await a.sync()
+        XCTAssertEqual(202611, (chain.lastMsg as? MsgShieldedDelegate)?.vintage)
+        XCTAssertEqual(q.derth, chain.vintageSupply[vA]?[202611])
+        lateNov()
+        chain.beforeBroadcast = { chain.now = dec + 3000 }
+        _ = try await a.checkIn(denom: PrivacyWallet.derthDenom(vA)); try await a.sync()
+        let ci = try XCTUnwrap(chain.lastMsg as? MsgCheckIn)
+        XCTAssertEqual(base, ci.fromVintage)
+        XCTAssertEqual(202611, ci.creditVintage)
+        XCTAssertEqual(0, chain.vintageSupply[vA]?[base])
+
+        // Past the hour: refused, nothing lands.
+        lateNov()
+        let q2 = try await a.quoteDelegate(validator: vB, amount: 500_000)
+        let before = chain.vintageSupply[vB]?[202611]
+        chain.beforeBroadcast = { chain.now = dec + Vintage.graceSeconds }
+        await assertThrowsAsync({ try await a.delegate(q2) })
+        XCTAssertEqual(before, chain.vintageSupply[vB]?[202611])
+        XCTAssertNil(chain.vintageSupply[vB]?[202612])
     }
 
     /// A check-in moves an older vintage's stake into the current one: lane
@@ -268,17 +319,65 @@ final class VintageFlowTests: PrivacyTestCase {
         XCTAssertTrue(a.pendingUnbonds.isEmpty)
     }
 
-    /// Before the sweep books a retirement, a withdrawal is refused up front.
-    func testWithdrawalWaitsForTheBookedRetirement() async throws {
+    /// Between the boundary and the epoch end that books it the vintage is
+    /// retiring: no msg on it, no withdrawal yet ("withdraw from" the epoch
+    /// end), its value still at the validator's live rate; once booked it
+    /// withdraws, paid at the chain's expected_completion.
+    func testARetiringVintageWithdrawsFromTheEpochEnd() async throws {
         let chain = chain()
         let a = try await funded(chain)
         _ = try await a.delegate(validator: vA, amount: 1_000_000); try await a.sync()
+        let held = sum(notes(a, PrivacyWallet.derthDenom(vA)))
         enter(chain, 202710)
+        chain.epochEndTime = chain.now + 7_200
+        let txs = chain.txs.count
         await assertThrowsAsync({ try await a.quoteWithdraw(denom: PrivacyWallet.derthDenom(self.vA)) }) {
-            "\($0)".contains("not booked")
+            "\($0)".contains("retiring") && "\($0)".contains(PrivacyWallet.dateText(UInt64(chain.now + 7_200)))
         }
+        await assertThrowsAsync({ try await a.undelegate(validator: self.vA, amount: 100_000) })
+        await assertThrowsAsync({ try await a.checkIn(denom: PrivacyWallet.derthDenom(self.vA)) })
+        XCTAssertEqual(txs, chain.txs.count)
+        let rs = try await a.retiredStake()
+        let r = try XCTUnwrap(rs?.first)
+        XCTAssertTrue(r.retiring)
+        XCTAssertEqual(chain.now + 7_200, r.withdrawFrom)
+        XCTAssertEqual(held, r.derth)
+        XCTAssertEqual(UInt64(BigUInt(held) * chain.book(vA).backing / chain.book(vA).supply), r.value)
+        await assertThrowsAsync({ try await a.withdrawRetired(r) })
+        XCTAssertEqual(txs, chain.txs.count)
+
         chain.retireDue()
-        _ = try await a.quoteWithdraw(denom: PrivacyWallet.derthDenom(vA))
+        let q = try await a.quoteWithdraw(denom: PrivacyWallet.derthDenom(vA))
+        XCTAssertFalse(q.retiring)
+        XCTAssertEqual(1, q.parts)
+        XCTAssertEqual(chain.now + 21 * 86_400, q.paidAt)
+        let booked = try await a.retiredStake()
+        XCTAssertEqual([q], booked)
+    }
+
+    /// A share past one note's value (2^63-1; the chain refuses it, 1103)
+    /// withdraws in parts, one tx each, every part within one note.
+    func testALargeWithdrawalGoesInParts() async throws {
+        let chain = chain()
+        let a = try await funded(chain)
+        _ = try await a.delegate(validator: vA, amount: 1_000_000); try await a.sync()
+        let held = sum(notes(a, PrivacyWallet.derthDenom(vA)))
+        enter(chain, 202710)
+        chain.retireDue()
+        let denom = PrivacyWallet.derthDenom(vA)
+        chain.retired[denom]!.remainingValue = BigUInt(Int64.max) * 5 / 2
+        let q = try await a.quoteWithdraw(denom: denom)
+        XCTAssertEqual(3, q.parts)
+        let sent = chain.committed.count
+        _ = try await a.withdrawRetired(q); try await a.sync()
+        let parts = chain.committed.dropFirst(sent).compactMap { $0 as? MsgShieldedUndelegate }
+        XCTAssertEqual(3, parts.count)
+        XCTAssertEqual(held, parts.map(\.amount).reduce(0, +))
+        XCTAssertTrue(parts.allSatisfy { $0.vintage == base })
+        XCTAssertNil(chain.retired[denom])
+        XCTAssertTrue(notes(a, denom).isEmpty)
+        XCTAssertEqual(3, chain.unbondPayouts.count)
+        XCTAssertTrue(chain.unbondPayouts.allSatisfy { $0.value <= UInt64(Int64.max) })
     }
 
     /// A stake vote names its notes' vintage: one item per (validator,
