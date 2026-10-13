@@ -17,6 +17,19 @@ internal fun formatUerth(micro: Long): String {
 /** [formatUerth] with the ERTH symbol. */
 internal fun formatErth(uerth: Long): String = "${formatUerth(uerth)} ERTH"
 
+/**
+ * What stands in for a figure whose read has not come back. Never a zero:
+ * a zero that is really "not loaded yet" is the one wrong answer a wallet
+ * must never give, because nothing about it looks wrong.
+ */
+internal const val LOADING = "…"
+
+/** [formatUerth], or [LOADING] while [micro] is unknown. */
+internal fun formatUerthOrLoading(micro: Long?): String = micro?.let(::formatUerth) ?: LOADING
+
+/** [formatErth], or [LOADING] while [uerth] is unknown. */
+internal fun formatErthOrLoading(uerth: Long?): String = uerth?.let(::formatErth) ?: LOADING
+
 /** "earth1jtc…aar6" — enough to recognise an address you know, short enough for a row. */
 internal fun String.shortAddress(): String =
     if (length <= 16) this else "${take(10)}…${takeLast(4)}"

@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.wallet
 
+import network.erth.wallet.ui.components.LOADING
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,7 +61,8 @@ data class ActivityView(
 /** The full activity list (Settings → Activity). The wallet screen shows the same rows. */
 @Composable
 fun ActivityScreen(
-    rows: List<ActivityEntry>,
+    /** Null while the list is read: "No activity yet" before then would be a guess. */
+    rows: List<ActivityEntry>?,
     view: ActivityView,
     onOpen: (ActivityEntry) -> Unit,
     modifier: Modifier = Modifier,
@@ -70,7 +72,19 @@ fun ActivityScreen(
             .fillMaxSize()
             .background(EarthColors.Surfaces.bgPrimary),
     ) {
-        activityItems(rows, view, onOpen)
+        if (rows == null) {
+            item {
+                Text(
+                    text = LOADING,
+                    style = EarthTypography.textSm,
+                    color = EarthColors.Text.textTertiary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                )
+            }
+        } else {
+            activityItems(rows, view, onOpen)
+        }
         item { Spacer(Modifier.height(24.dp)) }
     }
 }

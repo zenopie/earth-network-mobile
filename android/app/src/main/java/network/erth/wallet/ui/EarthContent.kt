@@ -36,6 +36,9 @@ import com.google.protobuf.ByteString
 import network.erth.wallet.chain.Dex
 import network.erth.wallet.chain.Gov
 import network.erth.wallet.chain.Personhood
+import androidx.compose.foundation.layout.fillMaxWidth
+import network.erth.wallet.ui.components.LOADING
+import network.erth.wallet.ui.components.LoadingScreen
 import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.ui.earn.DelegationRow
 import network.erth.wallet.ui.earn.EarnScreen
@@ -132,6 +135,10 @@ internal fun EarthContent(
     balancesVisible: Boolean,
     onOpenUrl: (String) -> Unit,
     onRefresh: () -> Unit,
+    /** AppRefresh.version: bumped after each post-tx re-read, for reads kept here. */
+    refreshVersion: Int,
+    /** The wallet's balances were never read and the last try failed (WalletViewModel.unreachable). */
+    unreachable: Boolean,
     padding: PaddingValues,
 ) {
     val loaded = state ?: WalletUiState.EMPTY
@@ -207,7 +214,6 @@ internal fun EarthContent(
                     recipient = "your private balance",
                     recipientLabel = "To",
                 ),
-                onSuccess = onRefresh,
                 build = { ctx ->
                     val out = PrivacySession.wallet(ctx).shieldOutput(Constants.UERTH_DENOM, amount)
                     val msg = MsgShield.newBuilder()
@@ -234,7 +240,6 @@ internal fun EarthContent(
                     recipientLabel = "To",
                 ),
                 shieldedErth = loaded.shieldedErthUerth,
-                onSuccess = onRefresh,
                 run = { ctx -> PrivacySession.wallet(ctx).unshield(walletAddress(ctx), Constants.UERTH_DENOM, amount, feeFromAmount).hash },
             )
         }
@@ -260,7 +265,6 @@ internal fun EarthContent(
                 recipientLabel = "Sends",
             ),
             shieldedErth = loaded.shieldedErthUerth,
-            onSuccess = { onRefresh(); privacy.refresh(); allocation.refresh() },
             run = { ctx ->
                 PrivacySession.wallet(ctx).castGroundworks(split).lastOrNull()?.hash
                     ?: throw IllegalStateException("Stake ERTH first: your stake is what votes.")
@@ -271,7 +275,8 @@ internal fun EarthContent(
     // LP shares: public ones are ordinary coins (dexlp/<pool>) in the
     // balances call; private ones (a shielded deposit's) are share notes of
     // the same denom in the pool. Both count as this wallet's.
-    val shares = remember(loaded.holdings, loaded.shielded) {
+    val shares = remember(state?.holdings, state?.shielded) {
+        if (state == null) return@remember null
         val public = loaded.holdings.filter { it.denom.startsWith("dexlp/") }.map { it.denom to it.amount }
         val private = loaded.shielded.filterKeys { it.startsWith("dexlp/") }.toList()
         (public + private).groupBy({ it.first.removePrefix("dexlp/").toLongOrNull() ?: 0L }, { it.second }).mapValues { Amounts.satSum(it.value) }
@@ -304,7 +309,11 @@ internal fun EarthContent(
             privateNotice = state?.privacySyncError,
             // What is due, never done unasked: each reminder opens where it is done.
             // A node that failed its recheck (or awaits it) leads: Earth's node is in use meanwhile.
-            reminders = listOfNotNull(nodeNotice?.let { it to { nav.push(EarthRoute.Network) } }) + personal?.reminders.orEmpty().mapNotNull { r ->
+            reminders = listOfNotNull(
+                nodeNotice?.let { it to { nav.push(EarthRoute.Network) } },
+                // Never read and the node did not answer: "…" alone would look like loading forever.
+                if (unreachable && state == null) "Can't reach the network. Pull down to try again." to { nav.push(EarthRoute.Network) } else null,
+            ) + personal?.reminders.orEmpty().mapNotNull { r ->
                 Reminders.text(r, now) to when (r) {
                     // The Claim button already says so.
                     Reminders.Reminder.AnmlReady -> return@mapNotNull null
@@ -360,8 +369,8 @@ internal fun EarthContent(
             canStake = privacyState != null,
             balancesVisible = balancesVisible,
             // The wallet's stake notes per validator (StakeRound.lines).
-            privateStake = network.erth.wallet.privacy.StakeRound.lines(
-                notes = privacyState?.stakeNotes.orEmpty(),
+            privateStake = privacyState?.let { ps -> network.erth.wallet.privacy.StakeRound.lines(
+                notes = ps.stakeNotes,
                 rate = { v -> earnState?.derthRates?.get(v) ?: java.math.BigDecimal.ONE },
             ).map { line ->
                 val h = privacyState?.stake?.firstOrNull { it.validator == line.validator }
@@ -379,8 +388,8 @@ internal fun EarthContent(
                     standing = earnState?.all?.firstOrNull { it.validator == line.validator }?.let { network.erth.wallet.privacy.StakeRound.Standing.of(it) },
                     commission = earnState?.commissionOf(line.validator) ?: 0.0,
                 )
-            },
-            unstaking = state?.unstaking.orEmpty().map { u ->
+            } },
+            unstaking = state?.unstaking?.map { u ->
                 UnstakingRow(
                     key = u.txHash,
                     validator = u.validator,
@@ -399,7 +408,6 @@ internal fun EarthContent(
                         recipientLabel = "Validator",
                     ),
                     shieldedErth = loaded.shieldedErthUerth,
-                    onSuccess = { onRefresh(); privacy.refresh() },
                     run = { ctx -> PrivacySession.wallet(ctx).restake(validator).hash },
                 )
             },
@@ -428,10 +436,6 @@ internal fun EarthContent(
                             denomOut.removePrefix("u").uppercase(),
                     ),
                     shieldedErth = loaded.shieldedErthUerth,
-                    onSuccess = {
-                        onRefresh()
-                        markets.refresh()
-                    },
                     run = { ctx ->
                         // An amount past a note's range is refused, never truncated.
                         PrivacySession.wallet(ctx).noteSwap(denomIn, amountIn.longValueExact(), denomOut, minOut.longValueExact()).hash
@@ -443,8 +447,8 @@ internal fun EarthContent(
 
         EarthRoute.Govern -> AllocationScreen(
             state = allocationState,
-            registered = loaded.registered,
-            stakedUerth = privateStake,
+            registered = state?.registered,
+            stakedUerth = privateStake.takeIf { state != null },
             onOpenStream = { nav.push(EarthRoute.Stream(it == StreamId.STREAM_ID_CARETAKER)) },
             onOpenProposals = { nav.push(EarthRoute.Proposals) },
             modifier = inset,
@@ -461,19 +465,22 @@ internal fun EarthContent(
             )
         }
 
-        EarthRoute.Receive -> ReceiveScreen(
+        // Both wait for the wallet's read: an empty QR, or "that leaves
+        // nothing for the fee" against a balance not read yet, is wrong.
+        EarthRoute.Receive -> if (state == null) LoadingScreen(inset) else ReceiveScreen(
             state = ReceiveUiState(address = loaded.address, shieldedAddress = loaded.shieldedAddress),
             modifier = inset,
         )
 
-        EarthRoute.Send -> SendFlow(
+        EarthRoute.Send -> if (state == null) LoadingScreen(inset) else SendFlow(
             state = loaded,
             tx = tx,
-            onSent = onRefresh,
+            // The send is re-read by AppRefresh once the wallet sees its block.
+            onSent = {},
             modifier = inset,
         )
 
-        EarthRoute.Activity -> ActivityScreen(rows = activity.orEmpty(), view = activityView, onOpen = { openActivity = it.id }, modifier = inset)
+        EarthRoute.Activity -> ActivityScreen(rows = activity, view = activityView, onOpen = { openActivity = it.id }, modifier = inset)
 
         EarthRoute.Settings -> {
             var forgetting by remember { mutableStateOf(false) }
@@ -527,7 +534,7 @@ internal fun EarthContent(
             // After a switch: what the identity this one replaced can bring here (it syncs that wallet).
             var moveOffer by remember { mutableStateOf<PrivacySession.MoveOffer?>(null) }
             var offerTick by remember { mutableStateOf(0) }
-            LaunchedEffect(loaded.registered, offerTick) {
+            LaunchedEffect(loaded.registered, offerTick, refreshVersion) {
                 moveOffer = if (!loaded.registered) null else withContext(Dispatchers.IO) { runCatching { PrivacySession.moveOffer(context) }.getOrNull() }
             }
             fun bring(kind: String) {
@@ -542,7 +549,7 @@ internal fun EarthContent(
                         rows = listOf("Fee paid by" to if (offer.withinWallet) "This wallet (its private ERTH)" else "${offer.fromName} (its private ERTH)"),
                     ),
                     shieldedErth = offer.feeErth,
-                    onSuccess = { offerTick++; privacy.refreshPersonal() },
+                    onSuccess = { offerTick++ },
                     run = run@{ ctx ->
                         if (offer.withinWallet) {
                             // This wallet's earlier identity: one phrase holds both secrets.
@@ -561,12 +568,12 @@ internal fun EarthContent(
                 )
             }
             PersonhoodScreen(
-                registered = loaded.registered,
+                registered = state?.registered,
                 onRegister = onRegister,
                 onHandle = { nav.push(EarthRoute.Handle) },
                 onSwitch = { moveTarget = null; moveTargetNew = false; nav.push(EarthRoute.SwitchIdentity) },
                 registeredBefore = loaded.registeredBefore,
-                handle = personal?.handle.orEmpty(),
+                handle = personal?.handle,
                 moveOffer = moveOffer,
                 onBringHandle = { bring(PendingMove.HANDLE) },
                 onBringVote = { bring(PendingMove.CARETAKER) },
@@ -603,7 +610,6 @@ internal fun EarthContent(
                 ),
                 estimatedFee = TxController.feeFor(TxController.BIND_HANDLE_GAS_ESTIMATE),
                 shieldedErth = loaded.shieldedErthUerth,
-                onSuccess = { PrivacyQueries.handles.invalidate(); privacy.refreshPersonal() },
                 run = { ctx -> PrivacySession.wallet(ctx).bindHandle(h, renewOnly = true).hash },
             )
             HandleScreen(
@@ -621,7 +627,6 @@ internal fun EarthContent(
                         ),
                         estimatedFee = TxController.feeFor(TxController.BIND_HANDLE_GAS_ESTIMATE),
                         shieldedErth = loaded.shieldedErthUerth,
-                        onSuccess = { PrivacyQueries.handles.invalidate(); privacy.refreshPersonal() },
                         run = { ctx -> PrivacySession.wallet(ctx).bindHandle(h).hash },
                     )
                 },
@@ -640,7 +645,6 @@ internal fun EarthContent(
                         ),
                         estimatedFee = TxController.feeFor(TxController.BIND_HANDLE_GAS_ESTIMATE),
                         shieldedErth = loaded.shieldedErthUerth,
-                        onSuccess = { PrivacyQueries.handles.invalidate(); privacy.refreshPersonal() },
                         run = { ctx -> PrivacySession.wallet(ctx).releaseHandle().hash },
                     )
                 },
@@ -735,7 +739,6 @@ internal fun EarthContent(
                             balanceUerth = 0L,
                         ),
                         shieldedErth = loaded.shieldedErthUerth,
-                        onSuccess = { onRefresh(); privacy.refresh() },
                         run = { ctx ->
                             val w = PrivacySession.wallet(ctx)
                             // Stake notes merge by a restake (owner-locked, two per proof).
@@ -791,7 +794,7 @@ internal fun EarthContent(
 
         EarthRoute.AddCaretakerOption -> network.erth.wallet.ui.govern.AddCaretakerOptionScreen(
             address = loaded.address,
-            publicUerth = loaded.balanceUerth,
+            publicUerth = state?.balanceUerth,
             networkFee = TxController.DEFAULT_FEE_UERTH,
             onReview = { name, recipient, burn ->
                 // Signed by the public account, which pays the burn; no registration asked.
@@ -807,7 +810,7 @@ internal fun EarthContent(
                         ),
                     ),
                     // Back to the stream, which re-reads its options; only if still here.
-                    onSuccess = { allocation.refresh(); if (nav.current == EarthRoute.AddCaretakerOption) nav.pop() },
+                    onSuccess = { if (nav.current == EarthRoute.AddCaretakerOption) nav.pop() },
                     build = { ctx ->
                         listOf(EarthTx.anyOf(Allocation.MSG_ADD_ADDRESS_OPTION_TYPE_URL, Allocation.addCaretakerOption(walletAddress(ctx), name, recipient)))
                     },
@@ -903,6 +906,8 @@ internal fun EarthContent(
                 title = if (route.human) "Caretaker Fund" else "Groundworks Fund",
                 stream = if (route.human) allocationState?.human else allocationState?.capital,
                 eligibility = when {
+                    // Unread: the vote waits rather than saying "Register" to someone registered.
+                    state == null -> LOADING
                     route.human && !loaded.registered ->
                         "Register to vote"
                     !route.human && privateStake <= 0 ->
@@ -926,7 +931,6 @@ internal fun EarthContent(
                                 "To" to network.erth.wallet.chain.OptionText.short(o.recipient),
                             ),
                         ),
-                        onSuccess = { allocation.refresh() },
                         build = { ctx -> listOf(EarthTx.anyOf(Allocation.MSG_CLAIM_ALLOCATION_TYPE_URL, Allocation.claim(walletAddress(ctx), id, o.id))) },
                     )
                 },
@@ -939,7 +943,10 @@ internal fun EarthContent(
                         // since a stream reset) or moved-in stake voting pending.
                         val countedVotes = privacyState?.groundworksVotes.orEmpty()
                             .filter { (it.weight > 0 || it.pending > 0) && it.split == privacyState?.groundworksSplit }
-                        GroundworksVoteControls(
+                        // Unread, the controls would offer "Vote" to a wallet already voting.
+                        if (privacyState == null || state == null) {
+                            androidx.compose.material3.Text(LOADING, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        } else GroundworksVoteControls(
                             split = privacyState?.groundworksSplit.orEmpty(),
                             lease = privacyState?.groundworksLease,
                             options = allocationState?.capital?.options.orEmpty(),
@@ -1001,7 +1008,11 @@ internal fun EarthContent(
             // Absent on a chain without an assembly, which hides the whole
             // second house rather than explaining one that is not there yet.
             assembly = allocationState?.assemblyTallies?.get(route.id),
-            assemblyEligibility = if (!loaded.registered) "Not registered" else null,
+            assemblyEligibility = when {
+                state == null -> LOADING
+                !loaded.registered -> "Not registered"
+                else -> null
+            },
             onAssemblyVote = { proposal, vote ->
                 // Private: a membership proof in this ballot's scope; who voted
                 // is never known, and a second vote replaces the first.
@@ -1017,7 +1028,6 @@ internal fun EarthContent(
                         amountValue = "1 person",
                     ),
                     shieldedErth = loaded.shieldedErthUerth,
-                    onSuccess = onRefresh,
                     run = { ctx ->
                         PrivacySession.wallet(ctx).voteProposal(proposal.id, vote == Assembly.Vote.Yes).hash
                     },
@@ -1077,7 +1087,6 @@ internal fun EarthContent(
             ),
             shieldedErth = loaded.shieldedErthUerth,
             onSuccess = {
-                onRefresh()
                 if (rest.items.isNotEmpty()) stakeVoting = rest
             },
             run = { ctx ->
@@ -1121,7 +1130,6 @@ internal fun EarthContent(
                                 recipientLabel = "Validator",
                             ),
                             shieldedErth = loaded.shieldedErthUerth,
-                            onSuccess = { onRefresh(); privacy.refresh() },
                             run = { ctx -> PrivacySession.wallet(ctx).mergeStake(PrivacyWallet.derthDenom(item.validator)).hash },
                         )
                     }) { androidx.compose.material3.Text("Merge notes") }
@@ -1176,7 +1184,6 @@ internal fun EarthContent(
                                     ),
                                 ),
                                 shieldedErth = loaded.shieldedErthUerth,
-                                onSuccess = { onRefresh(); privacy.refresh() },
                                 run = { ctx -> PrivacySession.wallet(ctx).redelegate(q).hash },
                             )
                         }
@@ -1230,7 +1237,6 @@ internal fun EarthContent(
                                     ),
                                 ),
                                 shieldedErth = loaded.shieldedErthUerth,
-                                onSuccess = { onRefresh(); privacy.refresh() },
                                 run = { ctx -> PrivacySession.wallet(ctx).delegate(q).hash },
                             )
                         }
@@ -1251,7 +1257,6 @@ internal fun EarthContent(
                                     notes = listOfNotNull(haircutNote(cut, null)),
                                 ),
                                 shieldedErth = loaded.shieldedErthUerth,
-                                onSuccess = { onRefresh(); privacy.refresh() },
                                 // A stake proof spends two notes (at most one
                                 // holding moved-in stake): spread over more, it
                                 // is refused with "merge them first".
@@ -1291,6 +1296,7 @@ internal fun EarthContent(
             } else {
                 loaded.holdings.firstOrNull { it.denom == Dex.shareDenom(pool.id) }?.amount ?: 0L
             },
+            balancesKnown = state != null,
             unbondingSeconds = marketsState?.lpUnbondingSeconds ?: 0L,
             onDismiss = { liquidity = null },
             onConfirm = { erthIn, tokenIn, sharesOut ->
@@ -1308,7 +1314,6 @@ internal fun EarthContent(
                             recipientLabel = "LP shares to",
                         ),
                         shieldedErth = loaded.shieldedErthUerth,
-                        onSuccess = { onRefresh(); markets.refresh() },
                         run = { ctx ->
                             PrivacySession.wallet(ctx).addLiquidityShielded(
                                 pool.id, pool.tokenDenom, tokenIn.toLong(), erthIn.toLong(),
@@ -1332,7 +1337,6 @@ internal fun EarthContent(
                             recipientLabel = "Paid to",
                         ),
                         shieldedErth = loaded.shieldedErthUerth,
-                        onSuccess = { onRefresh(); markets.refresh() },
                         run = { ctx ->
                             // Both legs are notes: refused here, before proving, when too large.
                             network.erth.wallet.privacy.PrivacyWallet.checkWithdrawalNoteLegs(
@@ -1362,10 +1366,6 @@ internal fun EarthContent(
                             formatUerth(sharesOut.toLong())
                         },
                     ),
-                    onSuccess = {
-                        onRefresh()
-                        markets.refresh()
-                    },
                     build = { ctx ->
                         val creator = walletAddress(ctx)
                         listOf(
@@ -1435,7 +1435,6 @@ internal fun EarthContent(
                                 balanceUerth = 0L,
                             ),
                             shieldedErth = loaded.shieldedErthUerth,
-                            onSuccess = onRefresh,
                             run = { ctx -> PrivacySession.wallet(ctx).setCaretaker(weights.filterValues { it > 0 }).hash },
                         )
                     }

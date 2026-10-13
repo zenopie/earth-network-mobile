@@ -120,3 +120,11 @@ fun HeroColumn(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
 
 @Composable
 fun HeroGap(height: Dp = 12.dp) = Spacer(Modifier.height(height))
+
+/** A pushed screen whose data has not been read yet: [LOADING], where the hero would be. */
+@Composable
+fun LoadingScreen(modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth().padding(top = 64.dp), contentAlignment = Alignment.TopCenter) {
+        HeroTitle(LOADING, color = EarthColors.Text.textTertiary)
+    }
+}

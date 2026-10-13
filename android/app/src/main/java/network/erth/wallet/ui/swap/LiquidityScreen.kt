@@ -34,6 +34,7 @@ import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.dimensions.EarthDimensions
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import network.erth.wallet.ui.components.formatUerth
+import network.erth.wallet.ui.components.formatUerthOrLoading
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 
@@ -56,8 +57,8 @@ fun PoolList(
     lpOptionShare: Double,
     /** Withdrawals waiting to mature, so the week between is not a blank. */
     unbondings: List<Dex.Unbonding>,
-    /** This wallet's LP shares, by pool. */
-    shares: Map<Long, Long>,
+    /** This wallet's LP shares, by pool; null until the balances are read. */
+    shares: Map<Long, Long>?,
     modifier: Modifier = Modifier,
     onAdd: (Dex.Pool) -> Unit = {},
     onRemove: (Dex.Pool) -> Unit = {},
@@ -225,11 +226,11 @@ fun PoolList(
                     style = EarthTypography.textSm,
                     color = EarthColors.Text.textPrimary,
                 )
-                val mine = shares[pool.id] ?: 0L
-                if (mine > 0) {
+                val mine = shares?.let { it[pool.id] ?: 0L }
+                if (mine == null || mine > 0) {
                     Spacer(Modifier.height(dimens.space8))
                     Text(
-                        text = "Your shares ${formatUerth(mine)}",
+                        text = "Your shares ${formatUerthOrLoading(mine)}",
                         style = EarthTypography.textSm,
                         color = EarthAccent.ink,
                     )
@@ -253,7 +254,7 @@ fun PoolList(
                         text = "Remove",
                         onClick = { onRemove(pool) },
                         // Nothing to withdraw is not a state worth offering.
-                        enabled = (shares[pool.id] ?: 0L) > 0,
+                        enabled = (shares?.get(pool.id) ?: 0L) > 0,
                         modifier = Modifier.weight(1f),
                         colors = EarthButtonDefaults.secondaryColors(),
                     )

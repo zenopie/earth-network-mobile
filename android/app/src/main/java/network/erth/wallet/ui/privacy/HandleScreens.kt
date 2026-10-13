@@ -100,10 +100,16 @@ fun HandleScreen(
         HeroColumn {
             HeroIcon(R.drawable.ic_public, muted = !held)
             HeroGap()
-            HeroTitle(if (held) "@${state!!.handle}" else "No handle")
+            HeroTitle(
+                when {
+                    state == null -> network.erth.wallet.ui.components.LOADING
+                    held -> "@${state.handle}"
+                    else -> "No handle"
+                },
+            )
             HeroLine(
                 when {
-                    state == null -> "Loading…"
+                    state == null -> network.erth.wallet.ui.components.LOADING
                     !state.identityLive -> "Verify to claim a handle"
                     movingOut -> "Moving to your new identity"
                     state.incomingMoves.any { it.kind == PendingMove.HANDLE } -> "Arriving · waiting for the chain"

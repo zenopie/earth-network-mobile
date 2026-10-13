@@ -8,7 +8,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.chain.Allocation
@@ -45,22 +44,35 @@ class MarketsViewModel(app: Application) : AndroidViewModel(app) {
      * until the read it started has finished, and the read itself belongs to
      * [viewModelScope] so that leaving the screen mid-read does not cancel it.
      */
-    fun refresh(): Job {
-        return viewModelScope.launch {
-            _state.value = withContext(Dispatchers.IO) {
-                MarketsUiState(
-                    pools = runCatching { Dex.pools() }.getOrDefault(emptyList()),
-                    swapFeePercent = runCatching { Dex.swapFeePercent() }.getOrDefault("0"),
-                    lpOptionShare = runCatching { lpOptionShare() }.getOrDefault(0.0),
-                    lpUnbondingSeconds = runCatching { Dex.lpUnbondingSeconds() }
-                        .getOrDefault(0L),
-                    unbondings = runCatching {
-                        val address = SecureWalletManager.getWalletAddress(getApplication())
-                        if (address.isNullOrBlank()) emptyList() else Dex.unbondings(address)
-                    }.getOrDefault(emptyList()),
-                )
-            }
-        }
+    fun refresh(): Job = loader.request()
+
+    private val loader = network.erth.wallet.ui.Loader(viewModelScope) {
+        // A read that fails keeps the last one's answer: "No pools yet" or a
+        // 0% fee from a failed read would read as the chain's state. Pools
+        // never read stay unknown (null state, shown as loading).
+        val prev = _state.value
+        _state.value = withContext(Dispatchers.IO) {
+            MarketsUiState(
+                pools = runCatching { Dex.pools() }.getOrNull() ?: prev?.pools ?: return@withContext null,
+                swapFeePercent = runCatching { Dex.swapFeePercent() }.getOrNull() ?: prev?.swapFeePercent ?: "0",
+                lpOptionShare = runCatching { lpOptionShare() }.getOrNull() ?: prev?.lpOptionShare ?: 0.0,
+                lpUnbondingSeconds = runCatching { Dex.lpUnbondingSeconds() }.getOrNull()
+                    ?: prev?.lpUnbondingSeconds ?: 0L,
+                unbondings = runCatching {
+                    val address = SecureWalletManager.getWalletAddress(getApplication())
+                    if (address.isNullOrBlank()) emptyList() else Dex.unbondings(address)
+                }.getOrNull() ?: prev?.unbondings.orEmpty(),
+            )
+        } ?: prev
+    }
+
+    /**
+     * Drop this wallet's LP withdrawals on a wallet switch, and the read in
+     * flight that would put them back. The pools are the chain's and stay.
+     */
+    fun clearWallet() {
+        loader.cancel()
+        _state.value = _state.value?.copy(unbondings = emptyList())
     }
 }
 

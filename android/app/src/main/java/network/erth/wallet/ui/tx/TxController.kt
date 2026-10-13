@@ -10,6 +10,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.protobuf.Any as ProtoAny
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.chain.EarthTx
@@ -69,6 +72,16 @@ class TxController : ViewModel() {
     private var gasLimit: Long = DEFAULT_GAS_LIMIT
     private var feeUerth: Long = DEFAULT_FEE_UERTH
     private var onDone: (() -> Unit)? = null
+
+    /**
+     * Every send that may have changed the wallet, as its hash (null when
+     * there is none to look for): success, an unconfirmed send, and a failure,
+     * which may have failed in its block with its fee paid. The app re-reads
+     * from this one place (AppRefresh), so no screen has to remember to, and
+     * a caller's onSuccess is left to the screen's own state.
+     */
+    private val _settled = MutableSharedFlow<String?>(extraBufferCapacity = 16)
+    val settled: SharedFlow<String?> = _settled.asSharedFlow()
 
     /**
      * Ask for a transaction. Shows the confirmation sheet; nothing is signed
@@ -174,11 +187,12 @@ class TxController : ViewModel() {
         val done = onDone
 
         viewModelScope.launch {
-            // Whether the tx may have landed: then onDone clears the form and
-            // refreshes, after the outcome is on screen.
+            // Whether the tx may have landed: then onDone clears the form,
+            // after the outcome is on screen.
             var settled = true
+            var hash: String? = null
             val result: TxOutcome? = try {
-                val hash = withContext(Dispatchers.IO) {
+                val sent = withContext(Dispatchers.IO) {
                     if (privateRun != null) {
                         // The fee the sheet showed bounds what the private run may pay.
                         network.erth.wallet.privacy.PrivacyWallet.withShownFee(details.feeUerth) { privateRun(context) }
@@ -194,11 +208,13 @@ class TxController : ViewModel() {
                         }
                     }
                 }
-                TxOutcome.Success(details.action, hash)
+                hash = sent
+                TxOutcome.Success(details.action, sent)
             } catch (e: TxUnconfirmedException) {
-                // Still run onDone: it clears the form and refreshes, and
-                // leaving a filled-in send on screen invites sending it again
-                // while the first may yet land.
+                // Still run onDone: it clears the form, and leaving a
+                // filled-in send on screen invites sending it again while the
+                // first may yet land.
+                hash = e.txHash
                 TxOutcome.Pending(details.action, e.txHash)
             } catch (e: network.erth.wallet.privacy.tx.PrivateTxEngine.FeeAboveQuote) {
                 // Nothing was proven or sent: show the sheet again at the
@@ -221,6 +237,7 @@ class TxController : ViewModel() {
             }
             outcome = result
             if (settled) done?.invoke()
+            _settled.tryEmit(hash)
         }
     }
 

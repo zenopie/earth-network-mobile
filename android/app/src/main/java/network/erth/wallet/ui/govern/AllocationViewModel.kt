@@ -8,7 +8,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.chain.Allocation
@@ -131,39 +130,39 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
      * until the read it started has finished, and the read itself belongs to
      * [viewModelScope] so that leaving the screen mid-read does not cancel it.
      */
-    fun refresh(): Job {
-        return viewModelScope.launch {
-            val ctx = getApplication<Application>()
-            val address = withContext(Dispatchers.IO) {
-                runCatching { SecureWalletManager.getWalletAddress(ctx) }.getOrNull()
-            } ?: return@launch
+    fun refresh(): Job = loader.request()
 
-            val fresh = withContext(Dispatchers.IO) {
-                val proposals = runCatching { Gov.proposals() }.getOrDefault(emptyList())
-                AllocationUiState(
-                    // The caretaker split is cast anonymously, so the chain
-                    // cannot say which one is ours: the wallet remembers it.
-                    human = runCatching { Allocation.stream(StreamId.STREAM_ID_CARETAKER) }.getOrNull().let { s ->
-                        StreamUiState(
-                            options = s?.options.orEmpty(),
-                            mine = runCatching { PrivacySession.wallet(ctx).store.state.caretakerSplit }.getOrDefault(emptyMap()),
-                            rewardIndex = s?.rewardIndex ?: "0",
-                        )
-                    },
-                    // Groundworks: the split this wallet's stake votes with.
-                    capital = runCatching { Allocation.stream(StreamId.STREAM_ID_GROUNDWORKS) }.getOrNull().let { s ->
-                        StreamUiState(
-                            options = s?.options.orEmpty(),
-                            mine = runCatching { PrivacySession.wallet(ctx).groundworksSplit }.getOrDefault(emptyMap()),
-                            rewardIndex = s?.rewardIndex ?: "0",
-                        )
-                    },
-                    proposals = proposals,
-                    assemblyTallies = assemblyTallies(proposals),
-                )
-            }
-            _state.value = keepIfEmptied(_state.value, fresh)
+    private val loader = network.erth.wallet.ui.Loader(viewModelScope) {
+        val ctx = getApplication<Application>()
+        withContext(Dispatchers.IO) {
+            runCatching { SecureWalletManager.getWalletAddress(ctx) }.getOrNull()
+        } ?: return@Loader
+
+        val fresh = withContext(Dispatchers.IO) {
+            val proposals = runCatching { Gov.proposals() }.getOrDefault(emptyList())
+            AllocationUiState(
+                // The caretaker split is cast anonymously, so the chain
+                // cannot say which one is ours: the wallet remembers it.
+                human = runCatching { Allocation.stream(StreamId.STREAM_ID_CARETAKER) }.getOrNull().let { s ->
+                    StreamUiState(
+                        options = s?.options.orEmpty(),
+                        mine = runCatching { PrivacySession.wallet(ctx).store.state.caretakerSplit }.getOrDefault(emptyMap()),
+                        rewardIndex = s?.rewardIndex ?: "0",
+                    )
+                },
+                // Groundworks: the split this wallet's stake votes with.
+                capital = runCatching { Allocation.stream(StreamId.STREAM_ID_GROUNDWORKS) }.getOrNull().let { s ->
+                    StreamUiState(
+                        options = s?.options.orEmpty(),
+                        mine = runCatching { PrivacySession.wallet(ctx).groundworksSplit }.getOrDefault(emptyMap()),
+                        rewardIndex = s?.rewardIndex ?: "0",
+                    )
+                },
+                proposals = proposals,
+                assemblyTallies = assemblyTallies(proposals),
+            )
         }
+        _state.value = keepIfEmptied(_state.value, fresh)
     }
 
     /**
@@ -208,6 +207,7 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
      * because nothing about it looks wrong.
      */
     fun clear() {
+        loader.cancel()
         _state.value = null
     }
 

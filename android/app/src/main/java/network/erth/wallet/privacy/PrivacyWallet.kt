@@ -301,6 +301,26 @@ class PrivacyWallet(
 
     @Synchronized
     fun sync(): WalletSync.Result {
+        val r = syncOnce()
+        lastSyncAt = System.currentTimeMillis()
+        lastSync = r
+        return r
+    }
+
+    @Volatile private var lastSyncAt = 0L
+    private var lastSync: WalletSync.Result? = null
+
+    /**
+     * [sync], unless one finished in the last [maxAgeMs]. Screens that read
+     * the store ask for this before reading, and the lock does the rest: a
+     * reader that waited on a sync another screen started gets that sync's
+     * notes rather than starting a second round of the same reads.
+     */
+    @Synchronized
+    fun syncIfStale(maxAgeMs: Long = 3_000): WalletSync.Result =
+        lastSync?.takeIf { System.currentTimeMillis() - lastSyncAt < maxAgeMs } ?: sync()
+
+    private fun syncOnce(): WalletSync.Result {
         fillPendingRegistration()
         runCatching { resolvePendingMoves() }
         // The validator list (Query/Validators, whole) is read again with
@@ -338,7 +358,7 @@ class PrivacyWallet(
 
     val notes: List<OwnedNote> get() = store.state.notes.toList()
 
-    val stakeNotes: List<OwnedStakeNote> get() = store.state.stakeNotes.toList()
+    val stakeNotes: List<OwnedStakeNote> get() = synchronized(this) { store.state.stakeNotes.toList() }
 
     /** Spendable pool balance per denom (pending spends excluded). */
     fun poolBalances(): Map<String, Long> =
@@ -704,6 +724,7 @@ class PrivacyWallet(
     }
 
     /** Spendable note counts per denom holding more than one note. */
+    @Synchronized
     fun mergeable(): Map<String, Int> =
         store.state.notes.filter { it.unspent && it.pendingAt == null && it.note.value > 0 }
             .groupBy { it.note.denom }.mapValues { it.value.size }
@@ -1809,7 +1830,7 @@ class PrivacyWallet(
      * still open (nothing is shown as movable that is not).
      */
     fun stakeHoldings(d: DebtView? = null): List<StakeHolding> {
-        val notes = store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) }
+        val notes = synchronized(this) { store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) } }
         val view = d ?: if (notes.any { it.label != null }) runCatching { debtView() }.getOrNull() else null
         return notes.groupBy { it.denom }.toSortedMap().map { (denom, ns) ->
             val open = ns.mapNotNull { it.label }.filter { view == null || !view.clearable(it) }
@@ -1974,6 +1995,7 @@ class PrivacyWallet(
     }
 
     /** derth denoms held in more than one stake note that can merge now. */
+    @Synchronized
     fun stakeMergeable(): Map<String, Int> =
         store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) }
             .groupBy { it.denom }.filter { (_, ns) -> ns.size >= 2 && ns.any { it.label == null } }.mapValues { it.value.size }
@@ -2767,12 +2789,29 @@ class PrivacyWallet(
 
     /** Syncs until the wallet has seen [r]'s block (its notes in the trees), at most a minute. */
     internal fun syncThrough(r: TxResult) {
+        // Not catchUp: a sync that fails here fails the vote now, rather than after a minute of retries.
         repeat(30) {
             sync()
             if (store.state.notesHeight >= r.height && store.state.stakeHeight >= r.height) return
             Thread.sleep(2_000)
         }
         throw IllegalStateException("the wallet has not caught up with block ${r.height} yet; try again")
+    }
+
+    /**
+     * Syncs until both streams have seen [height], at most [tries] syncs
+     * [pauseMs] apart; whether they got there. A tx is committed some blocks
+     * before the indexer serves its notes, and a single sync in between
+     * shows the spent notes gone and the change not yet back: a balance
+     * that reads low with nothing about it looking wrong.
+     */
+    fun catchUp(height: Long, tries: Int = 30, pauseMs: Long = 2_000): Boolean {
+        repeat(tries) { i ->
+            runCatching { sync() }
+            if (store.state.notesHeight >= height && store.state.stakeHeight >= height) return true
+            if (i < tries - 1) Thread.sleep(pauseMs)
+        }
+        return false
     }
 
 

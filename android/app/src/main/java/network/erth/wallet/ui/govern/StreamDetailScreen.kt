@@ -88,7 +88,7 @@ fun StreamDetailScreen(
         if (stream == null) {
             Spacer(Modifier.height(dimens.space24))
             Text(
-                text = "Loading…",
+                text = network.erth.wallet.ui.components.LOADING,
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
             )

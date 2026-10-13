@@ -84,9 +84,11 @@ fun EarnScreen(
     onUnstake: (validator: String?) -> Unit,
     modifier: Modifier = Modifier,
     /** This wallet's private stake per validator (one note each, as a rule). */
-    privateStake: List<PrivateStakeRow> = emptyList(),
+    /** Null until the wallet's stake notes are read. */
+    privateStake: List<PrivateStakeRow>? = emptyList(),
     /** Undelegations waiting for their payout, from this wallet's own record. */
-    unstaking: List<UnstakingRow> = emptyList(),
+    /** Null until the wallet's own record is read. */
+    unstaking: List<UnstakingRow>? = emptyList(),
     /** Whether a stake can be started (the private wallet is open). */
     canStake: Boolean = true,
     balancesVisible: Boolean = true,
@@ -99,7 +101,7 @@ fun EarnScreen(
     swapFeePercent: String? = null,
     lpOptionShare: Double = 0.0,
     lpUnbondings: List<Dex.Unbonding> = emptyList(),
-    lpShares: Map<Long, Long> = emptyMap(),
+    lpShares: Map<Long, Long>? = emptyMap(),
     onAddLiquidity: (Dex.Pool) -> Unit = {},
     onRemoveLiquidity: (Dex.Pool) -> Unit = {},
 ) {
@@ -115,7 +117,11 @@ fun EarnScreen(
         }
     }
 
-    val view = StakeView(state, now, balancesVisible)
+    // The hero is the validators' rates over the stake notes: either unread
+    // and it would say "0" and "Earn by staking" to someone who has stake.
+    val view = StakeView(state, now, balancesVisible, loaded = state != null && privateStake != null && unstaking != null)
+    val privateStake = privateStake.orEmpty()
+    val unstaking = unstaking.orEmpty()
     Column(
         modifier
             .fillMaxSize()
@@ -146,13 +152,13 @@ fun EarnScreen(
             return@Column
         }
 
-        val empty = privateStake.isEmpty() && unstaking.isEmpty()
+        val empty = view.loaded && privateStake.isEmpty() && unstaking.isEmpty()
         StakeHero(view, privateStake, empty)
 
         Spacer(Modifier.height(dimens.space32))
         Row(horizontalArrangement = Arrangement.spacedBy(dimens.space12)) {
-            PillButton("Stake", enabled = state != null && canStake, modifier = Modifier.weight(1f)) { onStake(null) }
-            if (!empty) {
+            PillButton("Stake", enabled = view.loaded && canStake, modifier = Modifier.weight(1f)) { onStake(null) }
+            if (view.loaded && !empty) {
                 // One validator: straight to it. Several: pick first.
                 val leaving = privateStake.filter { it.free > 0 }
                 PillButton("Unstake", enabled = leaving.isNotEmpty(), primary = false, modifier = Modifier.weight(1f)) {
@@ -214,7 +220,7 @@ data class UnstakingRow(
 )
 
 /** What every part of the stake half reads. */
-private class StakeView(val state: EarnUiState?, val now: Long, val visible: Boolean) {
+private class StakeView(val state: EarnUiState?, val now: Long, val visible: Boolean, val loaded: Boolean) {
     fun amount(uerth: Long): String = if (visible) stakeAmount(uerth) else "••••"
 
     /** The validator's rate after its commission; null when unknown or it earns nothing now. */
@@ -252,12 +258,12 @@ private fun StakeHero(view: StakeView, rows: List<PrivateStakeRow>, empty: Boole
     val total = Amounts.satSum(rows) { it.valueUerth }
     Column(Modifier.fillMaxWidth().padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         when {
-            view.state == null -> Box(Modifier.shimmer(rememberEarthShimmer())) { ShimmerRectangle(width = 160.dp, height = 48.dp) }
+            !view.loaded -> Box(Modifier.shimmer(rememberEarthShimmer())) { ShimmerRectangle(width = 160.dp, height = 48.dp) }
             !view.visible -> Text("-----", style = EarthTypography.header2.copy(fontWeight = FontWeight.SemiBold), color = EarthColors.Text.textPrimary)
             else -> BigAmount(formatUerth(total))
         }
         Text("ERTH", style = EarthTypography.textMd, color = EarthColors.Text.textTertiary)
-        heroLine(view, rows, total, empty)?.let { (text, color) ->
+        if (view.loaded) heroLine(view, rows, total, empty)?.let { (text, color) ->
             Spacer(Modifier.height(12.dp))
             Text(text, style = EarthTypography.textMd.copy(fontSize = 15.sp), fontWeight = FontWeight.SemiBold, color = color)
         }

@@ -58,8 +58,9 @@ data class AllocationSlice(
 @Composable
 fun AllocationScreen(
     state: AllocationUiState?,
-    registered: Boolean,
-    stakedUerth: Long,
+    /** Null until the wallet is read: "Register to take part" before then would be a guess. */
+    registered: Boolean?,
+    stakedUerth: Long?,
     onOpenStream: (StreamId) -> Unit,
     onOpenProposals: () -> Unit,
     modifier: Modifier = Modifier,
@@ -79,10 +80,10 @@ fun AllocationScreen(
             title = "Caretaker Fund",
             detail = "One person, one vote",
             status = state?.human.statusFor(
-                eligible = registered,
+                eligible = registered == true,
                 blocked = "Register to take part",
             ),
-            loading = state == null,
+            loading = state == null || registered == null,
             shimmer = shimmer,
             onClick = { onOpenStream(StreamId.STREAM_ID_CARETAKER) },
         )
@@ -92,10 +93,10 @@ fun AllocationScreen(
             title = "Groundworks Fund",
             detail = "Directed by stake",
             status = state?.capital.statusFor(
-                eligible = stakedUerth > 0,
+                eligible = (stakedUerth ?: 0L) > 0,
                 blocked = "Stake ERTH privately to take part",
             ),
-            loading = state == null,
+            loading = state == null || stakedUerth == null,
             shimmer = shimmer,
             onClick = { onOpenStream(StreamId.STREAM_ID_GROUNDWORKS) },
         )

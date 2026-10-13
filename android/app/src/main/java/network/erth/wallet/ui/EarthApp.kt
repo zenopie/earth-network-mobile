@@ -95,8 +95,29 @@ fun EarthApp(
     val privacy: PrivacyActionsViewModel = viewModel()
     val tx: TxController = viewModel()
 
+    val refreshScope = rememberCoroutineScope()
+    val refresh = remember {
+        AppRefresh(
+            context = context.applicationContext,
+            scope = refreshScope,
+            walletEpoch = { walletEpoch },
+            wallet = wallet,
+            earn = earn,
+            allocation = allocation,
+            markets = markets,
+            privacy = privacy,
+        )
+    }
+
+    // Every send re-reads from here, after the wallet has seen its block,
+    // whichever screen sent it and wherever the user has gone since.
+    LaunchedEffect(tx) {
+        tx.settled.collect { hash -> refresh.afterTx(hash) }
+    }
+
     val state by wallet.state.collectAsStateWithLifecycle()
     val activity by wallet.activity.collectAsStateWithLifecycle()
+    val unreachable by wallet.unreachable.collectAsStateWithLifecycle()
     val earnState by earn.state.collectAsStateWithLifecycle()
     val allocationState by allocation.state.collectAsStateWithLifecycle()
     val marketsState by markets.state.collectAsStateWithLifecycle()
@@ -139,15 +160,7 @@ fun EarthApp(
     // Four tabs' worth of queries against one node on launch is a slow launch,
     // and most of them are for screens nobody may open.
     LaunchedEffect(nav.currentTab, walletEpoch) {
-        when (nav.currentTab) {
-            // The portfolio values private stake at the live rates and lists
-            // unbonding, both from the earn read.
-            EarthRoute.Wallet -> { wallet.refresh(); earn.refresh(); privacy.refreshPersonal() }
-            // Earn shows pools now, so it needs the market data too.
-            EarthRoute.Earn -> { earn.refresh(); markets.refresh() }
-            EarthRoute.Swap -> markets.refresh()
-            EarthRoute.Govern -> { allocation.refresh(); privacy.refresh() }
-        }
+        refresh.tab(nav.currentTab)
     }
 
     /**
@@ -166,15 +179,7 @@ fun EarthApp(
         if (nav.current == EarthRoute.Explore) {
             listOf(explore.refresh())
         } else {
-            buildList {
-                add(wallet.refresh())
-                when (nav.currentTab) {
-                    EarthRoute.Earn -> { add(earn.refresh()); add(markets.refresh()) }
-                    EarthRoute.Govern -> { add(allocation.refresh()); add(privacy.refresh()) }
-                    EarthRoute.Swap -> add(markets.refresh())
-                    else -> Unit
-                }
-            }
+            refresh.tab(nav.currentTab)
         }
     }
 
@@ -192,15 +197,19 @@ fun EarthApp(
      * selects what it creates), so only the invalidation is needed.
      *
      * Markets and Explore are deliberately not cleared: pools, blocks and
-     * validators belong to the chain, not to whoever is looking at them.
+     * validators belong to the chain, not to whoever is looking at them. The
+     * LP withdrawals in markets are this wallet's, so those go.
+     *
+     * The epoch bump reloads the tab on screen (the tab effect above); the
+     * clears cancel reads still in flight for the previous wallet.
      */
     val invalidateWallet = {
         wallet.clear()
         earn.clear()
         allocation.clear()
         privacy.clear()
+        markets.clearWallet()
         walletEpoch++
-        wallet.refresh()
     }
 
     val switchWallet: (Int) -> Unit = { index ->
@@ -241,7 +250,6 @@ fun EarthApp(
                 balanceUerth = 0L,
             ),
             shieldedErth = state?.shieldedErthUerth ?: 0L,
-            onSuccess = refreshAll,
             run = { ctx -> PrivacySession.wallet(ctx).claimAnml().hash },
         )
     }
@@ -353,6 +361,8 @@ fun EarthApp(
                 balancesVisible = balancesVisible,
                 onOpenUrl = onOpenUrl,
                 onRefresh = refreshAll,
+                refreshVersion = refresh.version,
+                unreachable = unreachable,
                 padding = padding,
             )
 
@@ -390,7 +400,7 @@ fun EarthApp(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) wallet.refresh()
+            if (event == Lifecycle.Event.ON_RESUME) refresh.loaded()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }

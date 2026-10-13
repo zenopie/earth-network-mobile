@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.personhood
 
+import network.erth.wallet.ui.components.LOADING
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -39,12 +40,13 @@ import network.erth.wallet.ui.theme.EarthTheme
  */
 @Composable
 fun PersonhoodScreen(
-    registered: Boolean,
+    /** Null until the wallet's registration is read: no "Not verified" before then. */
+    registered: Boolean?,
     onRegister: () -> Unit,
     modifier: Modifier = Modifier,
-    /** Opens the handle screen; [handle] is this identity's ("" for none). */
+    /** Opens the handle screen; [handle] is this identity's ("" for none, null until read). */
     onHandle: () -> Unit = {},
-    handle: String = "",
+    handle: String? = "",
     /** Opens the identity switch. */
     onSwitch: () -> Unit = {},
     /** After a switch: what the identity this one replaced can bring here (null: nothing). */
@@ -64,16 +66,17 @@ fun PersonhoodScreen(
             .padding(horizontal = dimens.gutter),
     ) {
         HeroColumn {
-            HeroIcon(if (registered) R.drawable.ic_shield_check else R.drawable.ic_zk_proof, muted = !registered)
+            HeroIcon(if (registered == true) R.drawable.ic_shield_check else R.drawable.ic_zk_proof, muted = registered != true)
             HeroGap()
             HeroTitle(
                 when {
+                    registered == null -> LOADING
                     registered -> "Verified human"
                     registeredBefore -> "Registration ended"
                     else -> "Not verified"
                 },
             )
-            HeroLine(
+            if (registered != null) HeroLine(
                 when {
                     registered -> "Private · not linked to this wallet"
                     registeredBefore -> "Renew to claim ANML and vote"
@@ -83,9 +86,18 @@ fun PersonhoodScreen(
         }
         Spacer(Modifier.height(32.dp))
         when {
+            registered == null -> Unit
             registered -> {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PillButton(if (handle.isNotEmpty()) "@$handle" else "Claim a handle", modifier = Modifier.weight(1f), onClick = onHandle)
+                    PillButton(
+                        when {
+                            handle == null -> LOADING
+                            handle.isNotEmpty() -> "@$handle"
+                            else -> "Claim a handle"
+                        },
+                        modifier = Modifier.weight(1f),
+                        onClick = onHandle,
+                    )
                     PillButton("Move to another wallet", primary = false, modifier = Modifier.weight(1f), onClick = onSwitch)
                 }
                 if (moveOffer != null && moveOffer.anything) {

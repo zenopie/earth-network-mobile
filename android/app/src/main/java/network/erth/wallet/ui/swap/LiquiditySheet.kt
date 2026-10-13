@@ -69,6 +69,8 @@ fun LiquiditySheet(
     erthAvailable: Long,
     tokenAvailable: Long,
     shareBalance: Long,
+    /** Whether the balances above were read: until then they show as loading, and max offers nothing. */
+    balancesKnown: Boolean = true,
     /** Escrow period before withdrawn shares pay out, in seconds. */
     unbondingSeconds: Long,
     onConfirm: (erthUerth: BigInteger, tokenUnits: BigInteger, shares: BigInteger) -> Unit,
@@ -140,6 +142,7 @@ fun LiquiditySheet(
                 label = "ERTH",
                 icon = Tokens.iconOf("uerth"),
                 balance = erthAvailable,
+                balanceKnown = balancesKnown,
                 value = erthText,
                 onValueChange = ::setErth,
                 onMax = { setErth(erthAvailable.fromBaseUnits()) },
@@ -149,6 +152,7 @@ fun LiquiditySheet(
                 label = token,
                 icon = Tokens.iconOf(pool.tokenDenom),
                 balance = tokenAvailable,
+                balanceKnown = balancesKnown,
                 value = tokenText,
                 onValueChange = ::setToken,
                 onMax = { setToken(tokenAvailable.fromBaseUnits()) },
@@ -189,7 +193,7 @@ fun LiquiditySheet(
             AmountShortcuts(available = shareBalance) { amount = it }
 
             Spacer(Modifier.height(dimens.space16))
-            Detail("Your shares", formatUerth(shareBalance))
+            Detail("Your shares", if (balancesKnown) formatUerth(shareBalance) else network.erth.wallet.ui.components.LOADING)
 
             Spacer(Modifier.height(dimens.space12))
             Column(
@@ -303,6 +307,7 @@ private fun DepositPanel(
     value: String,
     onValueChange: (String) -> Unit,
     onMax: () -> Unit,
+    balanceKnown: Boolean = true,
 ) {
     val dimens = EarthTheme.dimens
     val keys = doneKeyboard(keyboardType = KeyboardType.Decimal)
@@ -320,7 +325,7 @@ private fun DepositPanel(
             EarthLabel("Deposit")
             Spacer(Modifier.weight(1f))
             Text(
-                text = "Balance ${formatUerth(balance)}",
+                text = "Balance ${if (balanceKnown) formatUerth(balance) else network.erth.wallet.ui.components.LOADING}",
                 style = EarthTypography.textXs,
                 color = EarthColors.Text.textTertiary,
             )

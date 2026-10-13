@@ -8,7 +8,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.privacy.PrivacyWallet
@@ -78,11 +77,16 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow<PrivacyActionsState?>(null)
     val state: StateFlow<PrivacyActionsState?> = _state.asStateFlow()
 
-    fun refresh(): Job = viewModelScope.launch {
+    fun refresh(): Job = loader.request()
+
+    private val loader = network.erth.wallet.ui.Loader(viewModelScope) {
         val ctx = getApplication<Application>()
         var lease: Reminders.GroundworksLease? = null
         _state.value = withContext(Dispatchers.IO) {
             val w = runCatching { PrivacySession.wallet(ctx) }.getOrNull()
+            // Read the store after a sync, not beside one: run next to the
+            // wallet's read, this showed the notes from before the last tx.
+            w?.let { runCatching { it.syncIfStale() } }
             // An unread list says nothing about a lapse: no lease then, rather than a false "lapsed".
             val votes = w?.let { runCatching { it.groundworksVotes() }.getOrNull() }
             lease = votes?.let { v -> runCatching { w.groundworksLease(v) }.getOrNull() }
@@ -109,12 +113,19 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
      * reminders due. The handle's entry comes from the whole directory (one
      * download for every lookup), never from a query for it alone.
      */
-    fun refreshPersonal(): Job = viewModelScope.launch {
+    fun refreshPersonal(): Job = personalLoader.request()
+
+    private val personalLoader = network.erth.wallet.ui.Loader(viewModelScope) {
         val ctx = getApplication<Application>()
-        _personal.value = withContext(Dispatchers.IO) { personalOf(ctx) }
+        _personal.value = withContext(Dispatchers.IO) {
+            runCatching { PrivacySession.wallet(ctx).syncIfStale() }
+            personalOf(ctx)
+        }
     }
 
     fun clear() {
+        loader.cancel()
+        personalLoader.cancel()
         _state.value = null
         _personal.value = null
     }

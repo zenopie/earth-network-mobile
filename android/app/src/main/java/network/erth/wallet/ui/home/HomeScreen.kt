@@ -320,6 +320,7 @@ private fun HomeActions(
     val claimable = anmlClaimableAt == 0L
 
     val claimLabel = when {
+        registered == null -> network.erth.wallet.ui.components.LOADING
         notRegistered -> "Verify"
         claimable -> "Claim"
         anmlClaimableAt == null -> "Claim"

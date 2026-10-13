@@ -50,7 +50,8 @@ import network.erth.wallet.ui.theme.EarthTheme
 fun AddCaretakerOptionScreen(
     /** This wallet's public address: the default payee. */
     address: String,
-    publicUerth: Long,
+    /** Null until the balance is read: no "needs more" against a balance not yet known. */
+    publicUerth: Long?,
     /** The signed tx's own fee, on top of the burn. */
     networkFee: Long,
     onReview: (name: String, recipient: String, burnUerth: Long) -> Unit,
@@ -66,8 +67,8 @@ fun AddCaretakerOptionScreen(
 
     val nameTooLong = name.toByteArray(Charsets.UTF_8).size > Allocation.DESCRIPTION_MAX_BYTES
     val recipientOk = validRecipient(recipient)
-    val short = fee?.let { (it + networkFee - publicUerth).coerceAtLeast(0) } ?: 0L
-    val ready = fee != null && name.isNotBlank() && !nameTooLong && recipientOk && short == 0L
+    val short = fee?.let { f -> publicUerth?.let { (f + networkFee - it).coerceAtLeast(0) } } ?: 0L
+    val ready = fee != null && publicUerth != null && name.isNotBlank() && !nameTooLong && recipientOk && short == 0L
 
     Column(
         modifier

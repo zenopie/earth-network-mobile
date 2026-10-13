@@ -8,7 +8,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.chain.Staking
 import network.erth.wallet.privacy.chain.PrivacyQueries
@@ -116,73 +115,73 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
      * until the read it started has finished, and the read itself belongs to
      * [viewModelScope] so that leaving the screen mid-read does not cancel it.
      */
-    fun refresh(): Job {
-        return viewModelScope.launch {
-            val ctx = getApplication<Application>()
-            val address = withContext(Dispatchers.IO) {
-                runCatching { SecureWalletManager.getWalletAddress(ctx) }.getOrNull()
-            } ?: return@launch
+    fun refresh(): Job = loader.request()
 
-            _state.value = withContext(Dispatchers.IO) {
-                // The validator list (Query/Validators), read whole: names,
-                // rates and who takes stake, for every validator alike.
-                val list = runCatching { PrivacyQueries.validators() }.getOrNull() ?: PrivacyQueries.cachedValidators
-                val entries = list?.validators.orEmpty()
-                val byOperator = entries.associateBy { it.validator }
+    private val loader = network.erth.wallet.ui.Loader(viewModelScope) {
+        val ctx = getApplication<Application>()
+        val address = withContext(Dispatchers.IO) {
+            runCatching { SecureWalletManager.getWalletAddress(ctx) }.getOrNull()
+        } ?: return@Loader
 
-                val delegations = runCatching { Staking.delegations(address) }
-                    .getOrDefault(emptyList())
-                    .map { d ->
-                        val v = byOperator[d.validator]
-                        DelegationRow(
-                            validatorOperator = d.validator,
-                            moniker = v?.moniker?.ifEmpty { null } ?: d.validator.shortAddress(),
-                            amountUerth = d.amount.toLongOrNull() ?: 0L,
-                            commission = v?.commission ?: 0.0,
-                        )
-                    }
+        // A read that fails keeps what the last one showed (cleared on a
+        // wallet switch, so it is this wallet's): an empty list or a zero
+        // there is a read that failed, not the chain's state.
+        val prev = _state.value
+        _state.value = withContext(Dispatchers.IO) {
+            // The validator list (Query/Validators), read whole: names,
+            // rates and who takes stake, for every validator alike.
+            val list = runCatching { PrivacyQueries.validators() }.getOrNull() ?: PrivacyQueries.cachedValidators
+            val entries = list?.validators ?: prev?.all.orEmpty()
+            val byOperator = entries.associateBy { it.validator }
 
-                val unbonding = runCatching { Staking.unbondingDelegations(address) }
-                    .getOrDefault(emptyList())
-                    .map { u ->
-                        UnbondingRow(
-                            moniker = byOperator[u.validator]?.moniker?.ifEmpty { null }
-                                ?: u.validator.shortAddress(),
-                            amountUerth = u.balance.toLongOrNull() ?: 0L,
-                            completesIn = u.completionTime,
-                        )
-                    }
+            val delegations = runCatching { Staking.delegations(address) }.getOrNull()
+                ?.map { d ->
+                    val v = byOperator[d.validator]
+                    DelegationRow(
+                        validatorOperator = d.validator,
+                        moniker = v?.moniker?.ifEmpty { null } ?: d.validator.shortAddress(),
+                        amountUerth = d.amount.toLongOrNull() ?: 0L,
+                        commission = v?.commission ?: 0.0,
+                    )
+                } ?: prev?.delegations.orEmpty()
 
-                // The unbonding period (chain-wide). A delegation bonds in its
-                // own block, so there is no round to wait for.
-                val timing = runCatching { PrivacyQueries.stakingTiming() }.getOrNull()
+            val unbonding = runCatching { Staking.unbondingDelegations(address) }.getOrNull()
+                ?.map { u ->
+                    UnbondingRow(
+                        moniker = byOperator[u.validator]?.moniker?.ifEmpty { null }
+                            ?: u.validator.shortAddress(),
+                        amountUerth = u.balance.toLongOrNull() ?: 0L,
+                        completesIn = u.completionTime,
+                    )
+                } ?: prev?.unbonding.orEmpty()
 
-                EarnUiState(
-                    all = entries,
-                    unbondingSeconds = timing?.unbondingSeconds,
-                    derthRates = entries.associate { it.validator to it.rate },
-                    names = entries.associate { it.validator to (it.moniker to it.commission) },
-                    totalBondedUerth = runCatching {
-                        Staking.totalBonded().toLongOrNull() ?: 0L
-                    }.getOrDefault(0L),
-                    stakedUerth = delegations.sumOf { it.amountUerth },
-                    rewardsUerth = runCatching {
-                        Staking.totalRewards(address).toLongOrNull() ?: 0L
-                    }.getOrDefault(0L),
-                    delegations = delegations,
-                    unbonding = unbonding,
-                    // A validator not taking stake (jailed, tombstoned, a
-                    // book settling) is not offered: the chain would refuse it.
-                    validators = entries.filter { it.bonded && it.delegatable }.map {
-                        DelegationRow(
-                            validatorOperator = it.validator,
-                            moniker = it.moniker.ifEmpty { it.validator.shortAddress() },
-                            amountUerth = it.tokens.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(),
-                            commission = it.commission,
-                        )
-                    },
-                )
-            }
+            // The unbonding period (chain-wide). A delegation bonds in its
+            // own block, so there is no round to wait for.
+            val timing = runCatching { PrivacyQueries.stakingTiming() }.getOrNull()
+
+            EarnUiState(
+                all = entries,
+                unbondingSeconds = timing?.unbondingSeconds ?: prev?.unbondingSeconds,
+                derthRates = entries.associate { it.validator to it.rate },
+                names = entries.associate { it.validator to (it.moniker to it.commission) },
+                totalBondedUerth = runCatching { Staking.totalBonded().toLongOrNull() }.getOrNull()
+                    ?: prev?.totalBondedUerth ?: 0L,
+                stakedUerth = delegations.sumOf { it.amountUerth },
+                rewardsUerth = runCatching { Staking.totalRewards(address).toLongOrNull() }.getOrNull()
+                    ?: prev?.rewardsUerth ?: 0L,
+                delegations = delegations,
+                unbonding = unbonding,
+                // A validator not taking stake (jailed, tombstoned, a
+                // book settling) is not offered: the chain would refuse it.
+                validators = entries.filter { it.bonded && it.delegatable }.map {
+                    DelegationRow(
+                        validatorOperator = it.validator,
+                        moniker = it.moniker.ifEmpty { it.validator.shortAddress() },
+                        amountUerth = it.tokens.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(),
+                        commission = it.commission,
+                    )
+                },
+            )
         }
     }
 
@@ -195,6 +194,7 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
      * because nothing about it looks wrong.
      */
     fun clear() {
+        loader.cancel()
         _state.value = null
     }
 
