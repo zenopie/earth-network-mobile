@@ -229,7 +229,7 @@ fun PoolList(
                 val mine = shares?.let { it[pool.id] ?: 0L }
                 if (mine == null || mine > 0) {
                     Spacer(Modifier.height(dimens.space8))
-                    Text(
+                    network.erth.wallet.ui.components.FigureText(
                         text = "Your shares ${formatUerthOrLoading(mine)}",
                         style = EarthTypography.textSm,
                         color = EarthAccent.ink,

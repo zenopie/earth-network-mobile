@@ -99,7 +99,7 @@ struct PieChart: View {
             .frame(width: Self.size, height: Self.size)
 
             if let centreLabel {
-                Text(centreLabel)
+                FigureText(centreLabel)
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }
@@ -170,7 +170,7 @@ struct PieLegend: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 if let detail = slice.detail {
-                    Text(detail)
+                    FigureText(detail)
                         .font(EarthType.caption)
                         .foregroundStyle(theme.colors.textTertiary)
                         .lineLimit(1)

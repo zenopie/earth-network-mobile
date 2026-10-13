@@ -109,7 +109,8 @@ fun HandleScreen(
             )
             HeroLine(
                 when {
-                    state == null -> network.erth.wallet.ui.components.LOADING
+                    // The title's dots say it is loading; a second row of them is noise.
+                    state == null -> " "
                     !state.identityLive -> "Verify to claim a handle"
                     movingOut -> "Moving to your new identity"
                     state.incomingMoves.any { it.kind == PendingMove.HANDLE } -> "Arriving · waiting for the chain"
@@ -179,7 +180,7 @@ fun HandleScreen(
         Note(if (!held) "One per person · fee spent if taken" else "Frees @${state.handle} for anyone")
         Spacer(Modifier.height(dimens.space12))
         PillButton(
-            text = if (!held) "Claim ${parsed?.let { "@$it" } ?: "handle"}" else "Change to ${parsed?.let { "@$it" } ?: "…"}",
+            text = if (!held) "Claim ${parsed?.let { "@$it" } ?: "handle"}" else parsed?.let { "Change to @$it" } ?: "Change handle",
             enabled = parsed != null && parsed != state.handle,
         ) { parsed?.let(onClaim) }
         if (held) {

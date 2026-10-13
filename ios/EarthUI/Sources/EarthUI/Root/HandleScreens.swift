@@ -35,7 +35,7 @@ private struct Hero: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text(title)
+            FigureText(title)
                 .font(.system(size: 40, weight: .bold))
                 .foregroundStyle(muted ? theme.colors.textTertiary : theme.colors.textPrimary)
                 .lineLimit(1)
@@ -223,7 +223,7 @@ struct HandleScreen: View {
             if !input.isEmpty, parsed == nil {
                 Caption("3-32 of a-z, 0-9, -; no end dash", error: true)
             }
-            EarthPillButton(title: model.handle.isEmpty ? "Claim \(parsed.map { "@\($0)" } ?? "handle")" : "Change to \(parsed.map { "@\($0)" } ?? "…")") {
+            EarthPillButton(title: model.handle.isEmpty ? "Claim \(parsed.map { "@\($0)" } ?? "handle")" : (parsed.map { "Change to @\($0)" } ?? "Change handle")) {
                 guard let h = parsed else { return }
                 let pays = "@\(h) · \(Handles.truncate(model.shieldedAddress))"
                 tx.requestPrivate(.private(action: model.handle.isEmpty ? "Claim @\(h)" : "Change handle to @\(h)", rows: [("Pays", pays)],

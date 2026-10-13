@@ -55,7 +55,7 @@ struct StreamDetailScreen: View {
 
                     if let caption {
                         Spacer().frame(height: theme.space.x16)
-                        Text(caption)
+                        FigureText(caption)
                             .font(EarthType.body)
                             .foregroundStyle(theme.colors.textTertiary)
                             .frame(maxWidth: .infinity)
@@ -202,7 +202,7 @@ struct GroundworksVoteControls: View {
                     .foregroundStyle(theme.colors.warnInk)
                     .multilineTextAlignment(.center)
             } else if !split.isEmpty, model.balancesVisible {
-                Text("Voting \(Figures.when(model.stakeValuesLoaded, Figures.whole(BigInt(voting)))) of \(Figures.when(model.stakeValuesLoaded, Figures.whole(BigInt(model.privateStakeValue)))) ERTH")
+                FigureText("Voting \(Figures.when(model.stakeValuesLoaded, Figures.whole(BigInt(voting)))) of \(Figures.when(model.stakeValuesLoaded, Figures.whole(BigInt(model.privateStakeValue)))) ERTH")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }
@@ -617,7 +617,7 @@ struct ProposalDetailScreen: View {
                     people(assembly)
                 } else if proposal.isLive, !tallyAsked {
                     EarthLabel("People")
-                    Text(Figures.loading)
+                    FigureText(Figures.loading)
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
                 }

@@ -105,7 +105,7 @@ fun EarthBigIconButton(
                 contentDescription = state.text.getValue()
             )
             Spacer(Modifier.height(4.dp))
-            Text(
+            network.erth.wallet.ui.components.FigureText(
                 modifier = Modifier.padding(bottom = 16.dp),
                 text = state.text.getValue(),
                 style = EarthTypography.textXs,

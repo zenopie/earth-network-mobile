@@ -132,7 +132,7 @@ struct BalanceWidget: View {
                 EarthAsset.anml?
                     .resizable().scaledToFit()
                     .frame(width: 16, height: 16)
-                Text(model.balancesVisible
+                FigureText(model.balancesVisible
                      // ANML exists only shielded.
                      ? "\(Figures.when(balancesLoaded, Figures.plain(model.balance(.anml) + BigInt(model.shielded["uanml"] ?? 0)))) ANML"
                      : "---")
@@ -173,7 +173,7 @@ struct SyncStatus: View {
                 Circle()
                     .fill(behind ? theme.colors.warnInk : Palette.Brand.b500)
                     .frame(width: 7, height: 7)
-                Text(detailed ? numbers : (behind ? "Syncing…" : "Synced"))
+                FigureText(detailed ? numbers : (behind ? "Syncing…" : "Synced"))
                     .font(EarthType.caption.monospacedDigit())
                     .foregroundStyle(theme.colors.textTertiary)
             }
@@ -198,7 +198,7 @@ struct SplitAmount: View {
     var body: some View {
         let parts = amount.split(separator: ".", maxSplits: 1)
         HStack(alignment: .top, spacing: 0) {
-            Text(parts.first.map(String.init) ?? amount)
+            FigureText(parts.first.map(String.init) ?? amount)
                 .font(EarthType.header2).fontWeight(.semibold)
                 .foregroundStyle(theme.colors.textPrimary)
             if parts.count > 1 {
@@ -351,7 +351,7 @@ struct BigIconButton: View {
                     }
                 }
                 .frame(width: 24, height: 24)
-                Text(label)
+                FigureText(label)
                     .font(EarthType.caption).fontWeight(.medium)
                     .foregroundStyle(ink)
                     .lineLimit(1)
@@ -493,7 +493,7 @@ struct HomePanel: View {
                 Text(title)
                     .font(EarthType.body)
                     .foregroundStyle(theme.colors.textPrimary)
-                Text(subtitle)
+                FigureText(subtitle)
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
                     .lineLimit(1)

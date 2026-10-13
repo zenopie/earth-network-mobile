@@ -53,14 +53,14 @@ struct EarthRow: View {
                     .font(EarthType.body)
                     .foregroundStyle(theme.colors.textPrimary)
                 if let subtitle {
-                    Text(subtitle)
+                    FigureText(subtitle)
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
                 }
             }
             Spacer(minLength: theme.space.x8)
             if let value {
-                Text(value)
+                FigureText(value)
                     .font(EarthType.amount)
                     .foregroundStyle(valueMuted ? theme.colors.textTertiary : theme.colors.textPrimary)
             }
@@ -89,7 +89,7 @@ struct EarthDetailRow: View {
                 .font(EarthType.body)
                 .foregroundStyle(theme.colors.textTertiary)
             Spacer(minLength: theme.space.x12)
-            Text(value)
+            FigureText(value)
                 .font(emphasis ? EarthType.title : EarthType.amount)
                 .foregroundStyle(theme.colors.textPrimary)
                 .multilineTextAlignment(.trailing)
@@ -177,7 +177,7 @@ struct EarthListRow: View {
                     .foregroundStyle(theme.colors.textPrimary)
                     .lineLimit(1)
                 if let subtitle {
-                    Text(subtitle)
+                    FigureText(subtitle)
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
                         .lineLimit(1)
@@ -186,7 +186,7 @@ struct EarthListRow: View {
             .padding(.leading, theme.space.x12)
             Spacer(minLength: theme.space.x8)
             if let value {
-                Text(value)
+                FigureText(value)
                     .font(EarthType.amount)
                     .foregroundStyle(theme.colors.textPrimary)
             }
@@ -282,7 +282,7 @@ struct EarthPillButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(title)
+            FigureText(title)
                 .font(.system(size: 17, weight: .semibold))
                 .frame(maxWidth: .infinity, minHeight: 56)
                 .foregroundStyle(foreground)
@@ -338,7 +338,7 @@ struct EarthEmpty: View {
                 .font(EarthType.title)
                 .foregroundStyle(theme.colors.textSecondary)
             if let detail {
-                Text(detail)
+                FigureText(detail)
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
                     .multilineTextAlignment(.center)

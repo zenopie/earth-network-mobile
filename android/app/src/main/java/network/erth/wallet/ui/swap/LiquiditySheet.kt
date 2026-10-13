@@ -273,7 +273,7 @@ private fun Detail(label: String, value: String) {
             color = EarthColors.Text.textTertiary,
             modifier = Modifier.weight(1f),
         )
-        Text(
+        network.erth.wallet.ui.components.FigureText(
             text = value,
             style = EarthTypography.textSm,
             color = EarthColors.Text.textPrimary,
@@ -324,7 +324,7 @@ private fun DepositPanel(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             EarthLabel("Deposit")
             Spacer(Modifier.weight(1f))
-            Text(
+            network.erth.wallet.ui.components.FigureText(
                 text = "Balance ${if (balanceKnown) formatUerth(balance) else network.erth.wallet.ui.components.LOADING}",
                 style = EarthTypography.textXs,
                 color = EarthColors.Text.textTertiary,

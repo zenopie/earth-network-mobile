@@ -299,7 +299,7 @@ struct SwapPanel: View {
             HStack {
                 EarthLabel(label)
                 Spacer()
-                Text("Balance \(balance)")
+                FigureText("Balance \(balance)")
                     .font(EarthType.caption)
                     .foregroundStyle(theme.colors.textTertiary)
             }

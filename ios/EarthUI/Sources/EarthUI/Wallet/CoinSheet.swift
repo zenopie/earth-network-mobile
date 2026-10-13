@@ -194,8 +194,11 @@ struct CoinSheet: View {
                 .labelStyle(TightLabel())
 
             if !privateOnly, coin.showsPublic {
-                Label("\(model.balancesVisible ? Figures.when(model.has(.balances), Figures.balance(coin.publicAmount, decimals: token.decimals)) : "••••") public",
-                      systemImage: "globe")
+                Label {
+                    FigureText("\(model.balancesVisible ? Figures.when(model.has(.balances), Figures.balance(coin.publicAmount, decimals: token.decimals)) : "••••") public")
+                } icon: {
+                    Image(systemName: "globe")
+                }
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
                     .labelStyle(TightLabel())
@@ -228,7 +231,7 @@ struct CoinSheet: View {
             .minimumScaleFactor(0.5)
             .onChange(of: amount) { previous, new in amount = Amounts.filterAmountInput(new, previous: previous) }
         HStack(spacing: 6) {
-            Text("\(direction == .shield ? "Public" : "Private") \(Figures.when(model.has(direction == .shield ? .balances : .privacy), Figures.balance(flow.available)))")
+            FigureText("\(direction == .shield ? "Public" : "Private") \(Figures.when(model.has(direction == .shield ? .balances : .privacy), Figures.balance(flow.available)))")
                 .font(EarthType.body)
                 .foregroundStyle(theme.colors.textTertiary)
             Button("Max") { amount = Token.erth.format(flow.max) }

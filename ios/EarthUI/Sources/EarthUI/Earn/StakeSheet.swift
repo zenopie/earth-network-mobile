@@ -213,7 +213,7 @@ struct StakeAmountField: View {
                 .foregroundStyle(theme.colors.textTertiary)
             Spacer().frame(height: theme.space.x16)
             HStack(spacing: theme.space.x8) {
-                Text("\(Figures.when(model.has(.privacy), Figures.display(available))) available")
+                FigureText("\(Figures.when(model.has(.privacy), Figures.display(available))) available")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
                 if available > 0 {
@@ -315,7 +315,7 @@ struct ValidatorPicker: View {
                                     .font(EarthType.body).fontWeight(.semibold)
                                     .foregroundStyle(o.enabled ? theme.colors.textPrimary : theme.colors.textTertiary)
                                     .lineLimit(1)
-                                Text(o.detail)
+                                FigureText(o.detail)
                                     .font(EarthType.caption)
                                     .foregroundStyle(theme.colors.textTertiary)
                                     .lineLimit(1)

@@ -111,7 +111,7 @@ struct SettingsSheet: View {
                         .font(EarthType.body)
                         .foregroundStyle(theme.colors.textPrimary)
                     if let subtitle {
-                        Text(subtitle)
+                        FigureText(subtitle)
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
                     }
@@ -161,7 +161,7 @@ struct IdentityScreen: View {
                     Spacer().frame(height: theme.space.x16)
                     // Before the first sync this wallet's standing is unknown:
                     // no "Not verified", and no Verify for a wallet that may be.
-                    Text(!model.has(.privacy) ? Figures.loading : model.isRegistered ? "Verified human" : ended ? "Registration ended" : "Not verified")
+                    FigureText(!model.has(.privacy) ? Figures.loading : model.isRegistered ? "Verified human" : ended ? "Registration ended" : "Not verified")
                         .font(EarthType.header6).fontWeight(.semibold)
                         .foregroundStyle(theme.colors.textPrimary)
                     Text(line)

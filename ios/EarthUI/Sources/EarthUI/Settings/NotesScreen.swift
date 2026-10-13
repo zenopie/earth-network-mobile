@@ -53,7 +53,7 @@ struct NotesScreen: View {
     private var hero: some View {
         let mergeable = model.mergeable.values.reduce(0, +)
         return VStack(spacing: 0) {
-            Text(Figures.when(model.has(.privacy), "\(mergeable)"))
+            FigureText(Figures.when(model.has(.privacy), "\(mergeable)"))
                 .font(EarthType.header2).fontWeight(.semibold)
                 .foregroundStyle(theme.colors.textPrimary)
             Text(!model.has(.privacy) ? "Notes to merge" : mergeable == 0 ? "Nothing to merge" : "Notes to merge")

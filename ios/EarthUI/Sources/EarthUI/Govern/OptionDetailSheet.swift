@@ -32,7 +32,7 @@ struct OptionDetailSheet: View {
                         .font(EarthType.header2).fontWeight(.semibold)
                         .foregroundStyle(theme.colors.textPrimary)
                         .padding(.top, theme.space.x24)
-                    Text(status)
+                    FigureText(status)
                         .font(EarthType.body)
                         .foregroundStyle(option.removed ? theme.colors.textError : theme.colors.textTertiary)
 

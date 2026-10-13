@@ -46,11 +46,7 @@ fun ProposalList(
 
     Column(modifier.fillMaxWidth()) {
         when {
-            proposals == null -> Text(
-                text = "Loading…",
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textTertiary,
-            )
+            proposals == null -> network.erth.wallet.ui.components.LoadingDots(style = EarthTypography.textSm)
 
             proposals.isEmpty() -> Text(
                 text = "No proposals yet",

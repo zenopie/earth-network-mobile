@@ -137,7 +137,8 @@ fun EarthButton(
 
             @Composable
             override fun Text() {
-                Text(
+                // A title still loading ("…") animates like every other figure.
+                network.erth.wallet.ui.components.FigureText(
                     text = state.text.getValue(),
                     style = style,
                     fontWeight = FontWeight.SemiBold,

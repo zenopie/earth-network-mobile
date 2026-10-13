@@ -92,7 +92,7 @@ fun NotesScreen(
     val dimens = EarthTheme.dimens
     val total = state?.mergeable?.values?.sum() ?: 0
     HeroColumn {
-        Text(
+        network.erth.wallet.ui.components.FigureText(
             if (state == null) network.erth.wallet.ui.components.LOADING else "%,d".format(total),
             style = EarthTypography.header2.copy(fontWeight = FontWeight.SemiBold),
             color = EarthColors.Text.textPrimary,

@@ -87,11 +87,7 @@ fun StreamDetailScreen(
     ) {
         if (stream == null) {
             Spacer(Modifier.height(dimens.space24))
-            Text(
-                text = network.erth.wallet.ui.components.LOADING,
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textTertiary,
-            )
+            network.erth.wallet.ui.components.LoadingDots(style = EarthTypography.textSm)
             return@Column
         }
 
@@ -144,7 +140,7 @@ fun StreamDetailScreen(
         }
         caption?.let {
             Spacer(Modifier.height(dimens.space16))
-            Text(it, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary,
+            network.erth.wallet.ui.components.FigureText(it, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary,
                 textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         }
 

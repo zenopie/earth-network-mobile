@@ -62,7 +62,7 @@ fun HeroAmount(amount: String, visible: Boolean = true) {
 /** A big bold name or status, centred. */
 @Composable
 fun HeroTitle(text: String, color: Color = EarthColors.Text.textPrimary) {
-    Text(
+    FigureText(
         text = text,
         style = EarthTypography.header5.copy(fontWeight = FontWeight.Bold),
         color = color,
@@ -79,7 +79,7 @@ fun HeroLine(text: String, color: Color = EarthColors.Text.textTertiary, icon: I
             Image(painterResource(icon), null, Modifier.size(13.dp), colorFilter = ColorFilter.tint(iconTint))
             Spacer(Modifier.width(5.dp))
         }
-        Text(text, style = EarthTypography.textSm, color = color, textAlign = TextAlign.Center)
+        FigureText(text, style = EarthTypography.textSm, color = color, textAlign = TextAlign.Center)
     }
 }
 

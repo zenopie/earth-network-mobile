@@ -37,6 +37,7 @@ import network.erth.wallet.chain.Dex
 import network.erth.wallet.chain.Gov
 import network.erth.wallet.chain.Personhood
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.wrapContentWidth
 import network.erth.wallet.ui.components.LOADING
 import network.erth.wallet.ui.components.LoadingScreen
 import network.erth.wallet.ui.components.formatUerth
@@ -945,7 +946,7 @@ internal fun EarthContent(
                             .filter { (it.weight > 0 || it.pending > 0) && it.split == privacyState?.groundworksSplit }
                         // Unread, the controls would offer "Vote" to a wallet already voting.
                         if (privacyState == null || state == null) {
-                            androidx.compose.material3.Text(LOADING, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            network.erth.wallet.ui.components.LoadingDots(modifier = Modifier.fillMaxWidth().wrapContentWidth())
                         } else GroundworksVoteControls(
                             split = privacyState?.groundworksSplit.orEmpty(),
                             lease = privacyState?.groundworksLease,

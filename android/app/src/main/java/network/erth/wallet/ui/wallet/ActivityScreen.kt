@@ -74,7 +74,7 @@ fun ActivityScreen(
     ) {
         if (rows == null) {
             item {
-                Text(
+                network.erth.wallet.ui.components.FigureText(
                     text = LOADING,
                     style = EarthTypography.textSm,
                     color = EarthColors.Text.textTertiary,

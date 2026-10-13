@@ -250,7 +250,7 @@ struct GovernRow: View {
                     Text(title)
                         .font(EarthType.body).fontWeight(.semibold)
                         .foregroundStyle(theme.colors.textPrimary)
-                    Text(detail)
+                    FigureText(detail)
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
                         .multilineTextAlignment(.leading)
@@ -260,7 +260,7 @@ struct GovernRow: View {
                             .fill(theme.colors.bgTertiary)
                             .frame(width: 140, height: 12)
                     } else if let status {
-                        Text(status)
+                        FigureText(status)
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.accentInk)
                             .multilineTextAlignment(.leading)

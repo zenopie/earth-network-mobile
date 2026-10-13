@@ -80,11 +80,7 @@ fun ProposalDetailScreen(
                 .background(EarthColors.Surfaces.bgPrimary),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = "Loading…",
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textTertiary,
-            )
+            network.erth.wallet.ui.components.LoadingDots(style = EarthTypography.textSm)
         }
         return
     }
@@ -234,7 +230,7 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
-private fun Line(text: String) = Text(text, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
+private fun Line(text: String) = network.erth.wallet.ui.components.FigureText(text, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
 
 @Composable
 private fun TallyBar(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {

@@ -193,12 +193,12 @@ struct StakeOverview: View {
                 .foregroundStyle(theme.colors.textTertiary)
                 .frame(width: 44, height: 44)
                 .background(theme.colors.bgTertiary, in: .circle)
-            Text("Unstaking · \(when)")
+            FigureText("Unstaking · \(when)")
                 .font(EarthType.body).fontWeight(.medium)
                 .foregroundStyle(theme.colors.textSecondary)
                 .lineLimit(1)
             Spacer(minLength: theme.space.x8)
-            Text(amount(value))
+            FigureText(amount(value))
                 .font(.system(size: 17, weight: .semibold).monospacedDigit())
                 .foregroundStyle(theme.colors.textTertiary)
                 .lineLimit(1)
@@ -229,7 +229,7 @@ struct StakeRow: View {
                     StakeDot(status: status)
                 }
                 Spacer(minLength: theme.space.x8)
-                Text(value)
+                FigureText(value)
                     .font(.system(size: 17, weight: .semibold).monospacedDigit())
                     .foregroundStyle(theme.colors.textPrimary)
                     .lineLimit(1)
@@ -311,7 +311,7 @@ struct ValidatorStakeSheet: View {
             if let card {
                 HStack(spacing: 6) {
                     StakeDot(status: card.status)
-                    Text([statusWord(card), apr(card)].compactMap { $0 }.joined(separator: " · "))
+                    FigureText([statusWord(card), apr(card)].compactMap { $0 }.joined(separator: " · "))
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
                 }

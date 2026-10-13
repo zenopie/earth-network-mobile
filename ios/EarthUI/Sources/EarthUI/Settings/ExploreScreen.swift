@@ -54,7 +54,7 @@ struct ExploreScreen: View {
                     }
                     if chain.blocks.isEmpty {
                         // A chain always has blocks: none is a read that has not landed.
-                        Text(Figures.loading)
+                        FigureText(Figures.loading)
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
                     }
@@ -92,7 +92,7 @@ struct ExploreScreen: View {
     /// Verified humans, big.
     private var hero: some View {
         VStack(spacing: 0) {
-            Text(Figures.when(chain.registrations, Figures.grouped))
+            FigureText(Figures.when(chain.registrations, Figures.grouped))
                 .font(EarthType.header2).fontWeight(.semibold)
                 .foregroundStyle(theme.colors.textPrimary)
                 .lineLimit(1)

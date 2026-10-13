@@ -34,7 +34,7 @@ struct AddCaretakerOptionSheet: View {
                         .font(.system(size: 34, weight: .bold))
                         .foregroundStyle(theme.colors.textPrimary)
                         .padding(.top, theme.space.x24)
-                    Text(Figures.when(fee) { "\(Token.erth.format(BigInt($0))) ERTH to list · burned" })
+                    FigureText(Figures.when(fee) { "\(Token.erth.format(BigInt($0))) ERTH to list · burned" })
                         .font(EarthType.body)
                         .foregroundStyle(theme.colors.textTertiary)
                         .padding(.top, theme.space.x4)

@@ -173,7 +173,7 @@ struct SendSheet: View {
                     .font(EarthType.title)
                     .foregroundStyle(theme.colors.textTertiary)
             }
-            Text("\(fromNotes ? "Shielded" : "Balance") \(Figures.when(model.has(fromNotes ? .privacy : .balances), token.format(available(token)))) \(token.symbol)")
+            FigureText("\(fromNotes ? "Shielded" : "Balance") \(Figures.when(model.has(fromNotes ? .privacy : .balances), token.format(available(token)))) \(token.symbol)")
                 .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.textTertiary)
         }

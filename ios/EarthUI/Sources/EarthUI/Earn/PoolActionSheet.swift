@@ -131,7 +131,7 @@ struct PoolActionSheet: View {
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.accentInk)
             }
-            Text("Your shares \(Figures.when(holdingsLoaded, Figures.balance(shareBalance)))")
+            FigureText("Your shares \(Figures.when(holdingsLoaded, Figures.balance(shareBalance)))")
                 .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.textTertiary)
 
@@ -139,7 +139,7 @@ struct PoolActionSheet: View {
             // the shares keep earning and keep their exposure the whole time —
             // so withdrawing to escape a price move does not escape it.
             EarthCard {
-                Text("This starts a \(waitDescription) wait")
+                FigureText("This starts a \(waitDescription) wait")
                     .font(EarthType.body)
                     .foregroundStyle(theme.colors.textPrimary)
                 Text("Your shares stay in the pool until then — still earning, and still exposed to the price. The payout is worked out when it matures, not now, and arrives on its own with nothing more to sign.")
@@ -222,7 +222,7 @@ struct PoolActionSheet: View {
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.accentInk)
             }
-            Text("Available \(Figures.when(holdingsLoaded, Figures.balance(available, token)))")
+            FigureText("Available \(Figures.when(holdingsLoaded, Figures.balance(available, token)))")
                 .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.textTertiary)
         }
