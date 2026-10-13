@@ -3349,6 +3349,23 @@ public final class PrivacyWallet: @unchecked Sendable {
         throw PrivacyError("the wallet has not caught up with block \(r.height) yet; try again")
     }
 
+    /// Syncs until both streams have seen block `height`: true once they
+    /// have, false when `timeout` runs out first (or the task is cancelled).
+    /// A tx's block is committed before the indexer serves it, so a sync
+    /// straight after one shows its spends without its outputs. Unlike
+    /// `syncThrough` it never throws: a failed sync is tried again.
+    @discardableResult
+    public func catchUp(height: UInt64, timeout: Duration = .seconds(60)) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while !Task.isCancelled {
+            _ = try? await sync()
+            if snapshot.syncedHeight >= height && snapshot.stakeSyncedHeight >= height { return true }
+            guard ContinuousClock.now + .seconds(2) < deadline else { break }
+            try? await Task.sleep(for: .seconds(2))
+        }
+        return false
+    }
+
     // MARK: - dex
 
     /// Swaps `amountIn` `denomIn` from notes for at least `minOut` `denomOut`

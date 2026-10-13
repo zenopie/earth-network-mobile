@@ -181,7 +181,7 @@ struct CoinSheet: View {
     @ViewBuilder
     private func overview(_ coin: ShieldMove.Coin, token: Token) -> some View {
             if model.balancesVisible {
-                SplitAmount(amount: Figures.plain(coin.privateAmount, decimals: token.decimals))
+                SplitAmount(amount: Figures.when(model.has(.privacy), Figures.plain(coin.privateAmount, decimals: token.decimals)))
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
             } else {
@@ -194,7 +194,7 @@ struct CoinSheet: View {
                 .labelStyle(TightLabel())
 
             if !privateOnly, coin.showsPublic {
-                Label("\(model.balancesVisible ? Figures.balance(coin.publicAmount, decimals: token.decimals) : "••••") public",
+                Label("\(model.balancesVisible ? Figures.when(model.has(.balances), Figures.balance(coin.publicAmount, decimals: token.decimals)) : "••••") public",
                       systemImage: "globe")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
@@ -228,7 +228,7 @@ struct CoinSheet: View {
             .minimumScaleFactor(0.5)
             .onChange(of: amount) { previous, new in amount = Amounts.filterAmountInput(new, previous: previous) }
         HStack(spacing: 6) {
-            Text("\(direction == .shield ? "Public" : "Private") \(Figures.balance(flow.available))")
+            Text("\(direction == .shield ? "Public" : "Private") \(Figures.when(model.has(direction == .shield ? .balances : .privacy), Figures.balance(flow.available)))")
                 .font(EarthType.body)
                 .foregroundStyle(theme.colors.textTertiary)
             Button("Max") { amount = Token.erth.format(flow.max) }
@@ -312,8 +312,7 @@ struct ShieldFlow {
         switch direction {
         case .shield:
             guard let w = model.privacy, let out = try? w.shieldOutput(denom: Constants.gasDenom, amount: amount) else { return false }
-            tx.request(.init(action: "Shield ERTH", rows: [("Amount", display), ("From", "your public balance"), ("To", "your private balance")]),
-                       onSuccess: { await model.syncPrivacy() }) { key in
+            tx.request(.init(action: "Shield ERTH", rows: [("Amount", display), ("From", "your public balance"), ("To", "your private balance")])) { key in
                 [MsgShield(sender: key.address, amount: Coin(denom: Constants.gasDenom, amount: String(value)),
                            pc: out.pc.bytes, ciphertext: out.ciphertext).asAny(typeURL: MsgShield.typeURL)]
             }
@@ -325,7 +324,7 @@ struct ShieldFlow {
                 ("From", "your private balance"),
                 ("To", "your public balance"),
                 ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, private"),
-            ]), onSuccess: { await model.syncPrivacy() }) { w in
+            ])) { w in
                 try await w.unshield(receiver: to, denom: Constants.gasDenom, amount: amount, feeFromAmount: fromAmount)
             }
         }

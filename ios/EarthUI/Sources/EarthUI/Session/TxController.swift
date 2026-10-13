@@ -308,19 +308,27 @@ public final class TxController {
         submitting = true
         defer { submitting = false }
 
-        // Whether the tx may have landed: then the form is cleared and the
-        // wallet refreshed, after the outcome is on screen.
+        // Whether the tx may have landed: then the form is cleared, after the
+        // outcome is on screen.
         var settled = true
+        // Whether it may have reached a block (landed, failed there and paid
+        // its fee, or still unanswered): then the wallet waits for that block
+        // and refreshes. Which block, when known, and the hash otherwise.
+        var sent = true
+        var landed: (hash: String?, height: UInt64?) = (nil, nil)
         do {
             let hash: String
             if let runPrivate {
                 guard let w = model.privacy else { throw WalletStore.Error.notFound }
                 // The fee the sheet showed bounds what the private run may pay.
-                hash = try await PrivacyWallet.$shownFee.withValue(UInt64(details.feeUerth)) { try await runPrivate(w).hash }
+                let r = try await PrivacyWallet.$shownFee.withValue(UInt64(details.feeUerth)) { try await runPrivate(w) }
+                hash = r.hash
+                landed.height = r.height
                 model.publishPrivacy()
             } else {
                 hash = try await broadcast(details: details, build: build!, model: model)
             }
+            landed.hash = hash
             outcome = .succeeded(action: details.action, hash: hash)
         } catch let e as PrivateTxEngine.FeeAboveQuote {
             // Nothing was proven or sent: show the sheet again at the chain's
@@ -337,6 +345,7 @@ public final class TxController {
             // refreshes, and a filled-in send left on screen invites sending
             // it again while the first may yet land.
             if runPrivate != nil { model.publishPrivacy() }
+            landed.hash = hash
             outcome = .unconfirmed(action: details.action, hash: hash)
         } catch let error where details.registration != nil && TxGate.duplicateRegistration(error) {
             // Refused at CheckTx as already registered. If this wallet's
@@ -346,21 +355,25 @@ public final class TxController {
                 outcome = .alreadyDone(action: details.action, note: "This wallet is already registered. The chain refused a second copy of the registration, so nothing more was sent or paid.")
             } else {
                 settled = false
+                sent = false
                 outcome = .failed(action: details.action, reason: model.describe(error))
             }
         } catch {
             settled = false
+            // Failed in its block: its fee was paid all the same.
+            if case EarthClient.Error.executionFailed = error {} else { sent = false }
+            if runPrivate != nil { model.publishPrivacy() }
             outcome = .failed(action: details.action, reason: model.describe(error))
         }
-        // The outcome shows now. The refresh after it is a full sync and the
-        // public reads, which on a busy node take long enough to read as a
-        // send that never finished when they ran under "Sending".
+        // The outcome shows now. The refresh after it waits for the tx's
+        // block to reach the wallet, then does a full sync and the public
+        // reads: long enough on a busy node to read as a send that never
+        // finished if it ran under "Sending". Every tx refreshes here, so a
+        // caller's `onSuccess` is for its own screen (clearing a form) only.
         gate.finish(details.id)
         submitting = false
-        if settled {
-            await onSuccess?()
-            await model.refresh()
-        }
+        if settled { await onSuccess?() }
+        if sent { await model.afterTx(hash: landed.hash, height: landed.height) }
     }
 
     private func broadcast(

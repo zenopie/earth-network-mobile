@@ -60,9 +60,13 @@ public extension EarthClient {
     /// where v1beta1 buries them in a content Any that has to be unpacked per
     /// message type.
     func proposals(limit: Int = 20) async -> [Gov.Proposal] {
-        guard let json = try? await rest.get(
-            "/cosmos/gov/v1/proposals?pagination.limit=\(limit)&pagination.reverse=true"
-        ) else { return [] }
+        (try? await fetchProposals(limit: limit)) ?? []
+    }
+
+    /// Throws when the node could not be asked, where `proposals` answers
+    /// none: a screen must not show a failed read as an empty one.
+    func fetchProposals(limit: Int = 20) async throws -> [Gov.Proposal] {
+        let json = try await rest.get("/cosmos/gov/v1/proposals?pagination.limit=\(limit)&pagination.reverse=true")
         var out: [Gov.Proposal] = []
         for p in json.proposals.array {
             let id = p.id.uint64(default: 0)

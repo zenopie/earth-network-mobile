@@ -80,8 +80,7 @@ struct WalletScreen: View {
     private func open(_ r: Reminders.Reminder) {
         switch r {
         case .anmlReady:
-            tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")]),
-                              onSuccess: { await model.syncPrivacy() }) { w in try await w.claimAnml() }
+            tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")])) { w in try await w.claimAnml() }
         case .caretakerExpiring: model.governLink = .caretaker; model.tab = .govern
         case .groundworksExpiring: model.governLink = .groundworks; model.tab = .govern
         case .handleExpiring, .handlePaysElsewhere: handleOpen = true
@@ -107,6 +106,9 @@ struct BalanceWidget: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
 
+    /// Both halves are summed, so both have to be in.
+    private var balancesLoaded: Bool { model.has(.balances) && model.has(.privacy) }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 6) {
@@ -116,7 +118,7 @@ struct BalanceWidget: View {
                 if model.balancesVisible {
                     // Transparent and shielded ERTH together: both are the
                     // owner's. Private actions pay their fees from the shielded part.
-                    SplitAmount(amount: Figures.plain(model.balance(.erth) + BigInt(model.shieldedErth)))
+                    SplitAmount(amount: Figures.when(balancesLoaded, Figures.plain(model.balance(.erth) + BigInt(model.shieldedErth))))
                 } else {
                     Text("-----")
                         .font(EarthType.header2).fontWeight(.semibold)
@@ -132,7 +134,7 @@ struct BalanceWidget: View {
                     .frame(width: 16, height: 16)
                 Text(model.balancesVisible
                      // ANML exists only shielded.
-                     ? "\(Figures.plain(model.balance(.anml) + BigInt(model.shielded["uanml"] ?? 0))) ANML"
+                     ? "\(Figures.when(balancesLoaded, Figures.plain(model.balance(.anml) + BigInt(model.shielded["uanml"] ?? 0)))) ANML"
                      : "---")
                     .font(EarthType.body)
                     .foregroundStyle(theme.colors.textTertiary)
@@ -164,7 +166,8 @@ struct SyncStatus: View {
     private static let slackBlocks: UInt64 = 3
 
     var body: some View {
-        let behind = model.chainHeight > model.syncedHeight + Self.slackBlocks
+        // Never synced is behind, whether or not the tip has been read.
+        let behind = !model.has(.privacy) || model.chainHeight > model.syncedHeight + Self.slackBlocks
         Button { detailed.toggle() } label: {
             HStack(spacing: 6) {
                 Circle()
@@ -181,7 +184,7 @@ struct SyncStatus: View {
     }
 
     private var numbers: String {
-        let synced = Figures.grouped(Int64(clamping: model.syncedHeight))
+        let synced = Figures.when(model.syncedHeight > 0, Figures.grouped(Int64(clamping: model.syncedHeight)))
         guard model.chainHeight > 0 else { return "Synced to block \(synced)" }
         return "Synced to \(synced) of \(Figures.grouped(Int64(clamping: model.chainHeight)))"
     }
@@ -251,16 +254,26 @@ struct HomeActions: View {
                 image: EarthAsset.anml,
                 // Greyed out when the day's claim is already taken, and again
                 // when there is no registration to claim against — both are
-                // "nothing to collect", and both should look it.
-                enabled: notRegistered || model.canClaimAnml,
+                // "nothing to collect", and both should look it. Before the
+                // first sync neither is known: no Verify for a wallet that
+                // may well be registered.
+                enabled: model.has(.privacy) && (notRegistered || model.canClaimAnml),
                 action: notRegistered ? onRegister : claim
             )
         }
-        .task {
+        .task(id: model.claimOpensAt) {
             // Ticks only while something is counting down.
+            now = Date()
+            var republished = false
             while !Task.isCancelled, !notRegistered, !model.canClaimAnml {
                 try? await Task.sleep(for: .seconds(1))
                 now = Date()
+                // The claim opens at a time, not on a read: recomputed when
+                // that time comes, so Claim enables without a pull.
+                if !republished, let opens = model.claimOpensAt, opens > 0, opens <= Int64(now.timeIntervalSince1970) {
+                    republished = true
+                    model.publishPrivacy()
+                }
             }
         }
     }
@@ -273,6 +286,7 @@ struct HomeActions: View {
     /// thing that would give it something instead of a disabled button
     /// explaining why it cannot be pressed.
     private var claimLabel: String {
+        if !model.has(.privacy) { return Figures.loading }
         if notRegistered { return "Verify" }
         if model.canClaimAnml { return "Claim" }
         let opens = model.claimOpensAt ?? Personhood.nextClaimOpensAt()
@@ -295,8 +309,7 @@ struct HomeActions: View {
     /// to the registration or to any other claim. Nothing claims on its own:
     /// a reminder says when the day's claim is open.
     private func claim() {
-        tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")]),
-                          onSuccess: { await model.syncPrivacy() }) { w in
+        tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")])) { w in
             try await w.claimAnml()
         }
     }
@@ -411,10 +424,17 @@ struct HomePanel: View {
     /// the rest.
     @ViewBuilder
     private var portfolio: some View {
-        ForEach(ShieldMove.coins(public: model.balances, shielded: model.shielded), id: \.denom) { coin in
-            CoinRow(coin: coin) { onCoin(coin.denom) }
+        if model.has(.balances) && model.has(.privacy) {
+            ForEach(ShieldMove.coins(public: model.balances, shielded: model.shielded), id: \.denom) { coin in
+                CoinRow(coin: coin) { onCoin(coin.denom) }
+            }
+        } else {
+            ForEach(0 ..< 2, id: \.self) { _ in ActivityPlaceholder() }
         }
-        let hasPosition = model.totalStaked > 0 || model.rewards > 0 || model.unbondingTotal > 0 ||
+        // Positions not yet read: a row held for them, rather than a list
+        // that looks complete without them.
+        let positionsLoading = !(model.has(.delegations) && model.has(.rewards) && model.has(.unbondings) && model.has(.privacy))
+        let hasPosition = positionsLoading || model.totalStaked > 0 || model.rewards > 0 || model.unbondingTotal > 0 ||
             model.privateStakeTotal > 0 || !model.pendingUnbonds.isEmpty
 
         if hasPosition {
@@ -458,6 +478,7 @@ struct HomePanel: View {
                 positionRow("Unbonding", "Returns when the period ends", "clock.arrow.circlepath",
                             Figures.balance(model.unbondingTotal) + " ERTH")
             }
+            if positionsLoading { ActivityPlaceholder() }
         }
     }
 

@@ -110,7 +110,7 @@ struct SwapScreen: View {
             label: "You pay",
             symbol: fromToken.symbol,
             icon: fromToken == .erth ? EarthAsset.erthLogo : EarthAsset.anml,
-            balance: model.balancesVisible ? Figures.plain(fromUnits) : "---",
+            balance: model.balancesVisible ? Figures.when(model.has(.privacy), Figures.plain(fromUnits)) : "---",
             value: $amount,
             spendable: spendable,
             onFraction: { numerator, denominator in
@@ -125,7 +125,7 @@ struct SwapScreen: View {
             label: "You receive",
             symbol: toToken.symbol,
             icon: toToken == .erth ? EarthAsset.erthLogo : EarthAsset.anml,
-            balance: model.balancesVisible ? Figures.plain(toUnits) : "---",
+            balance: model.balancesVisible ? Figures.when(model.has(.privacy), Figures.plain(toUnits)) : "---",
             readOnlyValue: quote.map { Amounts.fromBaseUnits($0.amountOut) } ?? ""
         )
     }
@@ -267,7 +267,7 @@ struct SwapScreen: View {
                 ("Pool fee", "\(Amounts.fromBaseUnits(quote.feeErth)) ERTH"),
                 ("Network fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
-        ), onSuccess: { amount = ""; await model.refresh() }) { w in
+        ), onSuccess: { amount = "" }) { w in
             // An amount past a note's range is refused, never trapped on.
             guard let amountIn = UInt64(input.description), amountIn <= UInt64(Int64.max),
                   let minOut = UInt64(floor.description), minOut <= UInt64(Int64.max) else {

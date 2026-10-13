@@ -19,10 +19,13 @@ public extension EarthClient {
     /// How many humans are registered — the denominator of the human emission
     /// stream, since every registration carries the same weight.
     func registrationCount() async -> Int64 {
-        guard let json = try? await rest.get(
-            "/earth/personhood/v1/registration_count"
-        ) else { return 0 }
-        return json.count.int64(default: 0)
+        (try? await fetchRegistrationCount()) ?? 0
+    }
+
+    /// Throws when the node could not be asked, where `registrationCount`
+    /// answers 0: a screen must not show a failed read as nobody registered.
+    func fetchRegistrationCount() async throws -> Int64 {
+        try await rest.get("/earth/personhood/v1/registration_count").count.int64(default: 0)
     }
 
     // No messages: registration and the ANML claim are private

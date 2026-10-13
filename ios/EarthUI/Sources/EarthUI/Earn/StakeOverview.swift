@@ -72,6 +72,8 @@ struct StakeOverview: View {
                 buttons(empty: empty)
                 Spacer().frame(height: theme.space.x24)
                 VStack(spacing: 0) {
+                    // Notes not read yet: no rows is not "no stake".
+                    if !model.has(.privacy) { ActivityPlaceholder().padding(.horizontal, -24) }
                     ForEach(cards, id: \.validator) { c in
                         StakeRow(validator: c.validator, value: amount(c.value), status: c.status) {
                             open(.validator(c.validator))
@@ -90,7 +92,7 @@ struct StakeOverview: View {
         let total = cards.reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.value) }
         return VStack(spacing: 0) {
             if model.balancesVisible {
-                SplitAmount(amount: Figures.plain(BigInt(total)))
+                SplitAmount(amount: Figures.when(model.stakeValuesLoaded, Figures.plain(BigInt(total))))
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
             } else {
@@ -101,7 +103,7 @@ struct StakeOverview: View {
             Text("ERTH")
                 .font(EarthType.body)
                 .foregroundStyle(theme.colors.textTertiary)
-            if let line = heroLine(cards, total: total) {
+            if model.stakeValuesLoaded, model.has(.bonded), let line = heroLine(cards, total: total) {
                 Text(line.text)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(line.color)
@@ -171,7 +173,7 @@ struct StakeOverview: View {
     }
 
     private func amount(_ uerth: UInt64) -> String {
-        model.balancesVisible ? Figures.display(BigInt(uerth)) : "••••"
+        model.balancesVisible ? Figures.when(model.stakeValuesLoaded, Figures.display(BigInt(uerth))) : "••••"
     }
 
     /// An undelegation on its way back: the chain pays it, nothing to do.
@@ -183,7 +185,7 @@ struct StakeOverview: View {
         } else if let s = round.unbondingSeconds {
             when = "~\(max(1, s / 86_400)) days"
         } else {
-            when = "Soon"
+            when = Figures.loading
         }
         return HStack(spacing: theme.space.x12) {
             Image(systemName: "clock")
@@ -318,7 +320,7 @@ struct ValidatorStakeSheet: View {
 
             Spacer().frame(height: theme.space.x24)
             if model.balancesVisible {
-                SplitAmount(amount: Figures.plain(BigInt(card?.value ?? 0)))
+                SplitAmount(amount: Figures.when(model.stakeValuesLoaded, Figures.plain(BigInt(card?.value ?? 0))))
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
             } else {
@@ -365,6 +367,7 @@ struct ValidatorStakeSheet: View {
     /// This validator's rate after its commission, while stake here earns.
     private func apr(_ c: StakeCard) -> String? {
         guard c.status == .earning else { return nil }
+        guard model.has(.bonded) else { return Figures.loading }
         return StakingApr.forValidator(bondedUerth: Int64(model.totalBonded.description) ?? 0,
                                        commission: model.commission(of: c.validator) ?? 0)
             .map { "\(Figures.rate($0)) APR" }

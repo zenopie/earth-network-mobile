@@ -25,9 +25,9 @@ struct ExploreScreen: View {
                     hero
 
                     Spacer().frame(height: theme.space.x24)
-                    EarthDetailRow(label: "Block height", value: chain.height.map(Figures.grouped) ?? "—")
+                    EarthDetailRow(label: "Block height", value: Figures.when(chain.height, Figures.grouped))
                     EarthDivider()
-                    EarthDetailRow(label: "Chain", value: chain.chainID ?? "—")
+                    EarthDetailRow(label: "Chain", value: chain.chainID ?? Figures.loading)
 
                     Spacer().frame(height: theme.space.x24)
                     EarthLabel("Latest blocks")
@@ -53,7 +53,8 @@ struct ExploreScreen: View {
                         if index != chain.blocks.count - 1 { EarthDivider() }
                     }
                     if chain.blocks.isEmpty {
-                        Text("No blocks yet")
+                        // A chain always has blocks: none is a read that has not landed.
+                        Text(Figures.loading)
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
                     }
@@ -91,7 +92,7 @@ struct ExploreScreen: View {
     /// Verified humans, big.
     private var hero: some View {
         VStack(spacing: 0) {
-            Text(chain.registrations.map(Figures.grouped) ?? "—")
+            Text(Figures.when(chain.registrations, Figures.grouped))
                 .font(EarthType.header2).fontWeight(.semibold)
                 .foregroundStyle(theme.colors.textPrimary)
                 .lineLimit(1)
@@ -121,12 +122,14 @@ final class ChainModel {
     func load(model: AppModel) async {
         async let status = model.client.status()
         async let blocks = model.client.recentBlocks(8)
-        async let registrations = model.client.registrationCount()
+        async let registrations = try? model.client.fetchRegistrationCount()
 
+        // A read that failed keeps what is on screen ("…" before any).
         let read = await status
-        chainID = read?.chainID
-        self.blocks = await blocks
-        height = read?.height ?? self.blocks.first?.height
-        self.registrations = await registrations
+        if let id = read?.chainID { chainID = id }
+        let b = await blocks
+        if !b.isEmpty { self.blocks = b }
+        if let h = read?.height ?? b.first?.height { height = h }
+        if let r = await registrations { self.registrations = r }
     }
 }

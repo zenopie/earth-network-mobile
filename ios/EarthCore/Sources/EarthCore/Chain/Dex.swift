@@ -85,7 +85,13 @@ public enum Dex {
 public extension EarthClient {
 
     func pools() async -> [Dex.Pool] {
-        guard let json = try? await rest.get("/earth/dex/v1/pool") else { return [] }
+        (try? await fetchPools()) ?? []
+    }
+
+    /// Throws when the node could not be asked, where `pools` answers
+    /// none: a screen must not show a failed read as an empty one.
+    func fetchPools() async throws -> [Dex.Pool] {
+        let json = try await rest.get("/earth/dex/v1/pool")
         return json.pool.array.compactMap { p in
             Dex.Pool(
                 id: p.pool_id.uint64(default: 0),
@@ -115,14 +121,26 @@ public extension EarthClient {
         return json.params.lp_unbonding_seconds.int64(default: 0)
     }
 
+    /// The swap fee (a percent string) and the LP escrow in seconds, from
+    /// one params read; throws when the node could not be asked.
+    func fetchDexParams() async throws -> (swapFeePercent: String, lpUnbondingSeconds: Int64) {
+        let params = try await rest.get("/earth/dex/v1/params").params
+        return (params.swap_fee.string(default: "0"), params.lp_unbonding_seconds.int64(default: 0))
+    }
+
     /// Withdrawals this address has waiting.
     ///
     /// Between submitting one and it landing there is nothing in the balance to
     /// show for it — the shares have left and the assets have not arrived — so
     /// without this the week looks like the funds went nowhere.
     func unbondings(_ address: String) async -> [Dex.Unbonding] {
-        guard let json = try? await rest.get("/earth/dex/v1/unbondings/\(address)")
-        else { return [] }
+        (try? await fetchUnbondings(address)) ?? []
+    }
+
+    /// Throws when the node could not be asked, where `unbondings` answers
+    /// none: a screen must not show a failed read as an empty one.
+    func fetchUnbondings(_ address: String) async throws -> [Dex.Unbonding] {
+        let json = try await rest.get("/earth/dex/v1/unbondings/\(address)")
         return json.unbondings.array.map { u in
             Dex.Unbonding(
                 poolID: u.pool_id.uint64(default: 0),

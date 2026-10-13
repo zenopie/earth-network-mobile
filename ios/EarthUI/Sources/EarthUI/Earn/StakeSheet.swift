@@ -78,7 +78,7 @@ struct StakeSheet: View {
     private var options: [ValidatorPicker.Option] {
         if unstaking {
             return model.stakeHoldings.filter { $0.free > 0 }.map { h in
-                .init(validator: h.validator, detail: "\(Figures.display(BigInt(model.derthValue(h.free, validator: h.validator)))) ERTH", enabled: true)
+                .init(validator: h.validator, detail: "\(Figures.when(model.stakeValuesLoaded, Figures.display(BigInt(model.derthValue(h.free, validator: h.validator))))) ERTH", enabled: true)
             }
         }
         let all = list?.validators ?? []
@@ -144,7 +144,7 @@ struct StakeSheet: View {
                             fee,
                         ],
                         notes: [StakeNotes.haircut(cut, from: nil)].compactMap { $0 }
-                    ), onSuccess: { await model.refresh() }) { w in
+                    )) { w in
                         // A stake proof spends two notes (at most one holding
                         // moved-in stake): spread over more, it is refused
                         // with "merge them first".
@@ -162,7 +162,7 @@ struct StakeSheet: View {
                             fee,
                         ],
                         notes: [StakeNotes.haircut(q.haircut, from: nil)].compactMap { $0 }
-                    ), onSuccess: { await model.refresh() }) { w in
+                    )) { w in
                         try await w.delegate(q)
                     }
                 }
@@ -189,6 +189,7 @@ enum StakeNotes {
 /// under it, and an error only when there is one.
 struct StakeAmountField: View {
     @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
     @Binding var amount: String
     let unit: String
     let available: BigInt
@@ -212,7 +213,7 @@ struct StakeAmountField: View {
                 .foregroundStyle(theme.colors.textTertiary)
             Spacer().frame(height: theme.space.x16)
             HStack(spacing: theme.space.x8) {
-                Text("\(Figures.display(available)) available")
+                Text("\(Figures.when(model.has(.privacy), Figures.display(available))) available")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
                 if available > 0 {

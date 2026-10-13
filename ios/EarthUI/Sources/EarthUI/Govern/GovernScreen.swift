@@ -44,7 +44,8 @@ struct GovernScreen: View {
                         eligible: model.isRegistered,
                         blocked: "Register to vote"
                     ),
-                    loading: !streams.loaded
+                    // Eligibility is the registration, which the sync reads.
+                    loading: !streams.caretaker.loaded || !model.has(.privacy)
                 ) { route = .stream(caretaker: true) }
 
                 Spacer().frame(height: theme.space.x8)
@@ -55,7 +56,7 @@ struct GovernScreen: View {
                         eligible: model.privateStakeTotal > 0,
                         blocked: "Stake ERTH to vote"
                     ),
-                    loading: !streams.loaded
+                    loading: !streams.groundworks.loaded || !model.has(.privacy)
                 ) { route = .stream(caretaker: false) }
 
 
@@ -66,17 +67,18 @@ struct GovernScreen: View {
                     title: "Proposals",
                     detail: "Chain upgrades and changes",
                     status: proposalStatus,
-                    loading: !streams.loaded
+                    loading: !streams.proposalsLoaded
                 ) { route = .proposals }
 
                 Spacer().frame(height: theme.space.x32)
             }
             .padding(.horizontal, theme.space.gutter)
         }
-        .refreshable { await streams.load(model: model) }
+        .refreshable { await model.refresh() }
         .background(theme.colors.bgPrimary)
         .scrollContentBackground(.hidden)
-        .task { await streams.load(model: model) }
+        // Again whenever the app's data does: a tx, a pull, a wallet switch.
+        .task(id: model.dataVersion) { await streams.load(model: model) }
         #if targetEnvironment(simulator)
         // `-demoStream groundworks` opens a stream, as `-demoTab` opens a tab.
         .task {
@@ -100,20 +102,22 @@ struct GovernScreen: View {
                     detail: caretaker ? "One person, one vote" : "Directed by stake",
                     stream: caretaker ? .caretaker : .groundworks,
                     state: caretaker ? streams.caretaker : streams.groundworks,
-                    eligibility: caretaker
+                    // Before the first sync neither is known: "…" holds the
+                    // place of the vote rather than a "Register" that may be wrong.
+                    eligibility: !model.has(.privacy) ? Figures.loading : caretaker
                         ? (model.isRegistered ? nil : "Register to vote")
                         : (model.privateStakeTotal > 0 ? nil : "Stake ERTH to vote"),
                     onChanged: { Task { await streams.load(model: model) } }
                 )
                 .earthThemed()
             case .proposals:
-                ProposalsScreen(proposals: streams.proposals).earthThemed()
+                ProposalsScreen(proposals: streams.proposals, loaded: streams.proposalsLoaded).earthThemed()
             }
         }
     }
 
     private var proposalStatus: String? {
-        guard streams.loaded else { return nil }
+        guard streams.proposalsLoaded else { return nil }
         let live = streams.proposals.filter { $0.status == "PROPOSAL_STATUS_VOTING_PERIOD" }.count
         if live > 0 { return Figures.count(live, "open for voting", "open for voting") }
         return streams.proposals.isEmpty ? "None yet" : "\(streams.proposals.count) closed"
@@ -126,6 +130,10 @@ final class StreamsModel {
     struct State {
         var stream: Allocation.Stream = .empty
         var mine: [Allocation.Weight] = []
+        /// Whether the stream has been read, and this wallet's split (the
+        /// store's, after its first sync): neither is an empty answer before.
+        var loaded = false
+        var mineLoaded = false
 
         /// Where the stream actually goes, across every voter.
         ///
@@ -190,6 +198,7 @@ final class StreamsModel {
         /// why.
         func status(eligible: Bool, blocked: String) -> String? {
             guard eligible else { return blocked }
+            guard mineLoaded else { return Figures.loading }
             guard !slices.isEmpty else { return "Not allocated" }
             return slices.map { "\($0.name) \($0.percent)%" }.joined(separator: " · ")
         }
@@ -198,28 +207,30 @@ final class StreamsModel {
     var caretaker = State()
     var groundworks = State()
     var proposals: [Gov.Proposal] = []
+    private(set) var proposalsLoaded = false
+    /// A load has finished, whatever it read.
     private(set) var loaded = false
 
     func load(model: AppModel) async {
-        async let caretakerStream = model.client.stream(.caretaker)
-        async let groundworksStream = model.client.stream(.groundworks)
-        async let proposals = model.client.proposals(limit: 20)
+        // Nil when the node could not be asked: what is on screen stays (or
+        // "…" stays), never an empty answer in its place.
+        async let caretakerStream = try? model.client.fetchStream(.caretaker)
+        async let groundworksStream = try? model.client.fetchStream(.groundworks)
+        async let proposals = try? model.client.fetchProposals(limit: 20)
 
         // Neither vote is filed under an address any more: the caretaker
         // split is cast anonymously (kept locally by the wallet), and
         // Groundworks is the split this wallet's stake votes with.
-        let caretakerSplit = model.privacy?.snapshot.caretakerSplit ?? [:]
+        let caretakerSplit = model.caretakerSplit
         let mineCaretaker = caretakerSplit.sorted { $0.key < $1.key }.map { Allocation.Weight(optionID: $0.key, percent: $0.value) }
         let mineGroundworks = model.groundworksSplit
             .sorted { $0.key < $1.key }.map { Allocation.Weight(optionID: $0.key, percent: $0.value) }
-        // A failed read comes back empty, and neither stream is ever really
-        // empty (each has built-in options) nor does a proposal list shrink to
-        // nothing: so an empty answer keeps what is on screen rather than
-        // blanking it. The next load replaces it.
         let c = await caretakerStream, g = await groundworksStream, p = await proposals
-        caretaker = State(stream: c.options.isEmpty && loaded ? caretaker.stream : c, mine: mineCaretaker)
-        groundworks = State(stream: g.options.isEmpty && loaded ? groundworks.stream : g, mine: mineGroundworks)
-        if !(p.isEmpty && loaded) { self.proposals = p }
+        caretaker = State(stream: c ?? caretaker.stream, mine: mineCaretaker,
+                          loaded: c != nil || caretaker.loaded, mineLoaded: model.has(.privacy))
+        groundworks = State(stream: g ?? groundworks.stream, mine: mineGroundworks,
+                            loaded: g != nil || groundworks.loaded, mineLoaded: model.has(.groundworks))
+        if let p { self.proposals = p; proposalsLoaded = true }
         loaded = true
     }
 }

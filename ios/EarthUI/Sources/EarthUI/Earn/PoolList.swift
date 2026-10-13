@@ -15,7 +15,10 @@ struct PoolList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if model.pools.isEmpty {
+            if !model.has(.pools) {
+                // Not read yet: "no pools" would be an answer.
+                ForEach(0 ..< 2, id: \.self) { _ in ActivityPlaceholder().padding(.horizontal, -24) }
+            } else if model.pools.isEmpty {
                 EarthEmpty(
                     systemName: "drop",
                     title: "No pools yet",
@@ -82,8 +85,8 @@ struct PoolRow: View {
                 name: "ERTH / \(token.symbol)",
                 // Split apart because the two halves behave differently: fees
                 // scale with the pool, emissions do not.
-                subtitle: apr.map { "\(Figures.rate($0.fee)) fees · \(Figures.rate($0.emission)) emissions" },
-                value: apr.map { Figures.rate($0.total) },
+                subtitle: aprLoaded ? apr.map { "\(Figures.rate($0.fee)) fees · \(Figures.rate($0.emission)) emissions" } : nil,
+                value: aprLoaded ? apr.map { Figures.rate($0.total) } : Figures.loading,
                 badgeBackground: theme.colors.accentTint,
                 badgeForeground: theme.colors.accentInk,
                 action: { acting = true }
@@ -107,6 +110,9 @@ struct PoolRow: View {
 
     private var shares: BigInt { model.lpShares(poolID: pool.id) }
 
+    /// The rate needs the swap fee and the LP option's share of emissions.
+    private var aprLoaded: Bool { model.has(.dexParams) && model.lpOptionShare != nil }
+
     private var token: Token {
         Token.named(pool.tokenDenom) ?? Token.unknown(denom: pool.tokenDenom)
     }
@@ -115,7 +121,7 @@ struct PoolRow: View {
         AprMath.apr(
             for: pool,
             allPools: model.pools,
-            lpOptionShare: model.lpOptionShare,
+            lpOptionShare: model.lpOptionShare ?? 0,
             swapFeePercent: model.swapFeePercent
         )
     }

@@ -397,8 +397,7 @@ struct RegistrationSheet: View {
                 // decryption), paid against this message; the same proof is
                 // broadcast once it lands.
                 registration: (msg: message, pcGas: prep.gas.pc.bytes, ciphertextGas: prep.gas.ciphertext)
-            ),
-            onSuccess: { await model.refresh() }
+            )
         ) { w in
             try await w.register(prep, proof: proof.proof, publicSignals: proof.publicSignals,
                                  signatureAlgorithm: proof.signatureAlgorithm, dscDer: dsc)

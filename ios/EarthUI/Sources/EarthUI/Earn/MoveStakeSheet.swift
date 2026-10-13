@@ -50,7 +50,7 @@ struct MoveStakeSheet: View {
             .navigationDestination(item: $picking) { side in
                 if side == .from {
                     ValidatorPicker(title: "Move from", options: sources.map { h in
-                        .init(validator: h.validator, detail: "\(Figures.display(BigInt(model.derthValue(h.free, validator: h.validator)))) ERTH", enabled: true)
+                        .init(validator: h.validator, detail: "\(Figures.when(model.stakeValuesLoaded, Figures.display(BigInt(model.derthValue(h.free, validator: h.validator))))) ERTH", enabled: true)
                     }, selected: source) { op in
                         if source != op { amount = "" }
                         source = op
@@ -105,7 +105,7 @@ struct MoveStakeSheet: View {
                         "Can't move, unstake or lock it again for about \(q.windowSeconds / 86_400) days.",
                         StakeNotes.haircut(q.haircut, from: moniker(q.src)),
                     ].compactMap { $0 }
-                ), onSuccess: { await model.refresh() }) { w in
+                )) { w in
                     try await w.redelegate(q)
                 }
             } catch {

@@ -131,7 +131,7 @@ struct PoolActionSheet: View {
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.accentInk)
             }
-            Text("Your shares \(Figures.balance(shareBalance))")
+            Text("Your shares \(Figures.when(holdingsLoaded, Figures.balance(shareBalance)))")
                 .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.textTertiary)
 
@@ -192,7 +192,11 @@ struct PoolActionSheet: View {
     private var overERTH: Bool { erthUnits > erthAvailable }
     private var overToken: Bool { tokenUnits > tokenAvailable }
 
+    /// What this pool's legs and shares are read from: notes, or the account.
+    private var holdingsLoaded: Bool { model.has(shieldedPool ? .privacy : .balances) }
+
     private var waitDescription: String {
+        guard model.has(.dexParams) else { return Figures.loading }
         let days = Double(model.lpUnbondingSeconds) / 86_400
         if model.lpUnbondingSeconds <= 0 { return "short" }
         if days < 1 { return "\(max(1, Int(Double(model.lpUnbondingSeconds) / 3_600)))-hour" }
@@ -218,7 +222,7 @@ struct PoolActionSheet: View {
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.accentInk)
             }
-            Text("Available \(Figures.balance(available, token))")
+            Text("Available \(Figures.when(holdingsLoaded, Figures.balance(available, token)))")
                 .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.textTertiary)
         }
@@ -272,7 +276,7 @@ struct PoolActionSheet: View {
                 ("LP shares to", "your private balance"),
                 ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
-        ), onSuccess: { await model.refresh() }) { w in
+        )) { w in
             let minShares = try await Self.minShares(client: client, poolID: poolID, erthIn: BigInt(erthIn), tokenIn: BigInt(tokenIn))
             return try await w.addLiquidityShielded(poolID: poolID, token: tokenDenom, tokenAmount: tokenIn, erthAmount: erthIn,
                                                     minShares: minShares)
@@ -319,7 +323,7 @@ struct PoolActionSheet: View {
                 ("Paid to", "your private balance"),
                 ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
-        ), onSuccess: { await model.refresh() }) { [rest = model.client.rest, erthReserve = pool.erthReserve, tokenReserve = pool.tokenReserve] w in
+        )) { [rest = model.client.rest, erthReserve = pool.erthReserve, tokenReserve = pool.tokenReserve] w in
             // Both legs are notes: refused here, before proving, when too large.
             let supply = BigInt(try await PrivacyQueries(rest: rest).lpShareSupply(poolID: poolID)) ?? 0
             try PrivacyWallet.checkWithdrawalNoteLegs(shares: BigInt(shares), totalShares: supply, reserveErth: BigInt(erthReserve) ?? 0,

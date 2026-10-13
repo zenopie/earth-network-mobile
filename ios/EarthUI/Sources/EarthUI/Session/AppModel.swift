@@ -40,6 +40,23 @@ public final class AppModel {
     /// The name the current wallet was created under. What the top bar says.
     public private(set) var walletName: String = "Wallet 1"
 
+    /// Which reads have landed for what is on screen. A figure whose read has
+    /// not shows "…" (`Loading`), never the zero it starts at: a zero that is
+    /// really "not loaded yet" is the one wrong answer a wallet must never
+    /// give. A read that fails leaves the last figure, or "…" if there is none.
+    public enum Part: Hashable, Sendable {
+        // This wallet's: dropped on a switch.
+        case balances, delegations, unbondings, rewards, lpQueue
+        // Its private side: dropped with it.
+        case privacy, groundworks, personal
+        // The chain's: kept across a switch.
+        case pools, dexParams, bonded, validators
+    }
+    public private(set) var loaded: Set<Part> = []
+    public func has(_ part: Part) -> Bool { loaded.contains(part) }
+    private static let walletParts: Set<Part> = [.balances, .delegations, .unbondings, .rewards, .lpQueue]
+    private static let privacyParts: Set<Part> = [.privacy, .groundworks, .personal]
+
     /// Balances by denom, in base units.
     public private(set) var balances: [String: BigInt] = [:]
     /// This wallet's private side: notes, registration, private actions.
@@ -102,6 +119,10 @@ public final class AppModel {
     public private(set) var addressedHandles: [HandleEntry] = []
     /// The split is held but was restored without its options.
     public private(set) var caretakerSplitUnknown = false
+    /// This wallet's caretaker split, cast anonymously and kept by the wallet (option id → percent).
+    public private(set) var caretakerSplit: [UInt64: UInt64] = [:]
+    /// Registered here before and not live now: Identity offers a renewal, not a first registration.
+    public private(set) var registeredBefore = false
     /// Moves away from this identity not yet confirmed or not yet recorded in the new wallet, and moves to it
     /// the chain has not confirmed.
     public private(set) var outgoingMoves: [PendingMove] = []
@@ -565,6 +586,7 @@ public final class AppModel {
     }
 
     public func forget() {
+        endPass()
         closePrivacy()
         // The wallets' private data goes with them; a failure is shown, not dropped.
         do { try PrivacySession.forgetAll() } catch { privacySyncError = describe(error) }
@@ -579,6 +601,7 @@ public final class AppModel {
         biometricsInvalidated = false
         address = ""
         balances = [:]
+        loaded = []
         activity = nil
         publicActivity = nil
         phase = .setup
@@ -629,13 +652,16 @@ public final class AppModel {
         UserDefaults.standard.set(index, forKey: "selectedWallet")
         UserDefaults.standard.set(walletName, forKey: "walletName")
 
+        endPass()
         balances = [:]
         activity = nil
         publicActivity = nil
         closePrivacy()
+        loaded.subtract(Self.walletParts)
         openPrivacy()
         delegations = []
         unbondings = []
+        lpUnbondings = []
         rewards = 0
         await refresh()
     }
@@ -651,7 +677,7 @@ public final class AppModel {
             return
         }
         let wasCurrent = victim == address
-        if wasCurrent { closePrivacy() }
+        if wasCurrent { endPass(); closePrivacy() }
         let store = self.store, secret = confirmation.secret
         let rest = try await Task.detached { try store.remove(address: victim, pin: secret) }.value
         do { try PrivacySession.forget(mnemonic: entry.mnemonic) } catch { privacySyncError = describe(error) }
@@ -691,7 +717,16 @@ public final class AppModel {
         balancesVisible.toggle()
     }
 
+    /// Drops whatever a refresh in flight was going to write: it was for a
+    /// wallet, or a session, no longer on screen.
+    private func endPass() {
+        generation &+= 1
+        refreshTask?.cancel()
+        refreshTask = nil
+    }
+
     public func lock() {
+        endPass()
         closePrivacy()
         sessionPin = nil
         PrivacySession.setDataKey(nil)
@@ -717,7 +752,12 @@ public final class AppModel {
             defer { backgroundedAt = nil }
             endBackgroundLock()
             guard phase == .ready, let away = backgroundedAt else { return }
-            if ContinuousClock.now - away > Self.backgroundGrace { lock() }
+            if ContinuousClock.now - away > Self.backgroundGrace {
+                lock()
+            } else {
+                // Funds can arrive, and a tx land, while the app is away.
+                Task { await refresh() }
+            }
         default:
             break
         }
@@ -779,10 +819,69 @@ public final class AppModel {
     /// Concurrently, because the LCD serves each of these from a different
     /// module and serially this is the difference between a tab that appears
     /// and a tab that populates.
+    ///
+    /// Latest wins: a call while one is in flight cancels it and starts again,
+    /// and every caller waits for the one that finishes. Results from a pass
+    /// started for another wallet (or before a lock) are dropped, never shown
+    /// under this one's address.
     public func refresh() async {
-        guard !address.isEmpty else { return }
+        refreshTask?.cancel()
+        refreshTask = Task { await load() }
         refreshing = true
-        defer { refreshing = false }
+        defer { if refreshTask == nil { refreshing = false } }
+        while let t = refreshTask {
+            await t.value
+            if refreshTask == t { refreshTask = nil; break }
+        }
+    }
+
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
+
+    /// Bumped whenever the selected wallet changes or the session ends: what
+    /// a pass started before then must not write.
+    @ObservationIgnored private var generation = 0
+
+    /// Bumped each time fresh chain data lands. Screens that load their own
+    /// reads (`.task(id: model.dataVersion)`) reload on it, so a tx, a pull or
+    /// a return to the app reaches them without each wiring its own refresh.
+    public private(set) var dataVersion = 0
+
+    /// After a tx this wallet sent: waits for its block (`height`, else
+    /// looked up by `hash`, which may still be landing), then for the private
+    /// side to have synced through it, then refreshes everything. Without the
+    /// wait a refresh lands between the block and the indexer serving it, and
+    /// shows the spent notes gone and their change not yet back.
+    public func afterTx(hash: String?, height: UInt64? = nil) async {
+        let gen = generation
+        var h = height
+        if h == nil, let hash, !hash.isEmpty { h = await txHeight(hash) }
+        if let h, gen == generation, let w = privacy {
+            await w.catchUp(height: h)
+        }
+        guard gen == generation else { return }
+        // A handle tx changes the directory the cache holds for ten minutes.
+        await invalidateHandles()
+        await refresh()
+    }
+
+    /// The block `hash` landed in, polled for up to three minutes: an
+    /// unconfirmed tx can still land after the confirm's own wait gave up.
+    private func txHeight(_ hash: String) async -> UInt64? {
+        for i in 0 ..< 60 {
+            if let j = try? await client.rest.get("/cosmos/tx/v1beta1/txs/\(hash)"),
+               let h = j.tx_response.height.string.flatMap(UInt64.init), h > 0 {
+                return h
+            }
+            if i < 59 { try? await Task.sleep(for: .seconds(3)) }
+        }
+        return nil
+    }
+
+    private func load() async {
+        guard !address.isEmpty else { return }
+        let gen = generation, address = self.address
+        // Whether what this pass read still belongs on screen.
+        let current = { [unowned self] in !Task.isCancelled && gen == self.generation && address == self.address }
 
         // One probe that is allowed to throw.
         //
@@ -792,40 +891,53 @@ public final class AppModel {
         // tell "empty" from "unreachable", so the banner would never appear at
         // the one moment it is needed. This asks the chain a question it always
         // has an answer to.
-        async let reachable: Void = probe()
+        async let reachable = probe()
 
-        async let balances = client.balances(address)
+        // Each read is nil when the node could not be asked, which keeps
+        // what is on screen rather than writing an empty answer over it.
+        async let balances = try? client.fetchBalances(address)
         async let privacySync: Void = syncPrivacy()
-        async let pools = client.pools()
-        async let fee = client.swapFeePercent()
-        async let lpUnbonding = client.lpUnbondingSeconds()
-        async let lpQueue = client.unbondings(address)
+        async let pools = try? client.fetchPools()
+        async let dexParams = try? client.fetchDexParams()
+        async let lpQueue = try? client.fetchUnbondings(address)
         async let validatorList = PrivacyQueries(rest: client.rest).validators()
-        async let delegations = client.delegations(address)
-        async let unbondings = client.unbondingDelegations(address)
-        async let rewards = client.totalRewards(address)
-        async let bonded = client.totalBonded()
+        async let delegations = try? client.fetchDelegations(address)
+        async let unbondings = try? client.fetchUnbondingDelegations(address)
+        async let rewards = try? client.fetchTotalRewards(address)
+        async let bonded = try? client.fetchTotalBonded()
         async let transactions = client.transactions(hashes: SentTxLog.standard.hashes(for: address))
         async let status = client.status()
         async let proposals = client.proposals(limit: 20)
 
-        self.balances = await balances.compactMapValues { BigInt($0) }
-        self.pools = await pools
-        self.swapFeePercent = Decimal(string: await fee) ?? self.swapFeePercent
-        self.lpUnbondingSeconds = await lpUnbonding
-        self.lpUnbondings = await lpQueue
-        applyValidatorList((try? await validatorList) ?? PrivacyQueries.cachedValidators)
-        self.delegations = await delegations
-        self.unbondings = await unbondings
-        self.rewards = BigInt(await rewards) ?? 0
-        self.totalBonded = BigInt(await bonded) ?? 0
-        let signer = address
-        self.publicActivity = await transactions.compactMap { ActivityEntry(tx: $0, self: signer) }
-        mergeActivity()
-        if let h = await status?.height, h > 0 { chainHeight = max(chainHeight, UInt64(h)) }
-        await reachable
+        // Everything read before anything is written: a pass cancelled or
+        // overtaken by a wallet switch writes nothing at all.
+        let read = (balances: await balances, pools: await pools, dexParams: await dexParams,
+                    lpQueue: await lpQueue, validators: try? await validatorList, delegations: await delegations,
+                    unbondings: await unbondings, rewards: await rewards, bonded: await bonded,
+                    transactions: await transactions, height: await status?.height, reachable: await reachable)
         await privacySync
-        await EarthNotifications.notifyNewProposals(await proposals)
+        let proposalList = await proposals
+        guard current() else { return }
+
+        if let b = read.balances { self.balances = b.compactMapValues { BigInt($0) }; loaded.insert(.balances) }
+        if let p = read.pools { self.pools = p; loaded.insert(.pools) }
+        if let d = read.dexParams {
+            self.swapFeePercent = Decimal(string: d.swapFeePercent) ?? self.swapFeePercent
+            self.lpUnbondingSeconds = d.lpUnbondingSeconds
+            loaded.insert(.dexParams)
+        }
+        if let q = read.lpQueue { self.lpUnbondings = q; loaded.insert(.lpQueue) }
+        applyValidatorList(read.validators ?? PrivacyQueries.cachedValidators)
+        if let d = read.delegations { self.delegations = d; loaded.insert(.delegations) }
+        if let u = read.unbondings { self.unbondings = u; loaded.insert(.unbondings) }
+        if let r = read.rewards { self.rewards = BigInt(r) ?? 0; loaded.insert(.rewards) }
+        if let b = read.bonded { self.totalBonded = BigInt(b) ?? 0; loaded.insert(.bonded) }
+        self.publicActivity = read.transactions.compactMap { ActivityEntry(tx: $0, self: address) }
+        mergeActivity()
+        if let h = read.height, h > 0 { chainHeight = max(chainHeight, UInt64(h)) }
+        lastError = read.reachable
+        dataVersion &+= 1
+        await EarthNotifications.notifyNewProposals(proposalList)
     }
 
     /// One list: the public rows and the private ones, newest first. Private
@@ -837,12 +949,13 @@ public final class AppModel {
         activity = ActivityEntry.merge(public: pub, private: priv)
     }
 
-    private func probe() async {
+    /// Nil when the chain answered, else what the banner says.
+    private func probe() async -> String? {
         do {
             _ = try await client.rest.get("/cosmos/base/tendermint/v1beta1/syncing")
-            lastError = nil
+            return nil
         } catch {
-            lastError = "Cannot reach \(client.rest.lcd.host ?? "the chain"). Showing the last known state."
+            return "Cannot reach \(client.rest.lcd.host ?? "the chain"). Showing the last known state."
         }
     }
 
@@ -926,6 +1039,10 @@ public final class AppModel {
         return privacy?.groundworksSplit ?? [:]
     }
 
+    /// Whether stake can be valued: its notes, and the rates that turn derth
+    /// into ERTH (at face value until read, which under-reports it).
+    public var stakeValuesLoaded: Bool { has(.privacy) && has(.validators) }
+
     /// Private stake in ERTH (uerth): every derth note at its validator's live rate.
     public var privateStakeValue: UInt64 {
         stakeLines().reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.value) }
@@ -954,6 +1071,7 @@ public final class AppModel {
 
     private func closePrivacy() {
         privacy = nil
+        loaded.subtract(Self.privacyParts)
         pendingUnbonds = []
         shielded = [:]
         shieldedAddress = ""
@@ -970,6 +1088,7 @@ public final class AppModel {
         handle = ""; handleEntry = nil; handleMovedOut = false; handleDirectoryError = nil
         caretakerExpiresAt = 0; caretakerMovedOut = false; predecessorAt = 0; reminders = []
         addressedHandles = []; caretakerSplitUnknown = false; outgoingMoves = []; incomingMoves = []
+        caretakerSplit = [:]; registeredBefore = false
         PrivacyProving.registrationMayFollow = true
     }
 
@@ -977,6 +1096,9 @@ public final class AppModel {
     func publishPrivacy() {
         guard let w = privacy else { return }
         let snap = w.snapshot
+        // A store that has synced before holds a real answer (it is saved);
+        // a fresh one's empty balances are not one until its first sync.
+        if snap.syncedHeight > 0 { loaded.insert(.privacy) }
         shielded = snap.balances
         pendingUnbonds = snap.pendingUnbonds
         identityStatus = snap.identityStatus
@@ -988,6 +1110,7 @@ public final class AppModel {
         unshieldableErth = snap.unshieldableErth
         handle = snap.handle; handleMovedOut = snap.handleMovedOut
         caretakerMovedOut = snap.caretakerMovedOut; caretakerSplitUnknown = snap.caretakerSplitUnknown
+        caretakerSplit = snap.caretakerSplit; registeredBefore = snap.registeredBefore
         outgoingMoves = snap.pendingMoves.filter { !$0.incoming }; incomingMoves = snap.pendingMoves.filter(\.incoming)
         predecessorAt = snap.identity?.predecessorAt ?? 0
         // A registered wallet still may register in this launch if it can
@@ -1003,37 +1126,55 @@ public final class AppModel {
         // A sync error, else roots the chain has not vouched for (no private
         // tx is built on them), else a registration whose leaf did not match:
         // each is shown, none is hidden.
-        do {
-            try await w.sync()
+        // Its own task, so a refresh overtaken mid-sync does not cancel the
+        // sync under it: the store is the wallet's, whoever asked.
+        let failure: Error?
+        do { _ = try await Task { try await w.sync() }.value; failure = nil } catch { failure = error }
+        // Switched or locked meanwhile: the wallet on screen is another.
+        guard w === privacy else { return }
+        if let failure {
+            privacySyncError = describe(failure)
+        } else {
+            loaded.insert(.privacy)
             let snap = w.snapshot
             privacySyncError = (snap.rootsVerified ? nil : snap.rootsError) ?? snap.saveError ?? snap.pendingRegistration?.failure
-        } catch {
-            privacySyncError = describe(error)
         }
         publishPrivacy()
         EarthNotifications.scheduleAnml(claimOpensAt: claimOpensAt)
         let queries = PrivacyQueries(rest: client.rest)
         await refreshGroundworks()
         await refreshStakeHoldings()
+        guard w === privacy else { return }
         // The list the sync just read.
         applyValidatorList(PrivacyQueries.cachedValidators)
-        if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds; registrationValiditySeconds = p.registrationValiditySeconds }
+        let params = try? await queries.personhoodParams()
         // The claim wait uses the lease the chain's bound uses (LeaseBounds: the longest ever in force), never Params.
-        if let b = try? await queries.leaseBounds(), (1 ... Handles.maxAheadSeconds).contains(b.handleLeaseSeconds) { handleLeaseSeconds = b.handleLeaseSeconds }
+        let bounds = try? await queries.leaseBounds()
+        guard w === privacy else { return }
+        if let p = params { leaseSeconds = p.caretakerVoteSeconds; registrationValiditySeconds = p.registrationValiditySeconds }
+        if let b = bounds, (1 ... Handles.maxAheadSeconds).contains(b.handleLeaseSeconds) { handleLeaseSeconds = b.handleLeaseSeconds }
         await refreshPersonal()
+        // Inside a full pass, that pass says when it is done.
+        if w === privacy, refreshTask == nil { dataVersion &+= 1 }
     }
 
     /// This wallet's Groundworks votes and their lease (the chain's whole list, never a query about ours).
     func refreshGroundworks() async {
         guard let w = privacy else { return }
-        if let mine = try? await w.groundworksVotes() { groundworksVotes = mine }
-        groundworksLease = await w.groundworksLease(groundworksVotes)
+        let mine = try? await w.groundworksVotes()
+        guard w === privacy else { return }
+        if let mine { groundworksVotes = mine; loaded.insert(.groundworks) }
+        let lease = await w.groundworksLease(groundworksVotes)
+        guard w === privacy else { return }
+        groundworksLease = lease
     }
 
     /// This wallet's stake per validator (the chain's debt view is read only when a label is held).
     func refreshStakeHoldings() async {
         guard let w = privacy else { return }
-        stakeHoldings = await w.stakeHoldings()
+        let holdings = await w.stakeHoldings()
+        guard w === privacy else { return }
+        stakeHoldings = holdings
         labelWindowSeconds = w.labelWindowSeconds
     }
 
@@ -1045,27 +1186,32 @@ public final class AppModel {
         // and squares its handle with it (a handle a restore lost, one the chain swept).
         var addressed: [HandleEntry] = []
         var dir: [String: HandleEntry]?
+        var dirError: String?
         do {
             let (d, at) = try await PrivacySession.handles.chainDirectoryRead()
             dir = d
             addressed = await w.reconcileHandle(d, readAt: at)
-            handleDirectoryError = nil
         } catch {
-            handleDirectoryError = describe(error)
+            dirError = describe(error)
         }
+        guard w === privacy else { return }
+        handleDirectoryError = dirError
         publishPrivacy()
         let snap = w.snapshot
-        handle = snap.handle
-        handleEntry = snap.handle.isEmpty ? nil : dir?[snap.handle]
-        addressedHandles = addressed
-        caretakerExpiresAt = await w.caretakerExpiresAt()
+        let entry = snap.handle.isEmpty ? nil : dir?[snap.handle]
+        let caretakerExp = await w.caretakerExpiresAt()
         let live = snap.identityStatus == .live
         // The chain's registered_at is the registration's block time (activated_at).
         let registrationEndsAt = live ? snap.identity.map { Handles.satAdd(Int64(clamping: $0.activatedAt), registrationValiditySeconds) } ?? 0 : 0
-        var handleExp = handleEntry?.expiresAt ?? 0
-        if handleEntry == nil { handleExp = await w.handleExpiresAt() }
+        var handleExp = entry?.expiresAt ?? 0
+        if entry == nil { handleExp = await w.handleExpiresAt() }
         // The move reminder's deadline, read here too, not only when Identity opens.
         await refreshMoveDeadline(w)
+        guard w === privacy else { return }
+        handle = snap.handle
+        handleEntry = entry
+        addressedHandles = addressed
+        caretakerExpiresAt = caretakerExp
         reminders = Reminders.due(Reminders.Inputs(
             now: Int64(Date().timeIntervalSince1970), identityLive: live, claimOpensAt: w.claimOpensAt(),
             claimedToday: w.claimedToday(), caretakerExpiresAt: caretakerExpiresAt, handle: snap.handle, handleEntry: handleEntry,
@@ -1073,6 +1219,9 @@ public final class AppModel {
             groundworks: groundworksLease,
             moveSuggestedAt: w.moveSuggestionDue(), moveDeadline: w.moveDeadline(),
             registrationEndsAt: registrationEndsAt, handleExpiresAt: handleExp))
+        // The handle and caretaker standing are the store's own, so they hold
+        // once the store does; the directory's failure is shown on its own.
+        if has(.privacy) { loaded.insert(.personal) }
     }
 
     /// What the identity this wallet's registration succeeded (another wallet
@@ -1270,6 +1419,7 @@ public final class AppModel {
     /// node which ones this wallet holds or is about to act on.
     func applyValidatorList(_ list: PrivacyReads.ValidatorList?) {
         guard let list else { return }
+        loaded.insert(.validators)
         let bonded = list.validators.filter(\.bonded)
         validators = bonded.map {
             Staking.Validator(operatorAddress: $0.validator, moniker: $0.moniker, tokens: String($0.tokens), commission: $0.commission)
@@ -1302,12 +1452,12 @@ public final class AppModel {
     }
 
     /// The LP-rewards option's share of the capital stream, which is half of
-    /// what a pool pays. Zero until the govern tab has loaded it.
-    public var lpOptionShare: Double = 0
+    /// what a pool pays. Nil until read.
+    public var lpOptionShare: Double?
 
     public func loadLPShare() async {
-        let stream = await client.stream(.groundworks)
-        guard let total = Double(stream.totalWeight), total > 0 else { return }
+        guard let stream = try? await client.fetchStream(.groundworks) else { return }
+        guard let total = Double(stream.totalWeight), total > 0 else { lpOptionShare = 0; return }
         // Matched on the handler rather than the description: a rename in
         // governance should not silently detach the APR from its source.
         let lp = stream.options

@@ -53,10 +53,10 @@ struct NotesScreen: View {
     private var hero: some View {
         let mergeable = model.mergeable.values.reduce(0, +)
         return VStack(spacing: 0) {
-            Text("\(mergeable)")
+            Text(Figures.when(model.has(.privacy), "\(mergeable)"))
                 .font(EarthType.header2).fontWeight(.semibold)
                 .foregroundStyle(theme.colors.textPrimary)
-            Text(mergeable == 0 ? "Nothing to merge" : "Notes to merge")
+            Text(!model.has(.privacy) ? "Notes to merge" : mergeable == 0 ? "Nothing to merge" : "Notes to merge")
                 .font(EarthType.body)
                 .foregroundStyle(theme.colors.textTertiary)
         }
@@ -74,8 +74,7 @@ struct NotesScreen: View {
                     .lineLimit(1)
                 if let count = model.mergeable[denom] {
                     Button {
-                        tx.requestPrivate(.private(action: "Merge notes", rows: [("Asset", label(denom))]),
-                                          onSuccess: { await model.syncPrivacy() }) { w in
+                        tx.requestPrivate(.private(action: "Merge notes", rows: [("Asset", label(denom))])) { w in
                             // Stake notes merge by a restake (owner-locked, two per proof).
                             denom.hasPrefix(PrivacyWallet.derthPrefix) ? try await w.mergeStake(denom: denom) : try await w.merge(denom: denom)
                         }

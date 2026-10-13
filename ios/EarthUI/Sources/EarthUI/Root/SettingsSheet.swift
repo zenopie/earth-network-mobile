@@ -28,10 +28,10 @@ struct SettingsSheet: View {
                             // still loading: falling back to the empty state
                             // asserts a fact about a wallet nothing has been
                             // read about yet.
-                            subtitle: model.isRegistered ? "Verified human" : "Not registered",
+                            subtitle: Figures.when(model.has(.privacy), model.isRegistered ? "Verified human" : "Not registered"),
                             route: .identity)
                         divider
-                        row("Handle", "at", subtitle: model.handle.isEmpty ? "Claim a name others can pay" : "@\(model.handle)", route: .handle)
+                        row("Handle", "at", subtitle: Figures.when(model.has(.privacy), model.handle.isEmpty ? "Claim a name others can pay" : "@\(model.handle)"), route: .handle)
                         divider
                         row("Merge notes", "square.stack.3d.down.right", subtitle: "Combine small private notes", route: .notes)
                         divider
@@ -155,7 +155,9 @@ struct IdentityScreen: View {
                         .frame(width: 72, height: 72)
                         .background(model.isRegistered ? theme.colors.accentTint : theme.colors.bgTertiary, in: .circle)
                     Spacer().frame(height: theme.space.x16)
-                    Text(model.isRegistered ? "Verified human" : ended ? "Registration ended" : "Not verified")
+                    // Before the first sync this wallet's standing is unknown:
+                    // no "Not verified", and no Verify for a wallet that may be.
+                    Text(!model.has(.privacy) ? Figures.loading : model.isRegistered ? "Verified human" : ended ? "Registration ended" : "Not verified")
                         .font(EarthType.header6).fontWeight(.semibold)
                         .foregroundStyle(theme.colors.textPrimary)
                     Text(line)
@@ -165,7 +167,9 @@ struct IdentityScreen: View {
 
                     Spacer().frame(height: theme.space.x32)
                     VStack(spacing: theme.space.x12) {
-                        if model.isRegistered {
+                        if !model.has(.privacy) {
+                            EmptyView()
+                        } else if model.isRegistered {
                             EarthPillButton(title: model.handle.isEmpty ? "Claim a handle" : "@\(model.handle)") { handleOpen = true }
                             EarthPillButton(title: "Move to another wallet", role: .secondary) { switching = true }
                             if let moveOffer, moveOffer.anything {
@@ -193,14 +197,17 @@ struct IdentityScreen: View {
             .sheet(isPresented: $adding) { AddWalletSheet(mode: .create).earthThemed() }
             .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
             .sheet(isPresented: $switching) { SwitchIdentityScreen().earthThemed() }
-            .task(id: model.isRegistered) { moveOffer = model.isRegistered ? await model.moveOffer() : nil }
+            .task(id: "\(model.address)/\(model.isRegistered)/\(model.dataVersion)") {
+                moveOffer = model.isRegistered ? await model.moveOffer() : nil
+            }
         }
     }
 
     /// Registered here before, and no longer live: renewing, not registering.
-    private var ended: Bool { !model.isRegistered && model.privacy?.registeredBefore() == true }
+    private var ended: Bool { !model.isRegistered && model.registeredBefore }
 
     private var line: String {
+        if !model.has(.privacy) { return " " }
         if model.isRegistered { return "Private · not linked to this wallet" }
         return ended ? "Renew to claim ANML and vote" : "Verify to claim ANML and vote"
     }

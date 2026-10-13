@@ -53,8 +53,13 @@ public extension EarthClient {
     }
 
     func delegations(_ delegator: String) async -> [Staking.Delegation] {
-        guard let json = try? await rest.get("/cosmos/staking/v1beta1/delegations/\(delegator)")
-        else { return [] }
+        (try? await fetchDelegations(delegator)) ?? []
+    }
+
+    /// Throws when the node could not be asked, where `delegations` answers
+    /// none: a screen must not show a failed read as an empty one.
+    func fetchDelegations(_ delegator: String) async throws -> [Staking.Delegation] {
+        let json = try await rest.get("/cosmos/staking/v1beta1/delegations/\(delegator)")
         return json.delegation_responses.array.compactMap { d in
             guard let validator = d.delegation.validator_address.string else { return nil }
             return Staking.Delegation(validator: validator, amount: d.balance.amount.string(default: "0"))
@@ -63,14 +68,23 @@ public extension EarthClient {
 
     /// Total uerth bonded across the network.
     func totalBonded() async -> String {
-        guard let json = try? await rest.get("/cosmos/staking/v1beta1/pool") else { return "0" }
-        return json.pool.bonded_tokens.string(default: "0")
+        (try? await fetchTotalBonded()) ?? "0"
+    }
+
+    /// Throws when the node could not be asked, where `totalBonded` answers
+    /// "0": a screen must not show a failed read as an empty one.
+    func fetchTotalBonded() async throws -> String {
+        try await rest.get("/cosmos/staking/v1beta1/pool").pool.bonded_tokens.string(default: "0")
     }
 
     func unbondingDelegations(_ delegator: String) async -> [Staking.UnbondingEntry] {
-        guard let json = try? await rest.get(
-            "/cosmos/staking/v1beta1/delegators/\(delegator)/unbonding_delegations"
-        ) else { return [] }
+        (try? await fetchUnbondingDelegations(delegator)) ?? []
+    }
+
+    /// Throws when the node could not be asked, where `unbondingDelegations` answers
+    /// none: a screen must not show a failed read as an empty one.
+    func fetchUnbondingDelegations(_ delegator: String) async throws -> [Staking.UnbondingEntry] {
+        let json = try await rest.get("/cosmos/staking/v1beta1/delegators/\(delegator)/unbonding_delegations")
         return json.unbonding_responses.array.flatMap { response -> [Staking.UnbondingEntry] in
             guard let validator = response.validator_address.string else { return [] }
             return response.entries.array.map { e in
@@ -88,9 +102,13 @@ public extension EarthClient {
     /// Rewards are DecCoins and may be fractional, so the fraction is dropped
     /// rather than rounded.
     func totalRewards(_ delegator: String) async -> String {
-        guard let json = try? await rest.get(
-            "/cosmos/distribution/v1beta1/delegators/\(delegator)/rewards"
-        ) else { return "0" }
+        (try? await fetchTotalRewards(delegator)) ?? "0"
+    }
+
+    /// Throws when the node could not be asked, where `totalRewards` answers
+    /// "0": a screen must not show a failed read as an empty one.
+    func fetchTotalRewards(_ delegator: String) async throws -> String {
+        let json = try await rest.get("/cosmos/distribution/v1beta1/delegators/\(delegator)/rewards")
         for coin in json.total.array where coin.denom.string == Constants.gasDenom {
             let amount = coin.amount.string(default: "0")
             return String(amount.prefix(while: { $0 != "." }))

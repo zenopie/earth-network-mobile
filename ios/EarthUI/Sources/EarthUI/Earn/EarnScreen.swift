@@ -99,7 +99,7 @@ struct EarnScreen: View {
                 ("Validator", moniker(validator)),
                 ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
-        ), onSuccess: { await model.refresh() }) { w in
+        )) { w in
             try await w.restake(validator: validator)
         }
     }

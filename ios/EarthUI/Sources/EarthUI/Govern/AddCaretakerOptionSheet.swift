@@ -34,7 +34,7 @@ struct AddCaretakerOptionSheet: View {
                         .font(.system(size: 34, weight: .bold))
                         .foregroundStyle(theme.colors.textPrimary)
                         .padding(.top, theme.space.x24)
-                    Text(fee.map { "\(Token.erth.format(BigInt($0))) ERTH to list · burned" } ?? "Anyone can list one")
+                    Text(Figures.when(fee) { "\(Token.erth.format(BigInt($0))) ERTH to list · burned" })
                         .font(EarthType.body)
                         .foregroundStyle(theme.colors.textTertiary)
                         .padding(.top, theme.space.x4)
@@ -109,14 +109,15 @@ struct AddCaretakerOptionSheet: View {
 
     /// What the public balance lacks for the burn and the network fee.
     private var shortfall: BigInt? {
-        guard let fee else { return nil }
+        // Unread, the balance is no shortfall: the chain refuses one anyway.
+        guard let fee, model.has(.balances) else { return nil }
         let needed = BigInt(fee) + (BigInt(TransactionSigner.defaultFeeUerth) ?? 0)
         let have = model.balance(.erth)
         return have < needed ? needed - have : nil
     }
 
     private var valid: Bool {
-        fee != nil && !trimmedName.isEmpty && trimmedName.utf8.count <= Self.maxNameBytes
+        fee != nil && model.has(.balances) && !trimmedName.isEmpty && trimmedName.utf8.count <= Self.maxNameBytes
             && EarthKey.isValidAddress(recipient) && shortfall == nil
     }
 

@@ -44,7 +44,7 @@ struct StreamDetailScreen: View {
                         // has voted in is an empty circle, indistinguishable
                         // from one that failed to load; a total in the middle
                         // of a populated ring is just "100%" restated.
-                        centreLabel: slices.isEmpty ? "none" : nil
+                        centreLabel: !slicesLoaded ? Figures.loading : slices.isEmpty ? "none" : nil
                     )
                     .frame(maxWidth: .infinity)
 
@@ -155,6 +155,11 @@ struct StreamDetailScreen: View {
         lens == .actual ? state.actualSlices : state.slices
     }
 
+    /// The tally needs the stream; your split needs the stream and the store.
+    private var slicesLoaded: Bool {
+        lens == .actual ? state.loaded : state.loaded && state.mineLoaded
+    }
+
     /// Live options with no share, under Actual only: Preferred is your own
     /// split, where an option you gave nothing is not part of it.
     private var unallocated: [AllocationSlice] {
@@ -169,6 +174,7 @@ struct StreamDetailScreen: View {
     private var caption: String? {
         if lens == .actual { return nil }
         if let eligibility { return eligibility }
+        guard slicesLoaded else { return nil }
         return slices.isEmpty ? "Not allocated" : nil
     }
 }
@@ -196,7 +202,7 @@ struct GroundworksVoteControls: View {
                     .foregroundStyle(theme.colors.warnInk)
                     .multilineTextAlignment(.center)
             } else if !split.isEmpty, model.balancesVisible {
-                Text("Voting \(Figures.whole(BigInt(voting))) of \(Figures.whole(BigInt(model.privateStakeValue))) ERTH")
+                Text("Voting \(Figures.when(model.stakeValuesLoaded, Figures.whole(BigInt(voting)))) of \(Figures.when(model.stakeValuesLoaded, Figures.whole(BigInt(model.privateStakeValue)))) ERTH")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }
@@ -270,10 +276,7 @@ struct GroundworksVoteControls: View {
                      tx: TxController, model: AppModel, onChanged: @escaping () -> Void) {
         let validators = model.privateStake.filter { $0.value > 0 }.count
         let sends = validators == 1 ? "At least 1 transaction" : "At least \(validators) transactions, one per validator"
-        tx.requestPrivate(.private(action: action, rows: rows + [("Sends", sends)]), onSuccess: {
-            await model.refreshGroundworks()
-            onChanged()
-        }) { w in
+        tx.requestPrivate(.private(action: action, rows: rows + [("Sends", sends)]), onSuccess: { onChanged() }) { w in
             guard let last = try await w.castGroundworks(split: split).last else {
                 throw PrivacyError("Stake ERTH first: your stake is what votes.")
             }
@@ -408,11 +411,14 @@ struct ProposalsScreen: View {
     @Environment(\.dismiss) private var dismiss
 
     let proposals: [Gov.Proposal]
+    /// Whether the list has been read: before, it is not "no proposals".
+    let loaded: Bool
 
     @State private var path = NavigationPath()
 
-    init(proposals: [Gov.Proposal]) {
+    init(proposals: [Gov.Proposal], loaded: Bool) {
         self.proposals = proposals
+        self.loaded = loaded
         #if targetEnvironment(simulator)
         // `-demoProposal 1` opens the newest proposal, as `-demoStream` opens this list.
         if UserDefaults.standard.bool(forKey: "demoProposal"), let p = proposals.first {
@@ -425,7 +431,9 @@ struct ProposalsScreen: View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: theme.space.x8) {
-                    if proposals.isEmpty {
+                    if !loaded {
+                        ForEach(0 ..< 3, id: \.self) { _ in ActivityPlaceholder().padding(.horizontal, -24) }
+                    } else if proposals.isEmpty {
                         Text("No proposals yet")
                             .font(EarthType.body)
                             .foregroundStyle(theme.colors.textTertiary)
@@ -532,6 +540,9 @@ struct ProposalDetailScreen: View {
     /// `nil` when the tally could not be read; the second house is then
     /// hidden rather than shown empty.
     @State private var assembly: Assembly.Tally?
+    /// Whether the tally has been asked for yet: until then the second
+    /// house holds its place with "…" rather than not being there.
+    @State private var tallyAsked = false
     /// This wallet's stake-vote weight on the proposal, at the snapshot's
     /// rates. Nil until read (or when the proposal is not open).
     @State private var weight: PrivacyWallet.StakeWeight?
@@ -602,7 +613,14 @@ struct ProposalDetailScreen: View {
                         .foregroundStyle(theme.colors.textTertiary)
                 }
 
-                if let assembly { people(assembly) }
+                if let assembly {
+                    people(assembly)
+                } else if proposal.isLive, !tallyAsked {
+                    EarthLabel("People")
+                    Text(Figures.loading)
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textTertiary)
+                }
 
                 if proposal.isLive { voting }
             }
@@ -626,10 +644,12 @@ struct ProposalDetailScreen: View {
         } message: {
             Text(partsChoiceText)
         }
-        .task {
+        .task(id: model.dataVersion) {
             async let tally = model.client.assemblyTally(proposalID: proposal.id)
             await loadWeight()
-            assembly = await tally
+            // A failed read keeps the last tally on screen.
+            if let t = await tally { assembly = t }
+            tallyAsked = true
         }
     }
 
@@ -821,7 +841,6 @@ struct ProposalDetailScreen: View {
             ]
             if left > 0 { rows.append(("Then", "\(Figures.count(left, "more vote")) after this one, each confirmed on its own")) }
             tx.requestPrivate(.private(action: "Vote \(v.vote.label) with stake \(whereText) (final)", rows: rows), onSuccess: {
-                await model.refresh()
                 if !rest.items.isEmpty { next(rest, proposalID: proposalID, title: title, tx: tx, model: model, name: name) }
             }) { w in
                 // The last vote's fee change lands as a note: sync before the next.
@@ -859,8 +878,7 @@ struct ProposalDetailScreen: View {
     private func mergeFirst() {
         guard let valoper = partsChoice?.asking else { return }
         partsChoice = nil
-        tx.requestPrivate(.private(action: "Merge two stake notes", rows: [("Validator", name(valoper))]),
-                          onSuccess: { await model.refresh() }) { w in
+        tx.requestPrivate(.private(action: "Merge two stake notes", rows: [("Validator", name(valoper))])) { w in
             try await w.mergeStake(denom: PrivacyWallet.derthDenom(valoper))
         }
         onVoted()

@@ -160,12 +160,12 @@ struct TabsView: View {
             // Once the wallet is open, not at first launch: a prompt before
             // there is anything to be notified about is the one people refuse.
             await EarthNotifications.requestAuthorization()
-            await model.loadLPShare()
-            // After the chain work, not beside it: the banner is the least
-            // important thing on screen and should not compete for the first
-            // round trip.
+            // Last: the banner is the least important thing on screen and
+            // should not compete for the first round trip.
             await update.check()
         }
+        // The LP option's share moves with Groundworks votes: re-read with the rest.
+        .task(id: model.dataVersion) { await model.loadLPShare() }
         // A notification tapped while the tabs are up.
         .onChange(of: EarthNotifications.Router.shared.tab) { _, tab in
             guard let tab else { return }

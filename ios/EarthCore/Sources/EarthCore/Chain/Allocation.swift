@@ -54,6 +54,9 @@ public enum Allocation {
         public static let empty = Stream(options: [], totalWeight: "0")
     }
 
+    /// A node whose option pages never end, or come back round.
+    public struct PagingError: Error {}
+
     /// One voter's weight on one option.
     public struct Weight: Sendable, Equatable, Identifiable {
         public var id: UInt64 { optionID }
@@ -89,6 +92,13 @@ public extension EarthClient {
 
     /// Every page (the chain serves at most 100 options a page).
     func stream(_ stream: Msg.StreamID) async -> Allocation.Stream {
+        (try? await fetchStream(stream)) ?? .empty
+    }
+
+    /// Throws when a page could not be read (or the node's paging loops),
+    /// where `stream` answers `.empty`: a screen must not show a failed read
+    /// as a stream with no options.
+    func fetchStream(_ stream: Msg.StreamID) async throws -> Allocation.Stream {
         var options: [Allocation.OptionInfo] = []
         var total = "0"
         var rewardIndex = "0"
@@ -97,10 +107,10 @@ public extension EarthClient {
         var seen = Set<UInt64>()
         repeat {
             // Capped: a node serving new keys forever is not followed.
-            guard keys.count < 100 else { return .empty }
+            guard keys.count < 100 else { throw Allocation.PagingError() }
             let path = "/earth/allocation/v1/options/\(Allocation.path(stream))" +
                 (key.map { "?pagination.key=" + ($0.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0) } ?? "")
-            guard let json = try? await rest.get(path) else { return .empty }
+            let json = try await rest.get(path)
             if key == nil {
                 total = json.total_weight.string(default: "0")
                 rewardIndex = json.reward_index.string(default: "0")
@@ -120,7 +130,7 @@ public extension EarthClient {
                 )
             }
             key = json.pagination.next_key.string.flatMap { $0.isEmpty || $0 == "null" ? nil : $0 }
-            if let k = key, !keys.insert(k).inserted { return .empty }
+            if let k = key, !keys.insert(k).inserted { throw Allocation.PagingError() }
         } while key != nil
         return Allocation.Stream(options: options, totalWeight: total, rewardIndex: rewardIndex)
     }

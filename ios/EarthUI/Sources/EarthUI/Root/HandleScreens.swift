@@ -88,7 +88,8 @@ struct HandleScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
-                    Hero(title: shown ? "@\(model.handle)" : "No handle", muted: !shown, line: heroLine)
+                    Hero(title: !model.has(.personal) ? Figures.loading : shown ? "@\(model.handle)" : "No handle",
+                         muted: !shown, line: model.has(.personal) ? heroLine : nil)
                     VStack(alignment: .leading, spacing: theme.space.x12) { content }
                         .padding(.top, theme.space.x32)
                 }
@@ -118,7 +119,10 @@ struct HandleScreen: View {
             if waitUntil > now { return ("New claims from \(day(waitUntil))", quiet) }
             return ("Get paid by name", quiet)
         }
-        guard let e = model.handleEntry else { return ("Not in the directory", theme.colors.textError) }
+        // An unread directory says nothing about the entry (its error is shown below).
+        guard let e = model.handleEntry else {
+            return model.handleDirectoryError == nil ? ("Not in the directory", theme.colors.textError) : nil
+        }
         let st = e.status(at: now)
         if st == HandleEntry.live { return ("Live · until \(day(e.expiresAt))", theme.colors.accentInk) }
         if st == HandleEntry.renewal { return ("Expired · only you can renew", theme.colors.textError) }
@@ -135,7 +139,7 @@ struct HandleScreen: View {
 
     @ViewBuilder
     private var content: some View {
-        if model.isRegistered {
+        if model.has(.personal), model.isRegistered {
             ForEach(Array(model.reminders.enumerated()), id: \.offset) { _, r in
                 switch r {
                 case let .handleExpiring(h, _, _, _) where h == model.handle: ReminderBanner(text: Reminders.text(r, now: now)) { renew() }
@@ -186,7 +190,7 @@ struct HandleScreen: View {
         VStack(spacing: theme.space.x4) {
             Button {
                 let h = model.handle
-                tx.requestPrivate(.private(action: "Release @\(h)", rows: [], gas: PrivacyWallet.bindHandleGasEstimate), onSuccess: { await refreshed() }) { w in
+                tx.requestPrivate(.private(action: "Release @\(h)", rows: [], gas: PrivacyWallet.bindHandleGasEstimate)) { w in
                     try await w.releaseHandle()
                 }
             } label: {
@@ -223,7 +227,7 @@ struct HandleScreen: View {
                 guard let h = parsed else { return }
                 let pays = "@\(h) · \(Handles.truncate(model.shieldedAddress))"
                 tx.requestPrivate(.private(action: model.handle.isEmpty ? "Claim @\(h)" : "Change handle to @\(h)", rows: [("Pays", pays)],
-                                           gas: PrivacyWallet.bindHandleGasEstimate), onSuccess: { input = ""; await refreshed() }) { w in
+                                           gas: PrivacyWallet.bindHandleGasEstimate), onSuccess: { input = "" }) { w in
                     try await w.bindHandle(h)
                 }
             }
@@ -239,7 +243,7 @@ struct HandleScreen: View {
         let changing = !model.handle.isEmpty && model.handle != h
         tx.requestPrivate(.private(action: changing ? "Change handle to @\(h)" : "Renew @\(h) for a year",
                                    rows: [("Pays", "@\(h) · \(Handles.truncate(model.shieldedAddress))")],
-                                   gas: PrivacyWallet.bindHandleGasEstimate), onSuccess: { await refreshed() }) { w in
+                                   gas: PrivacyWallet.bindHandleGasEstimate)) { w in
             try await w.bindHandle(h, renewOnly: true)
         }
     }
@@ -248,14 +252,9 @@ struct HandleScreen: View {
         let h = model.handle
         guard !h.isEmpty else { return }
         tx.requestPrivate(.private(action: "Renew @\(h) for a year", rows: [("Pays", "@\(h) · \(Handles.truncate(model.shieldedAddress))")],
-                                   gas: PrivacyWallet.bindHandleGasEstimate), onSuccess: { await refreshed() }) { w in
+                                   gas: PrivacyWallet.bindHandleGasEstimate)) { w in
             try await w.bindHandle(h, renewOnly: true)
         }
-    }
-
-    private func refreshed() async {
-        await model.invalidateHandles()
-        await model.syncPrivacy()
     }
 }
 
@@ -450,7 +449,7 @@ struct SwitchIdentityScreen: View {
     /// What this identity holds whose lease ends soon: renewed first (it still
     /// can), its move after the switch has a full lease to land in.
     private var renewFirst: String? {
-        guard model.privacy?.snapshot.identityStatus == .live else { return nil }
+        guard model.identityStatus == .live else { return nil }
         return Self.renewSoonText(handle: model.handle, handleExpiresAt: model.handleEntry?.expiresAt ?? 0,
                                   voteExpiresAt: model.caretakerExpiresAt, now: Int64(Date().timeIntervalSince1970))
     }
@@ -574,7 +573,7 @@ struct MoveOfferCard: View {
         var d = TxController.Details.private(action: handle ? "Bring @\(offer.handle) to this identity" : "Bring your Caretaker split to this identity",
                                              rows: [("Fee paid by", within ? "This wallet (its private ERTH)" : "\(offer.fromName) (its private ERTH)")])
         d.payerErth = offer.feeErth
-        tx.requestPrivate(d, onSuccess: { await model.syncPrivacy(); await refresh() }) { w in
+        tx.requestPrivate(d, onSuccess: { await refresh() }) { w in
             if within {
                 // This wallet's earlier identity: one phrase holds both secrets.
                 try await w.sync()

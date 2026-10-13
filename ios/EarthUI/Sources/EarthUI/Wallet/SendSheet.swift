@@ -173,7 +173,7 @@ struct SendSheet: View {
                     .font(EarthType.title)
                     .foregroundStyle(theme.colors.textTertiary)
             }
-            Text("\(fromNotes ? "Shielded" : "Balance") \(token.format(available(token))) \(token.symbol)")
+            Text("\(fromNotes ? "Shielded" : "Balance") \(Figures.when(model.has(fromNotes ? .privacy : .balances), token.format(available(token)))) \(token.symbol)")
                 .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.textTertiary)
         }
@@ -236,7 +236,7 @@ struct SendSheet: View {
                     ("To", to),
                     ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
                 ]
-            ), onSuccess: { await model.syncPrivacy() }) { w in
+            )) { w in
                 if let shieldedTo { return try await w.send(to: shieldedTo, denom: denom, amount: amount, counterparty: Handles.truncate(to)) }
                 return try await w.unshield(receiver: to, denom: denom, amount: amount)
             }
@@ -274,7 +274,7 @@ struct SendSheet: View {
                 tx.requestPrivate(.private(action: "Pay @\(entry.handle) privately", rows: [
                     ("Amount", display), (labelTitle, label),
                     ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
-                ]), onSuccess: { await model.syncPrivacy() }) { w in
+                ])) { w in
                     try await w.send(to: address, denom: denom, amount: amount, counterparty: "@\(entry.handle)")
                 }
             } else {
@@ -286,7 +286,7 @@ struct SendSheet: View {
                 }
                 tx.request(.init(action: "Pay @\(entry.handle) from your public balance", rows: [
                     ("Amount", display), (labelTitle, label), ("Fee", "\(Token.erth.format(TransactionSigner.defaultFeeUerth)) ERTH"),
-                ]), onSuccess: { await model.syncPrivacy() }) { key in
+                ])) { key in
                     [MsgShield(sender: key.address, amount: Coin(denom: denom, amount: String(value)),
                                pc: out.pc.bytes, ciphertext: out.ciphertext).asAny(typeURL: MsgShield.typeURL)]
                 }

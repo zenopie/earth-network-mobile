@@ -10,6 +10,20 @@ import Foundation
 /// nobody can read at a glance, and the six that matter are at the front.
 enum Figures {
 
+    /// What a figure shows before its read has landed (AppModel.Part).
+    /// Never a zero: zero is an answer, and this is not one yet.
+    static let loading = "…"
+
+    /// `text` once `ready`, else `loading`.
+    static func when(_ ready: Bool, _ text: @autoclosure () -> String) -> String {
+        ready ? text() : loading
+    }
+
+    /// `format(value)`, or `loading` while there is no value.
+    static func when<T>(_ value: T?, _ format: (T) -> String) -> String {
+        value.map(format) ?? loading
+    }
+
     private static let grouped: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal

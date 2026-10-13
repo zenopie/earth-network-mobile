@@ -7,9 +7,13 @@ public extension EarthClient {
     /// not exist yet, which is the normal state for a user before their first
     /// receipt.
     func balances(_ address: String) async -> [String: String] {
-        guard let json = try? await rest.get("/cosmos/bank/v1beta1/balances/\(address)") else {
-            return [:]
-        }
+        (try? await fetchBalances(address)) ?? [:]
+    }
+
+    /// Throws when the node could not be asked, where `balances` answers
+    /// none: a screen must not show a failed read as an empty one.
+    func fetchBalances(_ address: String) async throws -> [String: String] {
+        let json = try await rest.get("/cosmos/bank/v1beta1/balances/\(address)")
         var out = [String: String]()
         for coin in json.balances.array {
             guard let denom = coin.denom.string else { continue }
