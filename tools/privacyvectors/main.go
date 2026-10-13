@@ -694,7 +694,11 @@ func main() {
 	}
 	out["stake_fields_redelegate"] = sfs
 	// The circuits' public inputs as the chain lays them out (StakeProof.PublicInputs, VotePublicInputs).
+	// These msgs name vintage 0 (wallets before v1.3.0): with the base vintage
+	// the current month, every asset resolves to the unsuffixed derth/<valoper>
+	// they always used (vintage_vectors.json pins the vintaged layouts).
 	{
+		vc := stakingtypes.VintageCtx{Base: 202610, Current: 202610}
 		pis := map[string][]string{}
 		for name, m := range map[string]stakingtypes.StakeMsg{
 			"delegate":   &stakingtypes.MsgDelegate{Validator: val, Amount: 500000, Derth: 449_995, Stake: stakeProof(90, 1, true, false, true)},
@@ -706,7 +710,7 @@ func main() {
 				Stake: pending(voting(stakeProof(155, 1, true, false, true), 155, 0, 0), 155, 1_790_000_100, 300_000), GroundworksSplit: splits},
 		} {
 			p := m.StakeProofOf()
-			in := p.PublicInputs(m.StakeLanes(), fe(77))
+			in := p.PublicInputs(m.StakeLanes(vc), fe(77))
 			ss := make([]string, len(in))
 			for i := range in {
 				ss[i] = hex.EncodeToString(in[i])
@@ -714,7 +718,7 @@ func main() {
 			pis[name] = ss
 		}
 		vm := &stakingtypes.MsgStakeVote{ProposalId: 6, Validator: val, Weight: 999, VoteNullifiers: [][]byte{fb(128), fb(129)}, DebtRoot: fb(130)}
-		vin := vm.VotePublicInputs(fb(131), fb(132), fe(77))
+		vin := vm.VotePublicInputs(vc, fb(131), fb(132), fe(77))
 		vs := make([]string, len(vin))
 		for i := range vin {
 			vs[i] = hex.EncodeToString(vin[i])

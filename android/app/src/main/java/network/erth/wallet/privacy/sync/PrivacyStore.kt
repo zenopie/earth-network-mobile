@@ -452,7 +452,7 @@ class PrivacyState {
     var groundworksChosen: Boolean = false
     /**
      * The chain's base stake vintage (YYYYMM: the month whose denom is the
-     * unsuffixed derth/<valoper>, Query/Vintages), fixed for a chain's life;
+     * unsuffixed derth/<valoper>, Query/VintageInfo), fixed for a chain's life;
      * 0 until read, or on a chain without vintages (before v1.3.0).
      */
     var baseVintage: Int = 0

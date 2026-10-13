@@ -3,7 +3,9 @@
 The current byte-level and behavioural spec of the Earth Wallet's private
 side (Android, iOS; the web app must match the formats). It describes what
 is true now, against chain privacy/orchard **20a91c6** (genesis 34fe7441) with the
-chain's v1.2.1 upgrade (Groundworks votes by stake note, delegations bonded at once). How it got here is in AUDIT_HISTORY.md.
+chain's v1.2.1 upgrade (Groundworks votes by stake note, delegations bonded at once)
+and its v1.3.0 upgrade, monthly stake vintages (branch feat/stake-vintages at
+**418208b**, fix pass 1 included; not released yet). How it got here is in AUDIT_HISTORY.md.
 
 **Who defines what.** The chain (x/shielded, x/personhood, x/assembly,
 x/shieldedstaking, x/dex; `zk/privacy`, `zk/orchard`, `zk/indexed`,
@@ -19,7 +21,10 @@ format the chain and the web app also implement).
 from the chain's own Go code: `tools/privacyvectors/gen.sh <chain
 checkout> [ref]` writes `android/app/src/test/resources/privacy/vectors.json`
 (and `dex_amm.json`, the action/membership fixtures) and the identical iOS
-copy.
+copy. The stake-vintage vectors (§15) come from
+`tools/privacyvectors/gen-vintages.sh <chain checkout> [ref]`
+(`vintage_vectors.json`, Android `VintagesTest`); iOS generates its own from
+the same chain code (`ios/EarthCore/Scripts/vintagevectors`).
 Wallet-defined formats are pinned by golden tests on both platforms
 (Android `KeysAndNotesTest`, `BlindNoteTest`, `RestoreTest`,
 `HandleOwnershipTest`, `DenomsTest`, `DexTest`; iOS `KeysAndNotesTests`,
@@ -419,12 +424,15 @@ longer reads it. The magic and tag are not reused.
 
 ## 7. Stake notes, labels, Groundworks tags
 
-**[chain]** Delegated stake (`derth/<valoper>`) lives in its own
-append-only tree, owner-locked: it can be merged, undelegated, redelegated
-or voted by its owner, never sent.
+**[chain]** Delegated stake lives in its own append-only tree,
+owner-locked: it can be merged, undelegated, redelegated, checked in or
+voted by its owner, never sent. Its asset names the validator and the
+stake's vintage (§15, chain v1.3.0): `derth/<valoper>` for the base vintage
+(every note from before v1.3.0), `derth/<valoper>/<YYYYMM>` for every other
+month.
 
     spc   = H(TAG_SPC, owner_pk, rho, rcm)
-    cm    = H(TAG_STAKE, AssetID(derth/<valoper>), amount, spc, label)
+    cm    = H(TAG_STAKE, AssetID(derth denom), amount, spc, label)
     label = H(Tag("earth.slabel"), move_key, move_time, exposed)    (0: unlabelled)
     nf    = H(TAG_SNF, nk, rho, position)                            position a u32
     gw    = H(Tag("earth.gw"), nk, rho)                              Groundworks tag
@@ -437,11 +445,14 @@ Query/DebtTree) after move_time has passed; a slash of the source in that
 window owes through the move's debt row (§8). A note holds at most one
 label. Vectors: `derive.stake_label`, `stake_cm`, `stake_cm_labelled`.
 
-**One note per validator [wallet].** Every delegation and credit
-merges into the wallet's note at the validator, so a wallet holds one note
-per validator; a second appears only beside a labelled note (a move into a
-validator where ours is labelled) or from another device, and merges by
-MsgRestake on the user's tap (at most one of the two labelled).
+**One note per validator and vintage [wallet].** Every delegation and
+credit merges into the wallet's note of the validator's current vintage,
+so a wallet holds one note per (validator, vintage); a second of one
+vintage appears only beside a labelled note (a move into a validator where
+ours is labelled) or from another device, and merges by MsgRestake on the
+user's tap (at most one of the two labelled). Notes of different vintages
+never merge (different assets); a check-in moves an older one into the
+current month.
 
 **Groundworks tags [chain].** A note's Groundworks vote is stored by the
 chain under its tag `gw` (no tree position needed: the tag exists before the
@@ -943,11 +954,12 @@ proof it carries. `StakeFields` (every stake-proof msg, first):
 | `/earth.assembly.v1.MsgVoteProposal` | U64(proposal_id), U64(option) |
 | `/earth.assembly.v1.MsgProposeRemoval` | U64(option_id) |
 | `/earth.assembly.v1.MsgVoteRemoval` | U64(option_id), U64(option) |
-| `/earth.shieldedstaking.v1.MsgDelegate` | StakeFields, Bytes(validator), U64(amount), U64(derth), Bytes(SplitsBytes(groundworks_split)) |
-| `/earth.shieldedstaking.v1.MsgRestake` | StakeFields, Bytes(validator), Bytes(SplitsBytes(groundworks_split)) |
-| `/earth.shieldedstaking.v1.MsgUndelegate` | StakeFields, Bytes(validator), U64(amount), pc, Bytes(ciphertext), Bytes(SplitsBytes(groundworks_split)) |
-| `/earth.shieldedstaking.v1.MsgRedelegate` | StakeFields, Bytes(src_validator), Bytes(dst_validator), U64(amount), U64(dst_derth), U64(move_time), Bytes(SplitsBytes(groundworks_split)) |
-| `/earth.shieldedstaking.v1.MsgStakeVote` | U64(proposal_id), Bytes(validator), Bytes(OptionsBytes), U64(weight), vnf_0, vnf_1, debt_root (no StakeFields) |
+| `/earth.shieldedstaking.v1.MsgDelegate` | StakeFields, Bytes(validator), U64(amount), U64(derth), Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] |
+| `/earth.shieldedstaking.v1.MsgRestake` | StakeFields, Bytes(validator), Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] |
+| `/earth.shieldedstaking.v1.MsgUndelegate` | StakeFields, Bytes(validator), U64(amount), pc, Bytes(ciphertext), Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] |
+| `/earth.shieldedstaking.v1.MsgRedelegate` | StakeFields, Bytes(src_validator), Bytes(dst_validator), U64(amount), U64(dst_derth), U64(move_time), Bytes(SplitsBytes(groundworks_split)) [, U64(vintage)] [, U64(credit_vintage)] |
+| `/earth.shieldedstaking.v1.MsgCheckIn` | StakeFields, Bytes(validator), U64(from_vintage), U64(amount), Bytes(SplitsBytes(groundworks_split)) [, U64(credit_vintage)] |
+| `/earth.shieldedstaking.v1.MsgStakeVote` | U64(proposal_id), Bytes(validator), Bytes(OptionsBytes), U64(weight), vnf_0, vnf_1, debt_root (no StakeFields) [, U64(vintage)] |
 | `/earth.dex.v1.MsgNoteSwap` | Bytes(denom_in), U64(amount_in), Bytes(denom_out), U64(min_amount_out), pc, Bytes(ct) |
 | `/earth.dex.v1.MsgAddLiquidityShielded` | U64(pool_id), Bytes(min_shares), share_pc, Bytes(share_ct), refund_pc, Bytes(refund_ct), U64(erth_amount) |
 | `/earth.dex.v1.MsgRemoveLiquidityShielded` | U64(pool_id), erth_pc, Bytes(erth_ct), token_pc, Bytes(token_ct) |
@@ -955,6 +967,13 @@ proof it carries. `StakeFields` (every stake-proof msg, first):
 Strings (validator, denom, handle, min_shares, signature_algorithm) are
 Bytes of their bytes. Public signals are canonical decimals below p.
 
+- **Vintage fields (v1.3.0).** `[, U64(x)]` is appended only when x is
+  non-zero, so `vintage` 0 (the base vintage, as wallets before v1.3.0
+  send it) hashes exactly as before, and 0 and the base month spelled out
+  never share a sighash. `credit_vintage` needs a non-zero `vintage` on
+  MsgRedelegate, so the two never hash alike. The wallet always names both
+  (vectors `vintage_vectors.json`: `msgs.*_vintage`, `redelegate_credit`,
+  `check_in`, `check_in_credit`).
 - **SplitsBytes** = per entry, option_id (u64 BE) || percent (u64 BE)
   (vectors `splits_bytes`); an empty split is no bytes, so a stake msg that
   does not vote binds Bytes(""). Splits are sent sorted by option_id.
@@ -993,15 +1012,17 @@ reserved numbers are never written):
                              credit_vote_tag 20, credit_vote_weight 21, pending_key 22, pending_time 23,
                              pending_exposed 24; reserved 4, 5, 6, 7 (owner_tag), 8
     AllocationWeight         option_id 1, percent 2   (groundworks_split entries)
-    MsgDelegate              bundle 1, validator 2, stake 4, amount 5, derth 6, groundworks_split 7; reserved 3
-    MsgRestake               bundle 1, validator 2, stake 4, groundworks_split 5; reserved 3
-    MsgUndelegate            bundle 1, validator 2, amount 3, stake 5, pc 6, ciphertext 7, groundworks_split 8;
-                             reserved 4
+    MsgDelegate              bundle 1, validator 2, stake 4, amount 5, derth 6, groundworks_split 7, vintage 8; reserved 3
+    MsgRestake               bundle 1, validator 2, stake 4, groundworks_split 5, vintage 6; reserved 3
+    MsgUndelegate            bundle 1, validator 2, amount 3, stake 5, pc 6, ciphertext 7, groundworks_split 8,
+                             vintage 9; reserved 4
     MsgRedelegate            bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7,
-                             groundworks_split 8
+                             groundworks_split 8, vintage 9, credit_vintage 10
+    MsgCheckIn               bundle 1, validator 2, from_vintage 3, amount 4, stake 5, groundworks_split 6,
+                             credit_vintage 7
     (MsgLockPosition, MsgUpdatePosition, MsgUnlockPosition and MsgPositionVote are retired, chain v1.2.1)
     MsgStakeVote             bundle 1, proposal_id 2, validator 3, options 4, weight 5, proof 8,
-                             vote_nullifiers 10 (exactly two), debt_root 11; reserved 6, 7, 9
+                             vote_nullifiers 10 (exactly two), debt_root 11, vintage 12; reserved 6, 7, 9
     MsgNoteSwap              bundle 1, denom_out 2, min_amount_out 3, pc 4, ciphertext 5, denom_in 8, amount_in 9;
                              reserved 6, 7
     MsgAddLiquidityShielded  bundle 1, pool_id 3, min_shares 5, refund_pc 6, refund_ciphertext 7, share_pc 9,
@@ -1476,10 +1497,139 @@ wallet never asks about one validator (Query/Validator, x/staking's
 `validators/{addr}`, `Query/Redelegation`): asked just before a public msg,
 that ties the asking IP to the intent.
 
+**Stake vintages [chain] (v1.3.0, ORCHARD_DESIGN 8.9).** A stake note's
+asset names its validator and its vintage, the UTC month (YYYYMM) its stake
+was last checked in (delegated, credited by a move, or moved by a
+check-in):
+
+    VintageDenom(v, m, base) = derth/<v>                 m == base
+                               derth/<v>/<%06d m>        otherwise
+    asset                    = AssetID(VintageDenom(…))
+
+- **Base vintage.** One month a chain keeps the unsuffixed denom: the
+  v1.3.0 upgrade month on earth-1 (a new chain's genesis month). Every
+  note from before v1.3.0 carries it and stays valid. The suffixed
+  spelling of the base month is another asset the chain never supplies.
+  A denom parses in both forms (`ParseDerthDenom`: the unsuffixed form is
+  month 0, read as the base vintage); a suffix is exactly six digits of a
+  valid month (year 2000–9999, month 1–12).
+- **Live, retiring, retired.** A vintage is live in its own month and the
+  12 after it, and retires at 00:00 UTC on the 1st of its month + 13
+  (`retires_at`). From then until the first epoch end after it, it is
+  **retiring**: still in its validator's book and earning, but every msg
+  on it is refused (by time) and it cannot be withdrawn yet. At that epoch
+  end the chain books its value, floor(S_m × B / S) at the live rate, into
+  one held private undelegation (a `RetiredVintage`, its record already
+  UNBONDING) and it is **retired**: withdraw-only, pro rata. Its
+  Groundworks votes end at the boundary; gov snapshots still count a
+  retiring vintage.
+- **The clock.** The current month is the block time's; a delegation,
+  a move's credit and a check-in land in it. **Grace:** during a month's
+  first `VintageGraceSeconds` (3600 s, = ClearBeforeSlackSeconds) a credit
+  may still name the previous month and lands there (live for 12 more
+  months): a proof built before 00:00 UTC on the 1st and included after
+  it. The wallet computes the same context from the LCD's latest block
+  time (`Vintages.at`, vectors `grace`).
+- **Naming a vintage in a msg.** MsgDelegate, MsgRestake, MsgUndelegate,
+  MsgRedelegate and MsgStakeVote carry `vintage` (lane A's notes; a
+  delegation's credit): 0 names the base vintage (wallets before v1.3.0),
+  any other value must be a valid month and is appended to the sighash
+  (§12). The wallet always names the month. MsgRedelegate and MsgCheckIn
+  carry `credit_vintage`, the month of the credit lane's `cr_asset`: 0
+  names the current month; a named one must be the current month or, in
+  the grace, the previous one. The wallet names the month its proof's
+  credit used, so a proof built just before a month ends is still taken
+  in the next month's first hour. A delegation's `vintage` follows the
+  same credit rule. The chain refuses a month not begun, a credit to any
+  other month, a check-in from the credit month or later (1122,
+  `ErrVintage`) and any msg on a retiring or retired vintage but a
+  withdrawal (1121, `ErrRetiredVintage`); the ante and the handler agree,
+  so a CheckTx-admitted tx is never refused for this in its block.
+- **Lanes the chain supplies** (each msg's `StakeLanes(vc)`): lane A's
+  asset is the msg's vintage's denom; a move's credit lane is dst's
+  `credit_vintage` denom; a check-in's lanes are `from_vintage`'s denom
+  (v_in 0, v_out amount) and the credit month's (cr_v_in amount,
+  cr_move_time 0); a stake vote's `asset` is its vintage's denom (vectors
+  `public_inputs`).
+
+**Check in (MsgCheckIn).** Moves `amount` derth of an older live vintage
+at a validator into the credit month, so it earns and votes for another
+13 months. Lane A spends the note in `from_vintage` (v_out = amount; a kept
+label's exposure comes back as its change, still labelled, else a zero
+note); the credit lane merges the amount into the wallet's unlabelled note
+of the credit month, or pads (unlabelled: the circuit requires it). The
+bundle pays the fee only; nothing moves in x/staking and the stake's value
+does not change. The Groundworks split rides along (lane A's vote in
+`from_vintage`, the credit's in the new month). Amount, validator and both
+months are public. Gas: 100,000 + 300,000 + proof + note_gas × 8. The
+response's `vintage` is the credit month. **[wallet]** One "Check in"
+button, shown from 30 days before the oldest live vintage holding stake
+retires (the row warns "Check in by <date>", and a reminder fires, §20);
+one confirmation sends a tx per note in turn, oldest first, syncing between.
+A note whose whole amount is moved-in stake in its window has nothing to
+check in yet; part of a note's exposure staying behind is said on the sheet
+("… stays behind until <date>").
+
+**Withdraw a retired vintage.** MsgUndelegate naming the retired month:
+the proof spends the note (v_out = d, a zero note back unless an open
+label keeps its exposure), no `groundworks_split` and a zero `vote_tag`
+(1121 otherwise). The chain pays w = floor(d × remaining_value /
+remaining_supply) (all of remaining_value for the whole remaining supply)
+to `pc`, split off the vintage's held payout under its record: at the
+record's maturity, or in the next block once it has matured; a slash
+before then reaches it. Event `shieldedstaking_retired_withdrawal`
+(validator, vintage, derth, value, epoch, payout_id, remaining_supply,
+remaining_value) instead of `shieldedstaking_undelegate`; the wallet reads
+its epoch, value and payout id from either. **One note's worth:** w must be
+at most 2^63 − 1 uerth (1103 otherwise), so a larger share leaves in
+parts: each the largest d with floor(d × V / S) ≤ 2^63 − 1, i.e.
+((2^63) × S − 1) / V, against the vintage as the last part left it (at
+most 16 parts, a tx each on the one confirmation, syncing between; the
+sheet says how many). A withdrawal before the epoch end has booked the
+vintage is refused (1121, nothing spent): the wallet says "it can be
+withdrawn from <the current epoch's end_time>".
+
+**Vintage reads [wallet].** Never `Query/Vintages{validator}` (for
+explorers: it names a validator).
+
+- `Query/VintageInfo` (`/earth/shieldedstaking/v1/vintage_info`):
+  `current_vintage`, `base_vintage`, `next_retirement`. Read once a chain
+  for the base vintage (kept in state as `base_vintage`); 404 or 501 means
+  a chain before v1.3.0 (every denom unsuffixed, every msg vintage 0).
+- `Query/VintageBooks` (`/earth/shieldedstaking/v1/vintage_books`, paged
+  by `pagination.key` = the previous `next_key`, at most 100 entries a
+  page, `offset` refused), read whole and filtered on the device: the
+  clock as above and `entries`, each `{validator, vintage, denom, state
+  ("live" | "retiring" | "retired"), supply (live or retiring), retires_at,
+  retired (RetiredVintage: supply, value, payout_id, epoch,
+  remaining_supply, remaining_value, retired_at), record (the held
+  payout's UnbondRecord while value is held), expected_completion}`. Read
+  only when a held vintage is past its retirement: for the row's state
+  (kept a minute) and afresh for a withdrawal's quote. A looping next_key,
+  or more than 1,000 pages, refuses the read.
+- **Payout timing.** `expected_completion` (unix seconds) is the record's
+  exact completion while UNBONDING, an estimate (the current epoch's end +
+  unbonding_time) while PENDING or retiring, 0 once MATURED or nothing is
+  held. The withdraw sheet shows "In the next block" for a matured record,
+  else about expected_completion + 15 minutes, else the epoch estimate
+  (below); the pending undelegation keeps that time as its `due_by`.
+- The rows (Android): live "Earning · check in by <retires_at, as a local day>";
+  within 30 days "Check in by <day>" (warning); retiring "Retiring ·
+  withdraw from <the current epoch's end_time>" (nothing to tap); retired
+  "Not earning since <day> · Withdraw".
+
+Other v1.3.0 wire changes the wallet tolerates: `GroundworksVote` field 11
+(`split_expires_at`) is reserved and the `shieldedstaking_groundworks_vote`
+event no longer has that attribute (stake votes have no lease; action
+`retired` when the sweep drops a dead vote); `shieldedstaking_slash_debt`
+gains `late_moves` (a slash past a move's window charges no note; the
+wallet reads neither event); x/staking `unbonding_time` is capped at 364
+days.
+
 **Delegate.** MsgDelegate merges `amount` uerth (released by the bundle)
-into the validator's note (v_in = derth) and names `derth`, the derth the
-chain credits (from chain v1.2.1 the chain bonds the amount in the same
-block):
+into the validator's note of the current vintage (v_in = derth), names that
+month as `vintage`, and names `derth`, the derth the chain credits (from
+chain v1.2.1 the chain bonds the amount in the same block):
 
     derth = floor(value × S / B) − ceil(floor(value × S / B) × 10 / 1e6)     (S = 0: value, B = 0 required)
 
@@ -1487,9 +1637,10 @@ from the list's backing B and supply S, read when the user reviews (the
 confirm sheet shows the derth). A validator whose entry is not
 `delegatable` is refused up front with its `refusal`. Both amount and derth
 must be at least min_delegation. A rate that moved past the margin is
-refused in the ante (1103, no cost).
+refused in the ante (1103, no cost). A quote from last month still sends
+during the grace (its month named); after it, it is shown again.
 
-**Restake.** MsgRestake merges two notes of a validator into one, only on
+**Restake.** MsgRestake merges two notes of a validator's vintage into one, only on
 the user's tap (Earn "N notes · tap to merge"; offered when at most one of
 the two is labelled). It is also the Groundworks vote tx (below): the
 validator's notes respent onto one note with the split.
@@ -1522,9 +1673,11 @@ reset; a restored wallet has none (the payout is still found). The chain's
 per-id `Query/UnbondPayout` is never asked: the id is on the undelegate
 tx's event, so a query for it ties the asking IP to that undelegation.
 
-**Move stake (MsgRedelegate).** Lane A spends `amount` derth of src (free
-value only) with the change back. The credit lane merges what arrives into
-the wallet's largest unlabelled note at dst (cr_in; none: a padding input,
+**Move stake (MsgRedelegate).** Lane A spends `amount` derth of src's
+named vintage (free value only) with the change back. The credit lane
+merges what arrives into the wallet's largest unlabelled note of dst's
+credit month (named as `credit_vintage`; the quote's month, still taken in
+the grace) (cr_in; none: a padding input,
 so a second note beside a labelled one) and creates a labelled note:
 move_key = the credit nullifier (cr_nf), move_time = the LCD's latest block
 time (the chain takes it within 600 s before its block, 1120 otherwise, no
@@ -1549,10 +1702,10 @@ credited, move_key, move_time; the wallet never queries a move
 
 **Groundworks votes [wallet].** The wallet keeps one split
 (`groundworks_split`, option → percent; Android state.json
-`groundworks_split`, `groundworks_chosen`, `groundworks_expires_at`; iOS
-`groundworksSplit`, `groundworksChosen`, `groundworksExpiresAt`). With a
-split, every stake msg it builds (Delegate, Restake, Undelegate,
-Redelegate) carries it as `groundworks_split`, and each output votes:
+`groundworks_split`, `groundworks_chosen`; iOS `groundworksSplit`,
+`groundworksChosen`; the lease end the wallet kept before v1.3.0 is no
+longer written). With a split, every stake msg it builds (Delegate,
+Restake, Undelegate of live stake, Redelegate, CheckIn) carries it as `groundworks_split`, and each output votes:
 vote_tag = H(TAG_GW, nk, out_rho), vote_weight = the output's unexposed
 amount (lane B: credit_vote_tag / credit_vote_weight, the unexposed part),
 and a kept label's exposure is published pending (pending_key/time/exposed;
@@ -1562,10 +1715,10 @@ least `min_position`; with no voting output the
 msg carries no split. Without a split nothing votes, and every proof still
 cancels whatever votes its inputs carried.
 
-- **Vote, change, renew** (Govern tab, Groundworks: "Vote", "Change vote",
-  "Renew"): the split is saved as chosen, then one MsgRestake per
-  validator with stake, each respending (and merging up to two of) that
-  validator's notes onto one note that votes; while more notes remain
+- **Vote, change** (Govern tab, Groundworks: "Vote", "Change vote"): the
+  split is saved as chosen, then one MsgRestake per live vintage with
+  stake, each respending (and merging up to two of) that vintage's notes
+  onto one note that votes; while more notes remain
   mergeable the restake repeats (at most 8 a validator). Each restake is
   its own tx on the one confirmation; the wallet syncs through each
   before the next, so each pays its fee from what the last left.
@@ -1584,18 +1737,11 @@ cancels whatever votes its inputs carried.
   "Voting X of Y ERTH" (X counting pending derth at its validator's rate)
   and, while any is pending, "Moved stake counts from <date>" (the latest
   `matures_at` among the wallet's votes).
-- **Leases.** A vote counts until `split_expires_at` (unix seconds): cast +
-  x/allocation `groundworks_lease_seconds` (0 = 365 days); any stake msg
-  carrying the split re-casts and so renews it. At the lease end the chain
-  deletes the vote (event `shieldedstaking_groundworks_vote`, action
-  `lapsed`). The wallet remembers the earliest lease end among its own
-  votes (`groundworks_expires_at`): the vote is **lapsed** once that time
-  has passed or none of its votes is left on chain while a split is
-  chosen. From 30 days before the lease end the Govern card
-  offers **Renew** (the held split, on the user's confirmation; not
-  offered when the split names an option the fund no longer has) and a
-  reminder is shown, until 30 days after a lapse. Nothing renews on its
-  own.
+- **No lease (v1.3.0).** A stake vote counts until its note's vintage
+  retires: the chain drops it at the boundary (event action `retired`), and
+  a check-in carries the split into the new vintage. Nothing to renew; the
+  lease reminder and Renew are gone. (Before v1.3.0 a vote lapsed at
+  `split_expires_at`, cast + groundworks_lease_seconds.)
 
 The privacy cost (§7): while it votes, a wallet's stake txs at a validator
 link to one another through the tags each publishes and casts.
@@ -1691,10 +1837,11 @@ merged note is not under its root, and the spent ones still vote); the
 sheet says so.
 
 **Stake note discovery.** The stake rows stream carries no denom: a stake
-ciphertext names only the asset id, so the wallet names `derth/<valoper>`
-by AssetID over the validator list (every status, and books whose
-validator x/staking removed; the list the sync read, each candidate
-learned only as the hash of its own name). A stake
+ciphertext names only the asset id, so the wallet names it by AssetID over
+the validator list (every status, and books whose validator x/staking
+removed; the list the sync read, each candidate learned only as the hash of
+its own name): `derth/<valoper>`, then `derth/<valoper>/<YYYYMM>` for every
+month from 202609 (or the base vintage, if earlier) to next month. A stake
 note of an asset it cannot name is not used.
 
 ## 16. Assembly and dex
@@ -2021,18 +2168,22 @@ text alone does not.
   its own sheet). Sync, the reminders and the payout bookkeeping send
   nothing. A chain of sheets (a switch's handle and caretaker moves, a
   stake vote's validators) raises the next sheet only after the last tx
-  went through, and each is sent only on its own tap. One exception: a
-  Groundworks vote, change, renewal or stop is one confirmation that sends
-  one restake per validator in turn (§15); its sheet says how many.
+  went through, and each is sent only on its own tap. Exceptions, each one
+  confirmation that sends several txs in turn, its sheet saying how many: a
+  Groundworks vote, change or stop (one restake per vintage held), a stake
+  check-in (one tx per note) and a withdrawal larger than one note's worth
+  (one tx per part) (§15).
 - **Reminders** (Home banners and the Handle screen): "ANML ready to claim"
   when today's claim is open and not made; the caretaker vote from 30 days
   before its expires_at until 30 days after; the handle from 30 days before
   expires_at through its renewal period; a handle naming this wallet's
-  address that it does not hold; the Groundworks vote from 30 days before
-  its earliest lease end until 30 days after (§15), whether or not the
-  identity is live, and never while the lease end is unknown (a lapse the
-  wallet never saw). The caretaker and Groundworks banners open their Govern
-  screen; Renew there is one tap and its confirm sheet. All reminder arithmetic saturates.
+  address that it does not hold; the stake check-in from 30 days before the
+  oldest live vintage holding this wallet's stake retires until it does
+  (local: the base vintage last read and the device's month; §15), whether
+  or not the identity is live. The caretaker banner opens its Govern
+  screen; Renew there is one tap and its confirm sheet. Stake votes have no
+  lease since v1.3.0, so there is no Groundworks reminder. All reminder
+  arithmetic saturates.
 - **Saved state.** state.json is written to a temp file, fsynced and renamed
   over (iOS: atomic write); a failed save is an error, never silent. An
   unreadable state.json is an error shown to the user, never replaced by an

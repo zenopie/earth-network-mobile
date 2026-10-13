@@ -163,6 +163,11 @@ class VintagesTest {
             .addOptions(WeightedVoteOption.newBuilder().setOption(GovVoteOption.VOTE_OPTION_YES).setWeight("1.000000000000000000"))
             .setWeight(999).setProof(ByteString.copyFrom(byteArrayOf(0x70, 0x7e))).addAllVoteNullifiers(listOf(fb(361), fb(362))).setDebtRoot(fb(363))
             .setVintage(202611).build(),
+        // credit_vintage named (chain fix pass 1).
+        "redelegate_credit" to MsgRedelegate.newBuilder().setBundle(fee(370, 2000)).setSrcValidator(v).setDstValidator(v2).setAmount(400000)
+            .setStake(stake(370, 1, credits = true)).setDstDerth(380_000).setMoveTime(1_790_000_123).setVintage(202611).setCreditVintage(202702).build(),
+        "check_in_credit" to MsgCheckIn.newBuilder().setBundle(fee(380, 2000)).setValidator(v).setFromVintage(202611).setAmount(400_000)
+            .setStake(stake(380, 1, credits = true)).setCreditVintage(cur).build(),
     )
 
     /** Every vintaged msg (MsgCheckIn too): the chain's encoding, type URL, sighash and fee. */
@@ -228,6 +233,8 @@ class VintagesTest {
             "delegate_vintage" to msgs.getValue("delegate_vintage"),
             "undelegate_base_0" to (msgs.getValue("undelegate_withdrawal") as MsgUndelegate).toBuilder().setVintage(0).build(),
             "redelegate_vintage" to msgs.getValue("redelegate_vintage"),
+            "redelegate_credit" to msgs.getValue("redelegate_credit"),
+            "check_in_credit" to msgs.getValue("check_in_credit"),
         )
         for ((name, m) in laid) {
             val got = ChainLayout.stakePublicInputs(PrivateMsgs.stake(m)!!, ChainLayout.lanes(m, base, cur), fe(77))
@@ -267,5 +274,34 @@ class VintagesTest {
         // Hostile times saturate.
         Reminders.due(q.copy(now = Long.MIN_VALUE, stakeRetiresAt = Long.MAX_VALUE))
         Reminders.text(Reminders.Reminder.CheckInDue(Long.MAX_VALUE), Long.MIN_VALUE)
+    }
+
+    /** credit_vintage is appended after vintage (a move) or after the split (a check-in) when named; 0 hashes as before. */
+    @Test
+    fun creditVintageAppendsWhenNamed() {
+        val mv = msgs.getValue("redelegate_credit") as MsgRedelegate
+        val unnamed = mv.toBuilder().clearCreditVintage().build()
+        assertEquals(PrivateMsgs.sighashFields(unnamed) + Privacy.u64(202702), PrivateMsgs.sighashFields(mv))
+        val ci = msgs.getValue("check_in_credit") as MsgCheckIn
+        val plain = ci.toBuilder().clearCreditVintage().build()
+        assertEquals(PrivateMsgs.sighashFields(plain) + Privacy.u64(cur.toLong()), PrivateMsgs.sighashFields(ci))
+        assertEquals(20 + 5, PrivateMsgs.sighashFields(ci).size)
+        // The credit lane proves credit_vintage's asset.
+        assertEquals("derth/$v2/202702", ChainLayout.lanes(mv, base, cur).crDenom)
+    }
+
+    /** The month-boundary grace as the chain's NewVintageCtx: last month a credit may name during the first hour. */
+    @Test
+    fun graceMatchesTheChain() {
+        assertEquals(json.getLong("grace_seconds"), Vintages.GRACE_SECONDS)
+        val g = json.getJSONArray("grace")
+        for (i in 0 until g.length()) {
+            val w = g.getJSONObject(i)
+            val ctx = Vintages.at(base, w.getLong("t"))
+            assertEquals("t ${w.getLong("t")}", w.getInt("current"), ctx.current)
+            assertEquals("t ${w.getLong("t")}", w.getInt("grace"), ctx.grace)
+            assertTrue(ctx.credits(ctx.current))
+            assertEquals(ctx.grace != 0, ctx.credits(Vintages.addMonths(ctx.current, -1)))
+        }
     }
 }

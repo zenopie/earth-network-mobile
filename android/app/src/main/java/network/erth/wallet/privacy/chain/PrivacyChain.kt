@@ -294,8 +294,6 @@ object PrivacyQueries {
         val weight: Long,
         val tag: Fr,
         val splits: Map<Long, Long>,
-        /** When the vote stops counting (unix seconds). */
-        val splitExpiresAt: Long,
         /** Moved-in derth voting pending, counted from [maturesAt] (unix seconds). */
         val pending: Long = 0,
         val maturesAt: Long = 0,
@@ -324,14 +322,26 @@ object PrivacyQueries {
         return out
     }
 
+    /** Query/VintageInfo: the vintage clock; null when the node has no such query (a chain before v1.3.0: 404 or 501). */
+    fun vintageInfo(): network.erth.wallet.privacy.PrivacyChainReads.VintageInfo? {
+        val path = "/earth/shieldedstaking/v1/vintage_info"
+        val (code, body) = EarthRest.get(path)
+        if (code == 404 || code == 501) return null
+        if (code !in 200..299) throw IOException("$path: $code ${body.take(200)}")
+        val j = JSONObject(body)
+        return network.erth.wallet.privacy.PrivacyChainReads.VintageInfo(month(j, "current_vintage"), month(j, "base_vintage"), i64(j, "next_retirement"))
+    }
+
     /**
-     * Query/Vintages{validator}, the retired list's pages followed (at most
-     * [MAX_VINTAGE_PAGES]); null when the node has no such query (a chain
-     * before v1.3.0: 404 or 501).
+     * Query/VintageBooks, every page (by next_key, at most
+     * [MAX_VINTAGE_PAGES]): every validator's vintages, read whole so that
+     * no query names a validator. Null when the node has no such query (a
+     * chain before v1.3.0: 404 or 501). The clock is the first page's.
      */
-    fun vintages(validator: String): network.erth.wallet.privacy.PrivacyChainReads.VintageState? {
-        val base = "/earth/shieldedstaking/v1/vintages/" + java.net.URLEncoder.encode(validator, "UTF-8")
-        val retired = ArrayList<network.erth.wallet.privacy.PrivacyChainReads.RetiredVintage>()
+    fun vintageBooks(): network.erth.wallet.privacy.PrivacyChainReads.VintageBooks? {
+        val base = "/earth/shieldedstaking/v1/vintage_books"
+        val entries = ArrayList<network.erth.wallet.privacy.PrivacyChainReads.VintageBookEntry>()
+        val seen = HashSet<Pair<String, Int>>()
         var first: JSONObject? = null
         val keys = HashSet<String>()
         var key: String? = null
@@ -341,35 +351,49 @@ object PrivacyQueries {
             if (code !in 200..299) throw IOException("$base: $code ${body.take(200)}")
             val j = JSONObject(body)
             if (first == null) first = j
-            j.optJSONArray("retired")?.let { a -> for (i in 0 until a.length()) retired.add(retiredVintage(a.getJSONObject(i))) }
+            // Each (validator, vintage) once (the first served): a page repeated by a proxy adds nothing.
+            j.optJSONArray("entries")?.let { a -> for (i in 0 until a.length()) bookEntry(a.getJSONObject(i)).let { if (seen.add(it.validator to it.vintage)) entries.add(it) } }
             key = j.optJSONObject("pagination")?.optString("next_key")?.takeIf { it.isNotEmpty() && it != "null" }
-            if (key != null && (!keys.add(key) || keys.size >= MAX_VINTAGE_PAGES)) throw IOException("the node's vintages listing does not end")
+            if (key != null && (!keys.add(key) || keys.size >= MAX_VINTAGE_PAGES)) throw IOException("the node's vintage books do not end")
         } while (key != null)
         val j = first!!
-        fun month(k: String, o: JSONObject = j): Int = o.long(k).takeIf { network.erth.wallet.privacy.Vintages.valid(it.toInt()) && it <= Int.MAX_VALUE }?.toInt()
-            ?: throw IOException("vintages: $k ${o.optString(k)} is not a month")
-        val live = j.optJSONArray("live")?.let { a ->
-            (0 until a.length()).map { i ->
-                val v = a.getJSONObject(i)
-                network.erth.wallet.privacy.PrivacyChainReads.LiveVintage(month("vintage", v), v.optString("denom"), bigInt(v.optString("supply")), i64(v, "retires_at"))
-            }
-        }.orEmpty()
-        return network.erth.wallet.privacy.PrivacyChainReads.VintageState(month("current_vintage"), month("base_vintage"), live, retired, i64(j, "next_retirement"))
+        return network.erth.wallet.privacy.PrivacyChainReads.VintageBooks(
+            network.erth.wallet.privacy.PrivacyChainReads.VintageInfo(month(j, "current_vintage"), month(j, "base_vintage"), i64(j, "next_retirement")),
+            entries,
+        )
     }
 
-    /** At most this many pages of a validator's retired vintages (100 each). */
-    const val MAX_VINTAGE_PAGES = 100
+    /** At most this many pages of the vintage books (100 entries each). */
+    const val MAX_VINTAGE_PAGES = 1_000
+
+    private fun month(o: JSONObject, k: String): Int = o.long(k).takeIf { it <= Int.MAX_VALUE && network.erth.wallet.privacy.Vintages.valid(it.toInt()) }?.toInt()
+        ?: throw IOException("vintages: $k ${o.optString(k)} is not a month")
+
+    internal fun bookEntry(o: JSONObject): network.erth.wallet.privacy.PrivacyChainReads.VintageBookEntry {
+        val state = o.optString("state")
+        if (state !in setOf(
+                network.erth.wallet.privacy.PrivacyChainReads.VintageBookEntry.LIVE,
+                network.erth.wallet.privacy.PrivacyChainReads.VintageBookEntry.RETIRING,
+                network.erth.wallet.privacy.PrivacyChainReads.VintageBookEntry.RETIRED,
+            )
+        ) throw IOException("vintage state $state")
+        val expected = i64(o, "expected_completion").coerceAtLeast(0)
+        val retired = if (state == network.erth.wallet.privacy.PrivacyChainReads.VintageBookEntry.RETIRED) {
+            retiredVintage(o.optJSONObject("retired") ?: throw IOException("a retired vintage without its state"), o.optJSONObject("record"), o.optString("denom"), expected)
+        } else null
+        return network.erth.wallet.privacy.PrivacyChainReads.VintageBookEntry(
+            validator = o.optString("validator"), vintage = month(o, "vintage"), denom = o.optString("denom"), state = state,
+            supply = if (o.isNull("supply")) java.math.BigInteger.ZERO else bigInt(o.optString("supply")), retiresAt = i64(o, "retires_at"), retired = retired, expectedCompletion = expected,
+        )
+    }
 
     private fun i64(o: JSONObject, k: String): Long = o.optString(k, "0").ifEmpty { "0" }.toLongOrNull() ?: throw IOException("$k is not an int64")
 
     private fun bigInt(s: String): java.math.BigInteger =
         s.ifEmpty { "0" }.toBigIntegerOrNull()?.takeIf { it.signum() >= 0 } ?: throw IOException("$s is not an amount")
 
-    private fun retiredVintage(o: JSONObject): network.erth.wallet.privacy.PrivacyChainReads.RetiredVintage {
-        val v = o.optJSONObject("vintage") ?: throw IOException("a retired vintage without its state")
-        val r = o.optJSONObject("record")
-        val m = v.long("vintage").takeIf { network.erth.wallet.privacy.Vintages.valid(it.toInt()) && it <= Int.MAX_VALUE }?.toInt()
-            ?: throw IOException("retired vintage ${v.optString("vintage")} is not a month")
+    private fun retiredVintage(v: JSONObject, r: JSONObject?, denom: String, expected: Long): network.erth.wallet.privacy.PrivacyChainReads.RetiredVintage {
+        val m = month(v, "vintage")
         val status = when (r?.optString("status")) {
             null -> 0
             "UNBOND_STATUS_MATURED", "2" -> network.erth.wallet.privacy.PrivacyChainReads.UNBOND_MATURED
@@ -377,13 +401,14 @@ object PrivacyQueries {
             else -> 0
         }
         return network.erth.wallet.privacy.PrivacyChainReads.RetiredVintage(
-            validator = v.optString("validator"), vintage = m, denom = o.optString("denom"),
+            validator = v.optString("validator"), vintage = m, denom = denom,
             supply = bigInt(v.optString("supply")), value = bigInt(v.optString("value")),
             remainingSupply = bigInt(v.optString("remaining_supply")), remainingValue = bigInt(v.optString("remaining_value")),
             epoch = v.long("epoch"), retiredAt = i64(v, "retired_at"),
             hasRecord = r != null, recordStatus = status,
             // Unix nanoseconds.
             completionTime = r?.let { i64(it, "completion_time") / 1_000_000_000 }?.coerceAtLeast(0) ?: 0,
+            expectedCompletion = expected,
         )
     }
 
@@ -408,7 +433,6 @@ object PrivacyQueries {
                     GroundworksVote(
                         id = v.long("id"), validator = v.optString("validator"), derth = v.long("derth"), weight = v.long("weight"),
                         tag = field(v.optString("tag")),
-                        splitExpiresAt = v.long("split_expires_at").coerceAtLeast(0),
                         pending = v.long("pending"),
                         maturesAt = v.long("matures_at").coerceAtLeast(0),
                         vintage = v.long("vintage").takeIf { it in 0..Int.MAX_VALUE }?.toInt() ?: 0,

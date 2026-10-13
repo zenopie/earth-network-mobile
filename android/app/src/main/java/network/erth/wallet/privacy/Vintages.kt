@@ -28,6 +28,14 @@ object Vintages {
     const val MIN_YEAR = 2000
     const val MAX_YEAR = 9999
 
+    /**
+     * How long into a month a credit (a delegation, a move's credit lane, a
+     * check-in) may still name the previous month (the chain's
+     * VintageGraceSeconds, = ClearBeforeSlackSeconds): a proof built against
+     * a block before 00:00 UTC on the 1st and included after it.
+     */
+    const val GRACE_SECONDS = 3_600L
+
     /** How long before a vintage retires its check-in is due (the reminder, the row's warning). */
     const val CHECK_IN_LEAD_SECONDS = 30L * 86_400
 
@@ -108,13 +116,18 @@ object Vintages {
 
     /**
      * What resolves a stake note's vintage: the [base] vintage (the
-     * unsuffixed denom's month, Query/Vintages) and the [current] month (the
-     * vintage a delegation, a move's credit or a check-in lands in).
+     * unsuffixed denom's month, Query/VintageInfo) and the [current] month
+     * (the vintage a delegation, a move's credit or a check-in lands in);
+     * [grace] the previous month during the first [GRACE_SECONDS] of the
+     * current one (0 otherwise), which a credit may still name.
      */
-    data class Context(val base: Int, val current: Int) {
+    data class Context(val base: Int, val current: Int, val grace: Int = 0) {
         init {
-            require(valid(base) && valid(current)) { "vintages $base, $current" }
+            require(valid(base) && valid(current) && (grace == 0 || grace == addMonths(current, -1))) { "vintages $base, $current, $grace" }
         }
+
+        /** Whether a credit may name [m] now (the chain's CheckCredit): the current month, or the previous one during the grace. */
+        fun credits(m: Int): Boolean = m == current || (grace != 0 && m == grace)
 
         /** [denom]'s month, the base vintage's for the unsuffixed form; null when it is no derth denom. */
         fun monthOf(denom: String): Int? = parse(denom)?.let { if (it.month == 0) base else it.month }
@@ -127,5 +140,17 @@ object Vintages {
 
         fun live(m: Int): Boolean = live(m, current)
         fun retired(m: Int): Boolean = retired(m, current)
+    }
+
+    /**
+     * The chain's NewVintageCtx at unix time [t]: [base], t's month (never
+     * before [base]: a clock behind the chain reads as the base month), and
+     * the grace month during the first [GRACE_SECONDS] of it.
+     */
+    fun at(base: Int, t: Long): Context {
+        val m = monthOf(t)
+        val cur = if (index(m) < index(base)) base else m
+        val grace = if (cur == m && t - start(cur) < GRACE_SECONDS) addMonths(cur, -1) else 0
+        return Context(base, cur, grace)
     }
 }

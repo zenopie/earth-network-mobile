@@ -232,12 +232,15 @@ class VintageFlowTest : WalletTest() {
         // A vote opens while it is live; it retires before the stake votes.
         chain.openProposal(9)
 
-        // Past its retirement: booked by the chain's sweep.
+        // Past its retirement, before the epoch end books it: retiring.
         chain.now = Vintages.retiresAt(base) + 3_600
-        chain.sweepPaused = true
+        chain.epochEndPending = true
+        chain.epochEndsAt = Vintages.retiresAt(base) + 86_400
         a.sync()
         val row = a.stakeHoldings().single()
         assertTrue(row.retired)
+        assertTrue(row.retiring)
+        assertEquals(chain.epochEndsAt, row.withdrawFrom)
         assertFalse(row.checkInDue(chain.now))
         assertTrue(a.stakeMergeable().isEmpty())
         assertTrue(a.checkIns().isEmpty())
@@ -251,11 +254,18 @@ class VintageFlowTest : WalletTest() {
         assertThrows(PrivacyWallet.StakeRetired::class.java) { a.stakeVote(9, "derth/$vA", yes) }
         // Its Groundworks vote is gone; a re-cast leaves it alone.
         assertEquals(txs, chain.txs.size)
-        // Not booked yet: the withdrawal waits.
-        assertThrows(PrivacyWallet.WithdrawalNotOpen::class.java) { a.quoteWithdraw("derth/$vA") }
-        chain.sweepPaused = false
+        // Not booked yet: the withdrawal waits, saying from when.
+        val shut = assertThrows(PrivacyWallet.WithdrawalNotOpen::class.java) { a.quoteWithdraw("derth/$vA") }
+        assertEquals(chain.epochEndsAt, shut.from)
+        assertEquals(txs, chain.txs.size)
+        // The epoch end books it: retired, withdrawable.
+        chain.now = chain.epochEndsAt
+        chain.epochEndPending = false
         chain.retireDue()
         assertTrue(chain.gwVotes.isEmpty())
+        val booked = a.stakeHoldings().single()
+        assertTrue(booked.retired)
+        assertFalse(booked.retiring)
 
         val q = a.quoteWithdraw("derth/$vA")
         val note = held.single()
@@ -265,7 +275,9 @@ class VintageFlowTest : WalletTest() {
         // The whole remaining supply takes the whole remaining value.
         assertEquals(r.remainingValue, q.value)
         assertFalse(q.paysNow)
-        assertEquals(r.completion, q.paysAt)
+        assertEquals(1, q.parts)
+        // The chain's expected completion, with the payout margin.
+        assertEquals(r.completion + PrivacyWallet.PAYOUT_MARGIN_S, q.paysAt)
         a.withdraw(q); a.sync()
         val m = chain.lastMsg as MsgUndelegate
         assertEquals(base, m.vintage)
@@ -278,6 +290,7 @@ class VintageFlowTest : WalletTest() {
         val u = a.pendingUnbonds.single()
         assertTrue(u.confirmed)
         assertEquals(q.value, u.value)
+        assertEquals(q.paysAt, u.dueBy)
         chain.payUnbonds(); a.sync()
         assertTrue(a.pendingUnbonds.isEmpty())
         assertEquals(0L, chain.retiredVintages.getValue(vA to base).remainingSupply)
@@ -321,5 +334,101 @@ class VintageFlowTest : WalletTest() {
         val restored = wallet(chain)
         restored.sync()
         assertEquals(123_456L, restored.stakeOf("derth/$vA/$next").single().amount)
+    }
+
+    /**
+     * The month-boundary grace: a delegation quoted, and a move and a
+     * check-in proven, for last month still land there during the first hour
+     * of the new one, naming it (credit_vintage); past the hour the quote is
+     * shown again, and the chain refuses a credit to last month.
+     */
+    @Test
+    fun creditsNameTheirMonthThroughTheGrace() {
+        val chain = FakeChain()
+        val base = chain.baseVintage
+        val a = funded(chain)
+        a.delegate(vA, 2_000_000); a.sync()
+        val next = Vintages.addMonths(base, 1)
+        // A quote at the end of the month, sent ten minutes into the next.
+        chain.now = Vintages.start(next) - 60
+        a.sync()
+        val q = a.quoteDelegate(vB, 1_000_000)
+        assertEquals("derth/$vB", q.denom)
+        val mq = a.quoteMove("derth/$vA", vB, 300_000)
+        assertEquals("derth/$vB", mq.dstDenom)
+        chain.now = Vintages.start(next) + 600
+        assertEquals(base, a.vintageContext()!!.grace)
+        a.delegate(q); a.sync()
+        assertEquals(base, (chain.lastMsg as MsgDelegate).vintage)
+        a.redelegate(mq); a.sync()
+        val mv = chain.lastMsg as network.erth.earth.proto.shieldedstaking.MsgRedelegate
+        assertEquals(base, mv.vintage)
+        assertEquals(base, mv.creditVintage)
+        assertEquals(Privacy.assetId("derth/$vB"), chain.prover.allStakes.last().crAsset)
+        assertEquals(q.derth + mv.dstDerth, chain.supplyOf(vB, base))
+
+        // A check-in names the month its credit lane proves (the current one).
+        a.checkIn(a.checkIns().single { it.validator == vA }); a.sync()
+        val ci = chain.lastMsg as MsgCheckIn
+        assertEquals(next, ci.creditVintage)
+        assertEquals(Privacy.assetId("derth/$vA/$next"), chain.prover.allStakes.last().crAsset)
+
+        // Past the hour: a stale quote is shown again, nothing sent.
+        val stale = a.quoteDelegate(vB, 1_000_000)
+        chain.now = Vintages.start(Vintages.addMonths(next, 1)) + Vintages.GRACE_SECONDS
+        assertEquals(0, a.vintageContext()!!.grace)
+        val sent = chain.txs.size
+        assertThrows(PrivacyWallet.QuoteChanged::class.java) { a.delegate(stale) }
+        assertEquals(sent, chain.txs.size)
+    }
+
+    /** The vintage reads name no validator: Query/VintageInfo for the clock, Query/VintageBooks read whole for a retired vintage. */
+    @Test
+    fun vintageReadsNameNoValidator() {
+        val chain = FakeChain()
+        val base = chain.baseVintage
+        val a = funded(chain)
+        a.delegate(vA, 1_000_000); a.sync()
+        assertEquals(0, chain.booksReads)
+        // A live row reads no books.
+        a.stakeHoldings()
+        assertEquals(0, chain.booksReads)
+        chain.now = Vintages.retiresAt(base) + 2 * 86_400
+        a.sync()
+        a.quoteWithdraw("derth/$vA")
+        assertEquals(1, chain.booksReads)
+    }
+
+    /**
+     * A withdrawal pays one note's worth at most (2^63 - 1 uerth): a larger
+     * share leaves in parts, each the largest d with floor(d x V / S) under
+     * the limit, against the vintage as the last part left it.
+     */
+    @Test
+    fun withdrawalPartsFitOneNote() {
+        val max = java.math.BigInteger.valueOf(Long.MAX_VALUE)
+        val s = java.math.BigInteger.valueOf(1_000_000_000_000L)
+        val v = max.multiply(java.math.BigInteger.valueOf(3)) // 3 notes' worth
+        var rv = PrivacyChainReads.RetiredVintage(vA, 202601, "derth/$vA/202601", s, v, s, v, 1, 0)
+        var left = s.toLong()
+        var parts = 0
+        var paid = java.math.BigInteger.ZERO
+        while (left > 0) {
+            val d = rv.partDerth(left)
+            assertTrue(d in 1..left)
+            val w = rv.payout(d)
+            assertTrue(w <= max)
+            // The largest such d: one more derth would not fit.
+            if (d < left) assertTrue(rv.payout(d + 1) > max)
+            paid += w
+            rv = rv.after(d)
+            left -= d
+            parts++
+        }
+        assertEquals(4, parts)
+        assertEquals(v, paid)
+        // A share that fits is one part.
+        val small = PrivacyChainReads.RetiredVintage(vA, 202601, "", s, s, s, s, 1, 0)
+        assertEquals(s.toLong(), small.partDerth(s.toLong()))
     }
 }

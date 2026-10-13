@@ -184,7 +184,8 @@ fun EarnScreen(
 
         Spacer(Modifier.height(dimens.space24))
         privateStake.forEach { p ->
-            StakeListRow(p, view) { if (p.retired) onWithdraw(p.denom) else opened = p.denom }
+            // A retiring row waits for the epoch end: nothing to tap.
+            StakeListRow(p, view) { if (p.retiring) Unit else if (p.retired) onWithdraw(p.denom) else opened = p.denom }
         }
         unstaking.forEach { u -> UnstakingListRow(u, view) }
         Spacer(Modifier.height(dimens.space32))
@@ -228,6 +229,9 @@ data class PrivateStakeRow(
     val retiresAt: Long = 0,
     /** Its vintage has retired: it earns nothing and is only withdrawn. */
     val retired: Boolean = false,
+    /** Retired, not booked yet: nothing to do until [withdrawFrom] (the next epoch end; 0 unknown). */
+    val retiring: Boolean = false,
+    val withdrawFrom: Long = 0,
 ) {
     /** Within a month of its retirement: the row warns and Check in shows. */
     fun checkInDue(now: Long): Boolean = !retired && retiresAt > 0 && now >= retiresAt - network.erth.wallet.privacy.Vintages.CHECK_IN_LEAD_SECONDS
@@ -278,11 +282,13 @@ private val PrivateStakeRow.status: StakeStatus
 
 /**
  * The row's one line: "Earning · check in by Oct 31, 2027"; within a month
- * of it, "Check in by Oct 31, 2027" (warning); retired, "Not earning since
- * Nov 1, 2026 · Withdraw". Null before vintages (nothing to say).
+ * of it, "Check in by Oct 31, 2027" (warning); retiring (past it, until the
+ * epoch end books it), "Retiring · withdraw from Nov 2, 2026"; retired, "Not
+ * earning since Nov 1, 2026 · Withdraw". Null before vintages (nothing to say).
  */
 private fun PrivateStakeRow.vintageLine(now: Long): Pair<String, Boolean>? = when {
     retiresAt <= 0 -> null
+    retiring -> (if (withdrawFrom > 0) "Retiring · withdraw from ${longDay(withdrawFrom)}" else "Retiring · withdraw soon") to false
     retired -> "Not earning since ${longDay(retiresAt)} · Withdraw" to false
     checkInDue(now) -> "Check in by ${longDay(retiresAt)}" to true
     standing?.earns == false -> "${standing.label} · check in by ${longDay(retiresAt)}" to false

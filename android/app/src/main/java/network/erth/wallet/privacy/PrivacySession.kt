@@ -438,10 +438,14 @@ object PrivacySession {
         }
 
         override fun groundworksVotes() = PrivacyQueries.groundworksVotes().map {
-            PrivacyChainReads.GroundworksVote(it.id, it.validator, it.derth, it.weight, it.tag, it.splits, it.splitExpiresAt, it.pending, it.maturesAt, it.vintage)
+            PrivacyChainReads.GroundworksVote(it.id, it.validator, it.derth, it.weight, it.tag, it.splits, it.pending, it.maturesAt, it.vintage)
         }
 
-        override fun vintages(validator: String) = PrivacyQueries.vintages(validator)
+        override fun vintageInfo() = PrivacyQueries.vintageInfo()
+
+        override fun vintageBooks() = PrivacyQueries.vintageBooks()
+
+        override fun epochEndsAt(): Long? = PrivacyQueries.epoch().endTime.takeIf { it > 0 }
 
         override fun minGroundworksVote(): Long = PrivacyQueries.minGroundworksVote()
 

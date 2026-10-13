@@ -359,14 +359,15 @@ object PrivateMsgs {
             withVintage(listOf(u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight)) +
                 msg.voteNullifiersList.map { f(it) } + listOf(f(msg.debtRoot)), msg.vintage)
         }
-        is MsgRedelegate -> withVintage(stakeFields(msg.stake) + listOf(
+        // credit_vintage (the credit lane's month) after vintage, when named (it needs a named vintage, so the two never hash alike).
+        is MsgRedelegate -> withVintage(withVintage(stakeFields(msg.stake) + listOf(
             bytes(msg.srcValidator), bytes(msg.dstValidator), u(msg.amount), u(msg.dstDerth), u(msg.moveTime),
             Privacy.bytes(splitsBytes(msg.groundworksSplitList)),
-        ), msg.vintage)
-        // v1.3.0: always names its month (from_vintage is never 0), so nothing is appended.
-        is MsgCheckIn -> stakeFields(msg.stake) + listOf(
+        ), msg.vintage), msg.creditVintage)
+        // v1.3.0: from_vintage is always named; credit_vintage is appended when named.
+        is MsgCheckIn -> withVintage(stakeFields(msg.stake) + listOf(
             bytes(msg.validator), u(msg.fromVintage.toLong() and 0xffffffffL), u(msg.amount), Privacy.bytes(splitsBytes(msg.groundworksSplitList)),
-        )
+        ), msg.creditVintage)
         is MsgNoteSwap -> listOf(
             bytes(msg.denomIn), u(msg.amountIn), bytes(msg.denomOut), u(msg.minAmountOut), f(msg.pc), bytes(msg.ciphertext),
         )

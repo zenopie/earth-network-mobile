@@ -150,8 +150,6 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         val derth: Long,
         val tag: Fr,
         val splits: Map<Long, Long>,
-        /** Always 0 since v1.3.0: a stake vote has no lease, it ends with its [vintage]. */
-        val splitExpiresAt: Long = 0,
         /** Moved-in derth voting pending (its move's key), counted from [maturesAt]. */
         val pending: Long = 0,
         val pendingKey: Fr = Fr.ZERO,
@@ -255,6 +253,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** The base vintage: the unsuffixed derth/<valoper>'s month (the genesis month here). */
     var baseVintage: Int = maxOf(Vintages.monthOf(now), 200_001)
     fun currentVintage(): Int = maxOf(Vintages.monthOf(now), baseVintage)
+    /** The previous month during the first hour of this one (the grace a credit may still name), else 0. */
+    fun graceVintage(): Int = currentVintage().let { c -> if (c == Vintages.monthOf(now) && now - Vintages.start(c) < Vintages.GRACE_SECONDS) Vintages.addMonths(c, -1) else 0 }
+    /** A credit_vintage resolved: 0 names the current month. */
+    fun creditOf(m: Int): Int = if (m == 0) currentVintage() else m
+    private fun checkCredit(m: Int) {
+        val g = graceVintage()
+        require(m == currentVintage() || (g != 0 && m == g)) { "a credit lands in the current vintage ${currentVintage()}, not $m (code 1122)" }
+    }
     fun resolve(m: Int): Int = if (m == 0) baseVintage else m
     fun vintageDenom(v: String, m: Int): String = Vintages.denom(v, m, baseVintage)
     /** S_{v,m}: derth per (validator, vintage) of the live books. */
@@ -273,38 +279,71 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         val matured: Boolean = false, val completion: Long = 0,
     )
     val retiredVintages = LinkedHashMap<Pair<String, Int>, Retired>()
-    /** Set to keep the BeginBlock sweep from booking retirements (the boundary block before it reaches a book). */
-    var sweepPaused = false
+    /**
+     * Set while the epoch end since a vintage's retirement has not come: a
+     * due vintage is then retiring (still in its book, every msg refused,
+     * nothing to withdraw yet) and is booked at the next [retireDue] after
+     * it is cleared.
+     */
+    var epochEndPending = false
+    /** When the current epoch ends (Query/Epoch end_time): what a retiring row's "withdraw from" says. */
+    var epochEndsAt = 0L
 
-    /** The BeginBlock sweep at [now]: every due vintage retires at the live rate, its votes are swept. */
+    /**
+     * The dead-vote sweep at the boundary, then the epoch end's booking at
+     * [now] (unless [epochEndPending]): every due vintage retires at the live
+     * rate into a held payout, its record unbonding.
+     */
     fun retireDue() {
-        if (sweepPaused) return
+        sweepDeadVotes()
+        if (epochEndPending) return
         for ((k, sup) in vintageSupply.entries.toList()) {
             if (!Vintages.retired(k.second, currentVintage())) continue
             vintageSupply.remove(k)
             if (sup <= 0) continue
             val (b, total) = book(k.first)
             val value = (BigInteger.valueOf(sup) * b / total).toLong()
-            retiredVintages[k] = Retired(k.first, k.second, sup, value, sup, value, Vintages.retiresAt(k.second), completion = now + maxUnbondingSeconds)
+            retiredVintages[k] = Retired(k.first, k.second, sup, value, sup, value, now, completion = now + maxUnbondingSeconds)
         }
-        sweepDeadVotes()
     }
 
-    /** Query/Vintages{validator}. */
-    fun vintagesRead(v: String): PrivacyChainReads.VintageState {
-        retireDue()
+    /** Query/VintageInfo. */
+    fun vintageInfoRead(): PrivacyChainReads.VintageInfo {
         val cur = currentVintage()
-        val live = vintageSupply.filter { it.key.first == v && it.value > 0 && Vintages.live(it.key.second, cur) }
-            .toSortedMap(compareBy { Vintages.index(it.second) })
-            .map { (k, sup) -> PrivacyChainReads.LiveVintage(k.second, vintageDenom(v, k.second), BigInteger.valueOf(sup), Vintages.retiresAt(k.second)) }
-        val retired = retiredVintages.values.filter { it.validator == v && it.remainingSupply > 0 }.map {
-            PrivacyChainReads.RetiredVintage(
-                it.validator, it.vintage, vintageDenom(v, it.vintage), BigInteger.valueOf(it.supply), BigInteger.valueOf(it.value),
-                BigInteger.valueOf(it.remainingSupply), BigInteger.valueOf(it.remainingValue), epoch, it.retiredAt,
-                hasRecord = it.remainingValue > 0, recordStatus = if (it.matured) PrivacyChainReads.UNBOND_MATURED else 1, completionTime = it.completion,
+        return PrivacyChainReads.VintageInfo(cur, baseVintage, Vintages.start(Vintages.addMonths(cur, 1)))
+    }
+
+    /** Every Query/VintageBooks read, in order (the wallet reads it whole; nothing names a validator). */
+    var booksReads = 0
+
+    /** Query/VintageBooks read whole: live and retiring vintages holding supply, retired ones not fully withdrawn. */
+    fun vintageBooksRead(): PrivacyChainReads.VintageBooks {
+        retireDue()
+        booksReads++
+        val cur = currentVintage()
+        val books = vintageSupply.filter { it.value > 0 }.map { (k, sup) ->
+            val retiring = Vintages.retired(k.second, cur)
+            PrivacyChainReads.VintageBookEntry(
+                k.first, k.second, vintageDenom(k.first, k.second),
+                if (retiring) PrivacyChainReads.VintageBookEntry.RETIRING else PrivacyChainReads.VintageBookEntry.LIVE,
+                BigInteger.valueOf(sup), Vintages.retiresAt(k.second),
+                expectedCompletion = if (retiring) epochEndsAt + maxUnbondingSeconds else 0,
+            )
+        } + retiredVintages.values.filter { it.remainingSupply > 0 }.map {
+            val expected = if (it.matured || it.remainingValue <= 0) 0 else it.completion
+            PrivacyChainReads.VintageBookEntry(
+                it.validator, it.vintage, vintageDenom(it.validator, it.vintage), PrivacyChainReads.VintageBookEntry.RETIRED,
+                retiresAt = Vintages.retiresAt(it.vintage),
+                retired = PrivacyChainReads.RetiredVintage(
+                    it.validator, it.vintage, vintageDenom(it.validator, it.vintage), BigInteger.valueOf(it.supply), BigInteger.valueOf(it.value),
+                    BigInteger.valueOf(it.remainingSupply), BigInteger.valueOf(it.remainingValue), epoch, it.retiredAt,
+                    hasRecord = it.remainingValue > 0, recordStatus = if (it.matured) PrivacyChainReads.UNBOND_MATURED else 1, completionTime = it.completion,
+                    expectedCompletion = expected,
+                ),
+                expectedCompletion = expected,
             )
         }
-        return PrivacyChainReads.VintageState(cur, baseVintage, live, retired, Vintages.start(Vintages.addMonths(cur, 1)))
+        return PrivacyChainReads.VintageBooks(vintageInfoRead(), books.sortedWith(compareBy({ it.validator }, { Vintages.index(it.vintage) })))
     }
     /** Open moves: key -> (src, dst, move_time, credited). */
     data class Move(val key: Fr, val src: String, val dst: String, val moveTime: Long, val credited: Long)
@@ -770,7 +809,11 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** A msg's two outputs' votes: lane A's in its vintage, the credit lane's in the current month. */
     private fun gwOutputs(m: MessageLite, p: StakeProof): List<GwOut> {
         val (_, a, credit) = groundworks(m)
-        val cur = currentVintage()
+        val cur = when (m) {
+            is MsgRedelegate -> creditOf(m.creditVintage)
+            is MsgCheckIn -> creditOf(m.creditVintage)
+            else -> currentVintage()
+        }
         val cr = if (m is MsgRedelegate && !f(p.creditVoteTag).isZero) GwOut(f(p.creditVoteTag), p.creditVoteWeight, m.dstDerth, f(p.creditNullifier), m.moveTime, credit, cur)
         else GwOut(f(p.creditVoteTag), p.creditVoteWeight, 0, Fr.ZERO, 0, credit, cur)
         return listOf(GwOut(f(p.voteTag), p.voteWeight, p.pendingExposed, f(p.pendingKey), p.pendingTime, a, laneVintage(m)), cr)
@@ -1033,10 +1076,12 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         val cur = currentVintage()
         require(Vintages.index(v) <= Vintages.index(cur)) { "vintage $v has not begun (code 1122)" }
         when (m) {
-            is MsgDelegate -> require(v == cur) { "a delegation credits the current vintage $cur, not $v (code 1122)" }
+            is MsgDelegate -> checkCredit(v)
             is MsgCheckIn -> {
+                require(m.creditVintage == 0 || Vintages.valid(m.creditVintage)) { "${m.creditVintage} is not a vintage (YYYYMM) (code 1122)" }
+                checkCredit(creditOf(m.creditVintage))
                 require(!Vintages.retired(v, cur)) { "vintage $v has retired (code 1121)" }
-                require(Vintages.index(v) < Vintages.index(cur)) { "a check-in is from a vintage before the current month (code 1122)" }
+                require(Vintages.index(v) < Vintages.index(creditOf(m.creditVintage))) { "a check-in is from a vintage before its credit month (code 1122)" }
                 require(m.amount in 1..supplyOf(m.validator, v)) { "more derth than vintage $v holds (code 1103)" }
             }
             is MsgUndelegate -> if (Vintages.retired(v, cur)) {
@@ -1044,6 +1089,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(r.remainingSupply > 0) { "vintage $v is fully withdrawn (code 1121)" }
                 require(m.groundworksSplitCount == 0 && f(m.stake.voteTag).isZero) { "a withdrawal neither votes nor carries a split (code 1121)" }
                 require(m.amount <= r.remainingSupply) { "more derth than vintage $v has left (code 1103)" }
+            }
+            is MsgRedelegate -> {
+                require(!Vintages.retired(v, cur)) { "vintage $v has retired (code 1121)" }
+                if (m.creditVintage != 0) {
+                    require(m.vintage != 0) { "a credit_vintage needs an explicit vintage (code 1122)" }
+                    require(Vintages.valid(m.creditVintage)) { "${m.creditVintage} is not a vintage (YYYYMM) (code 1122)" }
+                }
+                checkCredit(creditOf(m.creditVintage))
             }
             else -> require(!Vintages.retired(v, cur)) { "vintage $v has retired (code 1121)" }
         }
@@ -1261,18 +1314,18 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 val key = f(m.stake.creditNullifier)
                 validators.add(m.srcValidator); validators.add(m.dstValidator)
                 addSupply(m.srcValidator, resolve(m.vintage), -m.amount)
-                addSupply(m.dstValidator, currentVintage(), m.dstDerth)
+                addSupply(m.dstValidator, creditOf(m.creditVintage), m.dstDerth)
                 moves[key] = Move(key, m.srcValidator, m.dstValidator, m.moveTime, m.dstDerth)
                 events.add("shieldedstaking_redelegate" to mapOf("src_validator" to m.srcValidator, "dst_validator" to m.dstValidator,
                     "derth" to m.amount.toString(), "credited" to m.dstDerth.toString(), "move_key" to key.toHex(), "move_time" to m.moveTime.toString(),
-                    "vintage" to resolve(m.vintage).toString(), "dst_vintage" to currentVintage().toString()))
+                    "vintage" to resolve(m.vintage).toString(), "dst_vintage" to creditOf(m.creditVintage).toString()))
             }
             is MsgCheckIn -> {
                 addSupply(m.validator, m.fromVintage, -m.amount)
-                addSupply(m.validator, currentVintage(), m.amount)
+                addSupply(m.validator, creditOf(m.creditVintage), m.amount)
                 checkIns.add(m)
                 events.add("shieldedstaking_check_in" to mapOf("validator" to m.validator, "from_vintage" to m.fromVintage.toString(),
-                    "to_vintage" to currentVintage().toString(), "derth" to m.amount.toString()))
+                    "to_vintage" to creditOf(m.creditVintage).toString(), "derth" to m.amount.toString()))
             }
             is MsgUndelegate -> if (withdrawal(m)) {
                 // A retired vintage's withdrawal: its share of the held value, paid with the held payout's record.
@@ -1570,7 +1623,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         retireDue()
         return gwVotes.values.sortedBy { it.id }.map {
             PrivacyChainReads.GroundworksVote(
-                it.id, it.validator, it.derth, PrivacyWallet.derthValue(it.derth, quoteOf(it.validator).epochRate), it.tag, it.splits, it.splitExpiresAt,
+                it.id, it.validator, it.derth, PrivacyWallet.derthValue(it.derth, quoteOf(it.validator).epochRate), it.tag, it.splits,
                 it.pending, it.maturesAt, it.vintage,
             )
         }
@@ -1602,8 +1655,9 @@ object ChainLayout {
             is MsgDelegate -> Lanes(d(m.validator, m.vintage), m.derth, 0)
             is MsgRestake -> Lanes(d(m.validator, m.vintage), 0, 0)
             is MsgUndelegate -> Lanes(d(m.validator, m.vintage), 0, m.amount)
-            is MsgRedelegate -> Lanes(d(m.srcValidator, m.vintage), 0, m.amount, Vintages.denom(m.dstValidator, current, base), m.dstDerth, m.moveTime)
-            is MsgCheckIn -> Lanes(Vintages.denom(m.validator, m.fromVintage, base), 0, m.amount, Vintages.denom(m.validator, current, base), m.amount, 0)
+            // The credit lane: credit_vintage's asset (0: the current month's).
+            is MsgRedelegate -> Lanes(d(m.srcValidator, m.vintage), 0, m.amount, Vintages.denom(m.dstValidator, if (m.creditVintage == 0) current else m.creditVintage, base), m.dstDerth, m.moveTime)
+            is MsgCheckIn -> Lanes(Vintages.denom(m.validator, m.fromVintage, base), 0, m.amount, Vintages.denom(m.validator, if (m.creditVintage == 0) current else m.creditVintage, base), m.amount, 0)
             else -> Lanes(null, 0, 0)
         }
     }

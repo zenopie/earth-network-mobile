@@ -119,8 +119,6 @@ interface PrivacyChainReads {
         val weight: Long = 0,
         val tag: Fr,
         val splits: Map<Long, Long>,
-        /** The vote's lease end before v1.3.0; always 0 since (a stake vote ends with its vintage). */
-        val splitExpiresAt: Long,
         /** Moved-in derth voting pending: counted from [maturesAt] (when its move's window closes). */
         val pending: Long = 0,
         val maturesAt: Long = 0,
@@ -128,16 +126,15 @@ interface PrivacyChainReads {
         val vintage: Int = 0,
     )
 
-    /** One live vintage at a validator holding supply (Query/Vintages). */
-    data class LiveVintage(val vintage: Int, val denom: String, val supply: java.math.BigInteger, val retiresAt: Long)
-
     /**
-     * A retired vintage not yet fully withdrawn (Query/Vintages): what it
-     * held and was worth when it retired, and what its notes have not yet
-     * withdrawn ([remainingSupply] derth worth [remainingValue] uerth); its
-     * held payout's unbond record ([recordStatus] 0 pending, 1 unbonding, 2
-     * matured; [completionTime] unix seconds, 0 unknown), absent ([hasRecord]
-     * false) once nothing is held.
+     * A retired vintage not yet fully withdrawn (Query/VintageBooks): what it
+     * held and was worth when the epoch end booked it, and what its notes
+     * have not yet withdrawn ([remainingSupply] derth worth [remainingValue]
+     * uerth); its held payout's unbond record ([recordStatus] 0 pending, 1
+     * unbonding, 2 matured; [completionTime] unix seconds, 0 unknown), absent
+     * ([hasRecord] false) once nothing is held; [expectedCompletion] the
+     * chain's word on when the held value is paid (exact while unbonding, an
+     * estimate while pending; 0 matured or unknown).
      */
     data class RetiredVintage(
         val validator: String,
@@ -152,6 +149,7 @@ interface PrivacyChainReads {
         val hasRecord: Boolean = false,
         val recordStatus: Int = 0,
         val completionTime: Long = 0,
+        val expectedCompletion: Long = 0,
     ) {
         /** Whether a withdrawal pays in the next block (the held payout's record has matured) rather than at its maturity. */
         val paysNow: Boolean get() = hasRecord && recordStatus == UNBOND_MATURED
@@ -166,16 +164,63 @@ interface PrivacyChainReads {
             if (remainingSupply.signum() <= 0 || d > remainingSupply) return java.math.BigInteger.ZERO
             return if (d == remainingSupply) remainingValue else d.multiply(remainingValue).divide(remainingSupply)
         }
+
+        /**
+         * The most of [free] derth one withdrawal takes: the chain pays a
+         * withdrawal as one note (its share at most 2^63 - 1 uerth, 1103
+         * otherwise), so a larger share leaves in parts. The largest d with
+         * floor(d x V / S) <= 2^63 - 1 is ((2^63) x S - 1) / V.
+         */
+        fun partDerth(free: Long): Long {
+            if (free <= 0 || payout(free) <= MAX_NOTE) return free
+            val d = TWO_63.multiply(remainingSupply).subtract(java.math.BigInteger.ONE).divide(remainingValue)
+            return d.min(java.math.BigInteger.valueOf(free)).toLong()
+        }
+
+        /** This vintage after withdrawing [derth] (its share split off): what the next part is quoted against. */
+        fun after(derth: Long): RetiredVintage {
+            val w = payout(derth)
+            return copy(remainingSupply = remainingSupply - java.math.BigInteger.valueOf(derth), remainingValue = remainingValue - w)
+        }
+
+        private companion object {
+            val MAX_NOTE: java.math.BigInteger = java.math.BigInteger.valueOf(Long.MAX_VALUE)
+            val TWO_63: java.math.BigInteger = java.math.BigInteger.ONE.shiftLeft(63)
+        }
     }
 
-    /** x/shieldedstaking Query/Vintages{validator}: the current month, the base vintage, the live and the (first page of) retired vintages. */
-    data class VintageState(
-        val current: Int,
-        val base: Int,
-        val live: List<LiveVintage>,
-        val retired: List<RetiredVintage>,
-        val nextRetirement: Long,
-    )
+    /** x/shieldedstaking Query/VintageInfo: the vintage clock (names no validator). */
+    data class VintageInfo(val current: Int, val base: Int, val nextRetirement: Long)
+
+    /**
+     * One (validator, vintage) of Query/VintageBooks: [state] [LIVE] (msgs
+     * taken), [RETIRING] (past [retiresAt], still in the book and earning,
+     * refusing every msg, booked as retired at the next epoch end) or
+     * [RETIRED] (withdrawals only: [retired]); [supply] its derth while live
+     * or retiring; [expectedCompletion] when a retiring or retired vintage's
+     * value is paid (unix seconds; an estimate while retiring; 0 none).
+     */
+    data class VintageBookEntry(
+        val validator: String,
+        val vintage: Int,
+        val denom: String,
+        val state: String,
+        val supply: java.math.BigInteger = java.math.BigInteger.ZERO,
+        val retiresAt: Long = 0,
+        val retired: RetiredVintage? = null,
+        val expectedCompletion: Long = 0,
+    ) {
+        companion object {
+            const val LIVE = "live"
+            const val RETIRING = "retiring"
+            const val RETIRED = "retired"
+        }
+    }
+
+    /** Query/VintageBooks read whole: every validator's vintages, and the vintage clock as of the block read. */
+    data class VintageBooks(val info: VintageInfo, val entries: List<VintageBookEntry>) {
+        fun of(validator: String, vintage: Int): VintageBookEntry? = entries.firstOrNull { it.validator == validator && it.vintage == vintage }
+    }
 
     /**
      * x/personhood Query/LeaseBounds: the lease lengths the
@@ -311,14 +356,22 @@ interface PrivacyChainReads {
     fun unbondDueBy(epoch: Long): Long? = null
 
     /**
-     * x/shieldedstaking Query/Vintages{validator} (v1.3.0): null when the
-     * chain has no vintages (before the upgrade: every stake note is the
-     * unsuffixed derth/<valoper>, every msg names vintage 0). A read that
-     * fails throws. Public, but it names a validator: the wallet asks it of
-     * the first listed validator (for the base vintage, once a chain) or of
-     * every listed one, never of one it holds stake at alone.
+     * x/shieldedstaking Query/VintageInfo (v1.3.0): null when the chain has
+     * no vintages (before the upgrade: every stake note is the unsuffixed
+     * derth/<valoper>, every msg names vintage 0). A read that fails throws.
      */
-    fun vintages(validator: String): VintageState? = null
+    fun vintageInfo(): VintageInfo? = null
+
+    /**
+     * x/shieldedstaking Query/VintageBooks, every page: every validator's
+     * live, retiring and retired vintages. Read whole, so that nothing asked
+     * names a validator this wallet holds (Query/Vintages, for explorers,
+     * does). Null on a chain without vintages; a read that fails throws.
+     */
+    fun vintageBooks(): VintageBooks? = null
+
+    /** When the current epoch ends (Query/Epoch end_time, unix seconds): when a retiring vintage is booked. Null: unknown. */
+    fun epochEndsAt(): Long? = null
 }
 
 /**
@@ -1765,23 +1818,22 @@ class PrivacyWallet(
     )
 
     /**
-     * The chain's vintages for a tx: its base vintage (read once a chain,
-     * from the first validator listed, never one this wallet holds stake at,
-     * and kept) and the current month (the chain's latest block time). Null on
-     * a chain without vintages (before v1.3.0): every note is the unsuffixed
-     * derth/<valoper> and every msg names vintage 0.
+     * The chain's vintages for a tx: its base vintage (Query/VintageInfo,
+     * read once a chain and kept; it names no validator), the current month
+     * (the chain's latest block time) and, during a month's first hour, the
+     * previous month a credit may still name. Null on a chain without
+     * vintages (before v1.3.0): every note is the unsuffixed derth/<valoper>
+     * and every msg names vintage 0.
      */
     fun vintageContext(): Vintages.Context? {
         val known = synchronized(store) { store.state.baseVintage }
-        // A clock before the base vintage (never the chain's) reads as the base month.
-        if (known > 0) return Vintages.Context(known, Vintages.monthOf(chainNow()).let { if (Vintages.index(it) < Vintages.index(known)) known else it })
-        val first = reads.validators().validators.firstOrNull()?.validator ?: return null
-        val v = reads.vintages(first) ?: return null
+        if (known > 0) return Vintages.at(known, chainNow())
+        val v = reads.vintageInfo() ?: return null
         synchronized(store) {
             store.state.baseVintage = v.base
             store.save()
         }
-        return Vintages.Context(v.base, v.current)
+        return Vintages.at(v.base, chainNow()).let { if (Vintages.index(it.current) < Vintages.index(v.current)) Vintages.Context(v.base, v.current) else it }
     }
 
     /**
@@ -1789,9 +1841,7 @@ class PrivacyWallet(
      * vintage last read and the month of the device's clock. For display and
      * reminders only; null until the base vintage was read.
      */
-    fun localVintages(): Vintages.Context? = store.state.baseVintage.takeIf { it > 0 }?.let { b ->
-        Vintages.Context(b, Vintages.monthOf(now()).let { if (Vintages.index(it) < Vintages.index(b)) b else it })
-    }
+    fun localVintages(): Vintages.Context? = store.state.baseVintage.takeIf { it > 0 }?.let { b -> Vintages.at(b, now()) }
 
     /**
      * The derth denom a stake action names: [stake] itself when it is one
@@ -1808,6 +1858,17 @@ class PrivacyWallet(
             Vintages.parse(n.denom)?.takeIf { it.validator == stake }?.let { n.denom to ctx.monthOf(n.denom)!! }
         }.filter { ctx.live(it.second) }
         return held.maxByOrNull { Vintages.index(it.second) }?.first ?: ctx.currentDenom(stake)
+    }
+
+    /**
+     * The credit denom [quoted] for [validator] when a credit may still land
+     * there (the current month, or last month during the first hour of this
+     * one: the chain's grace); null when it may not (the quote is stale).
+     */
+    private fun creditDenom(validator: String, quoted: String, ctx: Vintages.Context?): String? {
+        if (ctx == null) return quoted.takeIf { it == derthDenom(validator) }
+        val m = ctx.monthOf(quoted) ?: return null
+        return quoted.takeIf { ctx.credits(m) && it == ctx.denom(validator, m) }
     }
 
     /** The vintage a msg on [denom] names: its month (the base's for the unsuffixed form; v1.3.0 wallets always name it), 0 on a chain without vintages. */
@@ -1969,6 +2030,13 @@ class PrivacyWallet(
         val retiresAt: Long = 0,
         /** Its vintage has retired: it earns nothing and can only be withdrawn. */
         val retired: Boolean = false,
+        /**
+         * Retired but not booked yet ([retired] too): from its retirement to
+         * the next epoch end every msg on it is refused and it cannot be
+         * withdrawn yet; it can from [withdrawFrom] (unix seconds; 0 unknown).
+         */
+        val retiring: Boolean = false,
+        val withdrawFrom: Long = 0,
     ) {
         /** Its check-in is due: within [Vintages.CHECK_IN_LEAD_SECONDS] of its retirement (and not retired, nor the current month's). */
         fun checkInDue(now: Long): Boolean = !retired && retiresAt > 0 && now >= retiresAt - Vintages.CHECK_IN_LEAD_SECONDS
@@ -1985,9 +2053,15 @@ class PrivacyWallet(
         val notes = synchronized(this) { store.state.stakeNotes.filter { it.spendable && Vintages.parse(it.denom) != null } }
         val view = d ?: if (notes.any { it.label != null }) runCatching { debtView() }.getOrNull() else null
         val ctx = localVintages() ?: if (notes.isNotEmpty()) runCatching { vintageContext() }.getOrNull()?.let { localVintages() } else null
+        // Past its retirement, a vintage is retiring until the epoch end books it: the books (read whole) say which.
+        val pastDue = notes.mapNotNull { n -> ctx?.monthOf(n.denom)?.takeIf { ctx.retired(it) }?.let { parseDerth(n.denom) to it } }.toSet()
+        val books = if (pastDue.isEmpty()) null else runCatching { vintageBooks(fresh = false) }.getOrNull()
+        val retiring = pastDue.filter { (v, m) -> books?.of(v, m)?.state == PrivacyChainReads.VintageBookEntry.RETIRING }.toSet()
+        val withdrawFrom = if (retiring.isEmpty()) 0L else runCatching { reads.epochEndsAt() }.getOrNull() ?: 0L
         return notes.groupBy { it.denom }.toSortedMap().map { (denom, ns) ->
             val open = ns.mapNotNull { it.label }.filter { view == null || !view.clearable(it) }
             val m = ctx?.monthOf(denom) ?: 0
+            val isRetiring = m > 0 && (parseDerth(denom) to m) in retiring
             StakeHolding(
                 validator = parseDerth(denom),
                 derth = Amounts.satSum(ns) { it.amount },
@@ -2000,6 +2074,8 @@ class PrivacyWallet(
                 vintage = m,
                 retiresAt = if (m > 0) Vintages.retiresAt(m) else 0,
                 retired = m > 0 && ctx!!.retired(m),
+                retiring = isRetiring,
+                withdrawFrom = if (isRetiring) withdrawFrom else 0L,
             )
         }
     }
@@ -2120,14 +2196,15 @@ class PrivacyWallet(
      * to two of them, a labelled one cleared once its window closed), or pads
      * its input when we hold none, so a first delegation looks like a top-up.
      * A rate that outran the quote is refused in the ante: nothing spent,
-     * nothing paid. So is a quote from last month (the chain credits the
-     * current month only).
+     * nothing paid. A quote from last month still sends during the first
+     * hour of the new one (the chain's grace: the credit lands in last
+     * month's vintage, named); later it is shown again.
      */
     fun delegate(q: DelegateQuote): TxResult {
         val gw = groundworksContext()
         val ctx = vintageContext()
-        val denom = ctx?.currentDenom(q.validator) ?: derthDenom(q.validator)
-        if (denom != q.denom) throw QuoteChanged("a new month began since the quote: stake now lands in this month's vintage; review it again")
+        val denom = creditDenom(q.validator, q.denom, ctx)
+            ?: throw QuoteChanged("a new month began since the quote: stake now lands in this month's vintage; review it again")
         val d = debtView()
         val stake = laneA(denom, StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }, q.derth, 0, d, gw = gw)
         if (haircutOf(stake) > q.haircut) throw QuoteChanged("a slash reached stake you moved to this validator since the quote; review it again")
@@ -2268,13 +2345,13 @@ class PrivacyWallet(
     }
 
     /** MsgUndelegate of [stake] ([amount] derth leaving lane A), its payout opening made and expected, the undelegation remembered. */
-    private fun sendUndelegate(validator: String, amount: Long, stake: StakePlan, vintage: Int, split: List<AllocationWeight>, value: Long?): TxResult {
+    private fun sendUndelegate(validator: String, amount: Long, stake: StakePlan, vintage: Int, split: List<AllocationWeight>, value: Long?, dueBy: Long? = null): TxResult {
         val payout = mint(FEE)
         val pc = payout.pc
         expect(PrivateActivityKind.UNBONDING_PAYOUT, payout)
         val r = run(
             Act(PrivateActivityKind.UNSTAKE, validator),
-            accepted = { hash, timeout -> recordUnbond(PendingUnbond(hash, validator, amount, pc, now(), timeout, value = value)) },
+            accepted = { hash, timeout -> recordUnbond(PendingUnbond(hash, validator, amount, pc, now(), timeout, value = value, dueBy = dueBy)) },
             rejected = { hash -> dropUnbond(hash) },
         ) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
@@ -2361,8 +2438,10 @@ class PrivacyWallet(
         val gw = groundworksContext()
         val ctx = vintageContext()
         requireLive(q.srcDenom, ctx)
-        val dstDenom = ctx?.currentDenom(q.dst) ?: derthDenom(q.dst)
-        if (dstDenom != q.dstDenom) throw QuoteChanged("a new month began since the quote: the move now lands in this month's vintage; review it again")
+        val dstDenom = creditDenom(q.dst, q.dstDenom, ctx)
+            ?: throw QuoteChanged("a new month began since the quote: the move now lands in this month's vintage; review it again")
+        // The credit lane's month, named (0 on a chain without vintages): a proof built for it is taken into the next month's first hour.
+        val creditVintage = ctx?.monthOf(dstDenom) ?: 0
         val d = debtView()
         val moveTime = roots.latestBlock()?.time?.takeIf { it > 0 } ?: throw IllegalStateException("the node did not say its latest block time; try again")
         val target = creditTarget(dstDenom)
@@ -2373,7 +2452,8 @@ class PrivacyWallet(
         return run(Act(PrivateActivityKind.REDELEGATE, "${q.src} → ${q.dst}")) { fee ->
             Assembled(listOf(feeBundle(fee)), stake, extraGas = redelegateHeadroom(q.pairEntries, q.pairCounted)) { bs, sp, _ ->
                 MsgRedelegate.newBuilder().setBundle(bs[0]).setSrcValidator(q.src).setDstValidator(q.dst).setAmount(q.amount)
-                    .setStake(sp!!).setDstDerth(q.dstDerth).setMoveTime(moveTime).addAllGroundworksSplit(gw.split(stake)).setVintage(vintage).build()
+                    .setStake(sp!!).setDstDerth(q.dstDerth).setMoveTime(moveTime).addAllGroundworksSplit(gw.split(stake)).setVintage(vintage)
+                    .setCreditVintage(creditVintage).build()
             }
         }
     }
@@ -2454,8 +2534,9 @@ class PrivacyWallet(
         val stake = laneA(note.denom, listOf(note), 0, cur.amount, d, credit, gw)
         return run(Act(PrivateActivityKind.CHECK_IN, validator)) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
+                // The credit's month named: a proof built before a month ends is still taken in the next one's first hour.
                 MsgCheckIn.newBuilder().setBundle(bs[0]).setValidator(validator).setFromVintage(from).setAmount(cur.amount).setStake(sp!!)
-                    .addAllGroundworksSplit(gw.split(stake)).build()
+                    .addAllGroundworksSplit(gw.split(stake)).setCreditVintage(ctx.current).build()
             }
         }
     }
@@ -2494,10 +2575,12 @@ class PrivacyWallet(
     /**
      * A withdrawal's quote (a retired vintage's MsgUndelegate, ORCHARD_DESIGN
      * 8.9): [amount] derth of [denom] (up to two notes) pays [value] uerth,
-     * its share of what the vintage was worth when it retired (less any
-     * slash since, which reaches the payout itself), [paysNow] in the next
-     * block or else at the held payout's maturity, about [paysAt] (null:
-     * unknown). [haircut]: a cleared label's slash cut (0: none).
+     * its share of what the vintage was worth when the epoch end booked it
+     * (less any slash since, which reaches the payout itself), [paysNow] in
+     * the next block or else at the held payout's maturity, about [paysAt]
+     * (null: unknown). [haircut]: a cleared label's slash cut (0: none).
+     * [parts]: how many txs it takes (the chain pays one withdrawal as one
+     * note, at most 2^63 - 1 uerth; a larger share leaves in parts).
      */
     data class WithdrawQuote(
         val denom: String,
@@ -2509,15 +2592,23 @@ class PrivacyWallet(
         val paysAt: Long?,
         val haircut: Long,
         val retiredAt: Long,
+        val parts: Int = 1,
     )
 
-    /** A retired vintage's withdrawal opens once the chain has booked its retirement (in the first block of the month, or soon after). */
-    class WithdrawalNotOpen : IllegalStateException("the chain has not booked this vintage's retirement yet; try again in a few minutes")
+    /**
+     * A retired vintage's withdrawal opens once the chain has booked its
+     * retirement: at the first epoch end after the boundary ([from], unix
+     * seconds; null unknown). Until then the vintage is retiring.
+     */
+    class WithdrawalNotOpen(val from: Long? = null) : IllegalStateException(
+        from?.let { "this stake is retiring: it can be withdrawn from ${dateText(it)}" }
+            ?: "the chain has not booked this vintage's retirement yet; try again later",
+    )
 
     /**
      * What withdrawing our stake of retired [denom] pays. The retired
-     * vintage's state is read from Query/Vintages of every listed validator
-     * (never ours alone).
+     * vintage's state is read from Query/VintageBooks, whole (nothing asked
+     * names the validator).
      */
     fun quoteWithdraw(denom: String): WithdrawQuote {
         val ctx = vintageContext() ?: throw IllegalStateException("this chain has no stake vintages yet")
@@ -2526,33 +2617,64 @@ class PrivacyWallet(
         val validator = parseDerth(denom)
         val d = debtView()
         val plan = withdrawal(denom, d)
-        val rv = retiredState(validator, m) ?: throw WithdrawalNotOpen()
-        val w = rv.payout(plan.vOut)
+        val rv = retiredState(validator, m)
         if (rv.remainingSupply < java.math.BigInteger.valueOf(plan.vOut)) throw IllegalStateException("more derth than this vintage has left to withdraw")
+        // Part by part, each against the vintage as the last leaves it.
+        var left = plan.vOut
+        var st = rv
+        var parts = 0
+        var w = java.math.BigInteger.ZERO
+        while (left > 0 && parts < MAX_WITHDRAW_PARTS) {
+            val part = st.partDerth(left)
+            if (part <= 0) break
+            w += st.payout(part)
+            st = st.after(part)
+            left -= part
+            parts++
+        }
+        if (left > 0) throw IllegalStateException("this stake is worth more than $MAX_WITHDRAW_PARTS withdrawals carry; withdraw part of it")
         val at = when {
             rv.paysNow -> null
+            rv.expectedCompletion > 0 -> Math.addExact(rv.expectedCompletion, PAYOUT_MARGIN_S)
             rv.recordStatus == 1 && rv.completionTime > 0 -> rv.completionTime
             else -> runCatching { reads.unbondDueBy(rv.epoch) }.getOrNull()
         }
-        return WithdrawQuote(denom, validator, m, plan.vOut, w.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), rv.paysNow, at, haircutOf(plan), Vintages.retiresAt(m))
+        return WithdrawQuote(
+            denom, validator, m, plan.vOut, w.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), rv.paysNow, at, haircutOf(plan),
+            Vintages.retiresAt(m), parts,
+        )
     }
 
-    /** Lane A of a withdrawal: up to two notes of [denom], all their free value leaving (a zero note back, or a still-labelled exposure as change). */
-    private fun withdrawal(denom: String, d: DebtView): StakePlan {
+    /** Lane A of a withdrawal: up to two notes of [denom], [take] of their free value leaving (all of it when null), the rest back as one note (a zero note when nothing is left; a still-labelled exposure stays). */
+    private fun withdrawal(denom: String, d: DebtView, take: ((free: Long) -> Long)? = null): StakePlan {
         val ins = StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }
         val free = Amounts.exactSum(ins) { freeOf(it, d) }
         if (ins.isEmpty() || free <= 0) throw IllegalStateException(lockedText(spendableStake(denom), d) ?: "nothing of this stake can be withdrawn now")
-        return laneA(denom, ins, 0, free, d)
+        return laneA(denom, ins, 0, take?.invoke(free) ?: free, d)
     }
 
-    /** [validator]'s retired vintage [m] (null: not booked yet, or fully withdrawn), from every listed validator's Query/Vintages. */
-    private fun retiredState(validator: String, m: Int): PrivacyChainReads.RetiredVintage? {
-        var found: PrivacyChainReads.RetiredVintage? = null
-        for (v in reads.validators().validators.map { it.validator }.toSortedSet()) {
-            val st = reads.vintages(v) ?: return null
-            if (v == validator) found = st.retired.firstOrNull { it.validator == validator && it.vintage == m }
+    /**
+     * [validator]'s retired vintage [m], from Query/VintageBooks read whole:
+     * refused with [WithdrawalNotOpen] while it is retiring (booked at the
+     * next epoch end) or not listed retired.
+     */
+    private fun retiredState(validator: String, m: Int): PrivacyChainReads.RetiredVintage {
+        val e = vintageBooks()?.of(validator, m)
+        return when (e?.state) {
+            PrivacyChainReads.VintageBookEntry.RETIRED -> e.retired ?: throw WithdrawalNotOpen()
+            PrivacyChainReads.VintageBookEntry.RETIRING -> throw WithdrawalNotOpen(runCatching { reads.epochEndsAt() }.getOrNull())
+            else -> throw WithdrawalNotOpen()
         }
-        return found
+    }
+
+    /** Query/VintageBooks, read whole, kept for [BOOKS_TTL_S] (the rows' state and the withdraw sheet read it). */
+    private var books: Pair<Long, PrivacyChainReads.VintageBooks?>? = null
+
+    private fun vintageBooks(fresh: Boolean = true): PrivacyChainReads.VintageBooks? = synchronized(this) {
+        books?.takeIf { !fresh && now() - it.first in 0 until BOOKS_TTL_S }?.let { return it.second }
+        val b = reads.vintageBooks()
+        books = now() to b
+        b
     }
 
     /**
@@ -2562,14 +2684,30 @@ class PrivacyWallet(
      * and the chain pays our share of the vintage's held value to a fresh
      * note of ours: in the next block once the held payout has matured,
      * else at its maturity. Remembered as any undelegation until it arrives.
+     * A share past one note's most leaves in parts, a tx each (synced
+     * between, each re-quoted against the vintage as the last left it), on
+     * the one confirmation; it stops at the first that fails. Returns the
+     * last.
      */
     fun withdraw(q: WithdrawQuote): TxResult {
         val ctx = vintageContext() ?: throw IllegalStateException("this chain has no stake vintages yet")
         if (!ctx.retired(q.vintage)) throw IllegalStateException("this stake still earns: check it in or unstake it")
-        val d = debtView()
-        val plan = withdrawal(q.denom, d)
-        if (plan.vOut != q.amount || haircutOf(plan) > q.haircut) throw QuoteChanged("this stake changed since the sheet was shown; review it again")
-        return sendUndelegate(q.validator, q.amount, plan, q.vintage, emptyList(), q.value)
+        var last: TxResult? = null
+        repeat(MAX_WITHDRAW_PARTS) {
+            val d = debtView()
+            val free = Amounts.exactSum(StakeSelection.merge(spendableStake(q.denom)) { freeOf(it, d) }) { freeOf(it, d) }
+            if (last == null && free != q.amount) throw QuoteChanged("this stake changed since the sheet was shown; review it again")
+            if (free <= 0) return last ?: throw IllegalStateException("nothing of this stake can be withdrawn now")
+            val rv = retiredState(q.validator, q.vintage)
+            val part = rv.partDerth(free)
+            val plan = withdrawal(q.denom, d) { part }
+            if (last == null && haircutOf(plan) > q.haircut) throw QuoteChanged("this stake changed since the sheet was shown; review it again")
+            val r = sendUndelegate(q.validator, part, plan, q.vintage, emptyList(), rv.payout(part).min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), q.paysAt)
+            last = r
+            if (r.code != 0 || part >= free) return r
+            syncThrough(r)
+        }
+        return last!!
     }
 
     /** Undelegations of this wallet whose payout has not arrived yet, oldest first. */
@@ -2597,7 +2735,8 @@ class PrivacyWallet(
         val epoch = attr("epoch")
         s.pendingUnbonds[i] = s.pendingUnbonds[i].copy(
             confirmed = true, epoch = epoch, value = attr("value") ?: s.pendingUnbonds[i].value, payoutId = attr("payout_id"),
-            dueBy = epoch?.let { e -> runCatching { reads.unbondDueBy(e) }.getOrNull() },
+            // A withdrawal keeps the chain's expected completion it was quoted with.
+            dueBy = s.pendingUnbonds[i].dueBy ?: epoch?.let { e -> runCatching { reads.unbondDueBy(e) }.getOrNull() },
         )
         store.save()
     }
@@ -3418,6 +3557,12 @@ class PrivacyWallet(
 
         /** Slack past the computed payout time for the epoch transition and the block that pays it. */
         const val PAYOUT_MARGIN_S = 15 * 60L
+
+        /** The most txs one withdrawal is sent in (each pays at most 2^63 - 1 uerth). */
+        const val MAX_WITHDRAW_PARTS = 16
+
+        /** How long a read of Query/VintageBooks is kept for the stake rows (a withdrawal reads it afresh). */
+        const val BOOKS_TTL_S = 60L
 
         /**
          * The latest moment an undelegation booked in epoch [e] is paid, given

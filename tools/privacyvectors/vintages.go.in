@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
@@ -168,6 +169,23 @@ func main() {
 		rets[fmt.Sprint(m)] = ret{stakingtypes.VintageRetiresAt(m).Unix(), stakingtypes.VintageStart(m).Unix(), stakingtypes.VintageLive(m, cur), stakingtypes.VintageRetired(m, cur)}
 	}
 	out["retirement"] = rets
+	// The month-boundary grace (fix pass 1): NewVintageCtx at a few times.
+	type graceVec struct {
+		T       int64  `json:"t"`
+		Current uint32 `json:"current"`
+		Grace   uint32 `json:"grace"`
+	}
+	var graces []graceVec
+	for _, t := range []int64{
+		stakingtypes.VintageStart(cur).Unix() - 1, stakingtypes.VintageStart(cur).Unix(), stakingtypes.VintageStart(cur).Unix() + 600,
+		stakingtypes.VintageStart(cur).Unix() + stakingtypes.VintageGraceSeconds - 1, stakingtypes.VintageStart(cur).Unix() + stakingtypes.VintageGraceSeconds,
+		stakingtypes.VintageStart(202701).Unix() + 5,
+	} {
+		vc := stakingtypes.NewVintageCtx(base, time.Unix(t, 0))
+		graces = append(graces, graceVec{t, vc.Current, vc.Grace})
+	}
+	out["grace"] = graces
+	out["grace_seconds"] = stakingtypes.VintageGraceSeconds
 	out["asset_ids"] = map[string]string{
 		stakingtypes.VintageDenom(val, 202611, base): hx(privacy.AssetID(stakingtypes.VintageDenom(val, 202611, base))),
 		stakingtypes.VintageDenom(val, base, base):   hx(privacy.AssetID(stakingtypes.VintageDenom(val, base, base))),
@@ -196,6 +214,11 @@ func main() {
 		Stake: stakeProof(340, 1, true, false, true), Pc: fb(341), Ciphertext: bct(34), Vintage: base})
 	add("redelegate_vintage", &stakingtypes.MsgRedelegate{Bundle: fee(350, 2000), SrcValidator: val, DstValidator: val2, Amount: 400000,
 		Stake: stakeProof(350, 1, true, true, true), DstDerth: 380_000, MoveTime: 1_790_000_123, Vintage: 202611})
+	// credit_vintage named (fix pass 1): appended to the sighash after vintage / after the split.
+	add("redelegate_credit", &stakingtypes.MsgRedelegate{Bundle: fee(370, 2000), SrcValidator: val, DstValidator: val2, Amount: 400000,
+		Stake: stakeProof(370, 1, true, true, true), DstDerth: 380_000, MoveTime: 1_790_000_123, Vintage: 202611, CreditVintage: 202702})
+	add("check_in_credit", &stakingtypes.MsgCheckIn{Bundle: fee(380, 2000), Validator: val, FromVintage: 202611, Amount: 400_000,
+		Stake: stakeProof(380, 1, true, true, true), CreditVintage: cur})
 	opts := []*govv1.WeightedVoteOption{{Option: govv1.OptionYes, Weight: "1.000000000000000000"}}
 	add("stake_vote_vintage", &stakingtypes.MsgStakeVote{Bundle: fee(360, 2000), ProposalId: 7, Validator: val, Options: opts, Weight: 999, Proof: []byte{0x70, 0x7e},
 		VoteNullifiers: [][]byte{fb(361), fb(362)}, DebtRoot: fb(363), Vintage: 202611})
@@ -212,6 +235,9 @@ func main() {
 		"undelegate_base_0": &stakingtypes.MsgUndelegate{Validator: val, Amount: 400000, Stake: stakeProof(340, 1, true, false, true)},
 		"redelegate_vintage": &stakingtypes.MsgRedelegate{SrcValidator: val, DstValidator: val2, Amount: 400000, Stake: stakeProof(350, 1, true, true, true),
 			DstDerth: 380_000, MoveTime: 1_790_000_123, Vintage: 202611},
+		"redelegate_credit": &stakingtypes.MsgRedelegate{SrcValidator: val, DstValidator: val2, Amount: 400000, Stake: stakeProof(370, 1, true, true, true),
+			DstDerth: 380_000, MoveTime: 1_790_000_123, Vintage: 202611, CreditVintage: 202702},
+		"check_in_credit": &stakingtypes.MsgCheckIn{Validator: val, FromVintage: 202611, Amount: 400_000, Stake: stakeProof(380, 1, true, true, true), CreditVintage: cur},
 	} {
 		p := m.StakeProofOf()
 		in := p.PublicInputs(m.StakeLanes(vc), fe(77))

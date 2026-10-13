@@ -13,8 +13,10 @@ denoms, native staking, and custom modules:
 
 There are no CosmWasm or SNIP-20 tokens in the wallet's path: every asset is a
 bank denom. ERTH and ANML are held as shielded notes (x/shielded, Orchard-style
-bundles) and delegated stake as stake notes (x/shieldedstaking); allocations
-stay public. Private transactions are unsigned and proven on the phone; their
+bundles) and delegated stake as stake notes (x/shieldedstaking), one asset
+per validator and monthly vintage (chain v1.3.0: a vintage earns for 13
+months, is checked in to keep earning, then retires and is withdrawn);
+allocations stay public. Private transactions are unsigned and proven on the phone; their
 formats are in [PRIVACY_FORMATS.md](PRIVACY_FORMATS.md).
 
 ## Layers
@@ -66,10 +68,11 @@ javalite.
 
 | Package | Responsibility |
 |---------|----------------|
-| `PrivacyWallet.kt` | Every private action: send, swap, liquidity, stake, unstake, move, votes, registration, claims, handles, and the handle and caretaker moves a switch's old identity makes to its successor (move proofs). |
+| `PrivacyWallet.kt` | Every private action: send, swap, liquidity, stake, unstake, move, check-in and withdrawal of stake vintages, votes, registration, claims, handles, and the handle and caretaker moves a switch's old identity makes to its successor (move proofs). |
+| `Vintages.kt` | Stake vintages (chain v1.3.0), ported from x/shieldedstaking `types/vintage.go`: the denoms `derth/<valoper>` (the base vintage) and `derth/<valoper>/<YYYYMM>`, live/retired months, retirement times, and the month-boundary grace a credit may still name. The chain's clock comes from `Query/VintageInfo`; a retired vintage's state from `Query/VintageBooks`, read whole (never `Query/Vintages`, which names a validator). |
 | `PrivateActivity.kt` | The activity list's private rows, from the sealed store alone: the txs this wallet sent (recorded at acceptance), received notes, a restored wallet's spends. Never a lookup by hash. |
 | `PrivacySession.kt` | The selected wallet's `PrivacyWallet`, built from its mnemonic and kept for the session; another wallet's on demand (a switch's predecessor), and the move offer it finds by the succession leaf. |
-| `Reminders.kt` | Recurring actions (ANML claim, caretaker refresh, handle renewal) are reminded, never run unasked. |
+| `Reminders.kt` | Recurring actions (ANML claim, caretaker refresh, handle renewal, a stake vintage's check-in) are reminded, never run unasked. |
 | `keys/` | Shielded key derivation and the shielded address. |
 | `note/` | Note plaintexts and their ciphertexts. |
 | `zk/` | Field, Poseidon2, Grumpkin, Merkle, indexed and debt trees; the chain's derivations. |

@@ -50,7 +50,6 @@ class GroundworksVotesTest : WalletTest() {
         assertEquals(mapOf(2L to 60L, 3L to 40L), mine[0].split)
         // No lease: the vote is filed under the note's vintage and ends with it.
         assertEquals(chain.baseVintage, mine[0].vintage)
-        assertEquals(0L, chain.gwVotes.values.single().splitExpiresAt)
 
         // A top-up: the merged note votes it all, one vote.
         a.delegate(vA, 1_000_000); a.sync()

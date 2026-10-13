@@ -53,7 +53,9 @@ class StakeVoteFlowTest {
         override fun debtTree(start: Long, limit: Int) = chain.debtTreeRead(start, limit)
         override fun validators() = chain.validatorsRead()
         override fun minDelegation() = chain.minDelegation
-        override fun vintages(validator: String) = chain.vintagesRead(validator)
+        override fun vintageInfo() = chain.vintageInfoRead()
+        override fun vintageBooks() = chain.vintageBooksRead()
+        override fun epochEndsAt(): Long? = chain.epochEndsAt.takeIf { it > 0 }
     }
 
     private fun wallet(chain: FakeChain, indexer: PrivacyIndexer = chain, store: PrivacyStore = PrivacyStore.memory()) =

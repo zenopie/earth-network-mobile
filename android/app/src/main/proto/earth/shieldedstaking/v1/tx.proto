@@ -181,6 +181,12 @@ message MsgRedelegate {
   repeated earth.allocation.v1.AllocationWeight groundworks_split = 8;
   // vintage: the source notes' (live); the credit lands in dst's current vintage.
   uint32 vintage = 9;
+  // credit_vintage: the vintage of dst's asset the credit lane proves
+  // (cr_asset). 0 names the current month; a non-zero one must be the
+  // current month, or the previous one during the first hour of a month (a
+  // proof built before 00:00 UTC on the 1st, included after). It needs a
+  // non-zero vintage and is appended to the sighash after it, U64(credit_vintage).
+  uint32 credit_vintage = 10;
 }
 
 // Moves amount derth of an older live vintage at validator into the current
@@ -189,7 +195,8 @@ message MsgRedelegate {
 // exposure, stays there), the credit lane merges amount into the owner's
 // unlabelled current-vintage note, or pads (cr_v_in = amount, cr_move_time
 // 0: unlabelled). The bundle pays the fee only. sighash fields: StakeFields,
-// Bytes(validator), from_vintage, amount, Bytes(SplitsBytes(groundworks_split)).
+// Bytes(validator), from_vintage, amount, Bytes(SplitsBytes(groundworks_split)),
+// then credit_vintage when non-zero.
 message MsgCheckIn {
   earth.shielded.v1.Bundle bundle = 1;
   string validator = 2;
@@ -199,4 +206,8 @@ message MsgCheckIn {
   StakeProof stake = 5;
   // groundworks_split: as MsgDelegate's, for both outputs that vote.
   repeated earth.allocation.v1.AllocationWeight groundworks_split = 6;
+  // credit_vintage: the vintage the credit lane proves and the stake moves
+  // into, as MsgRedelegate's (after from_vintage). A non-zero one is appended
+  // to the sighash after the split, U64(credit_vintage).
+  uint32 credit_vintage = 7;
 }

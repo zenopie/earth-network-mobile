@@ -392,6 +392,8 @@ internal fun EarthContent(
                     denom = line.denom,
                     retiresAt = h?.retiresAt ?: 0L,
                     retired = h?.retired ?: false,
+                    retiring = h?.retiring ?: false,
+                    withdrawFrom = h?.withdrawFrom ?: 0L,
                 )
             } },
             unstaking = state?.unstaking?.map { u ->
@@ -477,6 +479,8 @@ internal fun EarthContent(
                             ),
                             notes = listOfNotNull(
                                 "Not earning since ${network.erth.wallet.ui.earn.longDay(q.retiredAt)}.",
+                                // One withdrawal pays at most one note's worth: a larger share leaves in parts.
+                                if (q.parts > 1) "Sent as ${q.parts} transactions." else null,
                                 haircutNote(q.haircut, null),
                             ),
                         ),
