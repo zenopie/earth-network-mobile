@@ -83,6 +83,10 @@ message MsgDelegate {
   // groundworks_split: the Groundworks split the output votes with
   // (StakeProof.vote_tag); empty when it does not vote.
   repeated earth.allocation.v1.AllocationWeight groundworks_split = 7;
+  // vintage: the credited note's stake vintage (YYYYMM, UTC), always the
+  // current month (v1.3.0). 0 names the base vintage (the unsuffixed
+  // derth/<validator>); a non-zero one is appended to the sighash, U64(vintage).
+  uint32 vintage = 8;
 }
 
 // Merges notes, or votes / changes / renews a note's Groundworks vote by
@@ -95,6 +99,8 @@ message MsgRestake {
   StakeProof stake = 4;
   // groundworks_split: as MsgDelegate's.
   repeated earth.allocation.v1.AllocationWeight groundworks_split = 5;
+  // vintage: the merged notes' (a live one), as MsgDelegate's.
+  uint32 vintage = 6;
 }
 
 // The chain pays the undelegation out by itself at maturity: value x
@@ -114,6 +120,9 @@ message MsgUndelegate {
   bytes ciphertext = 7;
   // groundworks_split: as MsgDelegate's (the change votes).
   repeated earth.allocation.v1.AllocationWeight groundworks_split = 8;
+  // vintage: the spent notes' (live; a retired one makes this a withdrawal:
+  // no split, no vote, its share of the vintage's held value paid to pc).
+  uint32 vintage = 9;
 }
 
 // MsgClaimUnbonding is retired (chain 48b631c): undelegations pay out by
@@ -143,6 +152,9 @@ message MsgStakeVote {
   reserved 9;
   repeated bytes vote_nullifiers = 10;
   bytes debt_root = 11;
+  // vintage: the voted notes' (live, not after the snapshot's month); the
+  // vote circuit's asset is its derth denom's.
+  uint32 vintage = 12;
 }
 
 // MsgLockPosition, MsgUpdatePosition, MsgUnlockPosition and MsgPositionVote
@@ -167,4 +179,24 @@ message MsgRedelegate {
   uint64 move_time = 7;
   // groundworks_split: as MsgDelegate's, for both outputs that vote.
   repeated earth.allocation.v1.AllocationWeight groundworks_split = 8;
+  // vintage: the source notes' (live); the credit lands in dst's current vintage.
+  uint32 vintage = 9;
+}
+
+// Moves amount derth of an older live vintage at validator into the current
+// one (v1.3.0), so it earns and votes for another year: lane A spends
+// from_vintage's notes (v_out = amount; any change, and a kept label's
+// exposure, stays there), the credit lane merges amount into the owner's
+// unlabelled current-vintage note, or pads (cr_v_in = amount, cr_move_time
+// 0: unlabelled). The bundle pays the fee only. sighash fields: StakeFields,
+// Bytes(validator), from_vintage, amount, Bytes(SplitsBytes(groundworks_split)).
+message MsgCheckIn {
+  earth.shielded.v1.Bundle bundle = 1;
+  string validator = 2;
+  // from_vintage: YYYYMM, never 0 (the base vintage named by its month).
+  uint32 from_vintage = 3;
+  uint64 amount = 4;
+  StakeProof stake = 5;
+  // groundworks_split: as MsgDelegate's, for both outputs that vote.
+  repeated earth.allocation.v1.AllocationWeight groundworks_split = 6;
 }

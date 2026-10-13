@@ -21,13 +21,11 @@ import network.erth.wallet.privacy.sync.WalletSync
 data class PrivacyActionsState(
     /** This wallet's Groundworks votes (the chain's votes under our notes' tags). */
     val groundworksVotes: List<PrivacyWallet.GroundworksVoteView> = emptyList(),
-    /** Their lease, for the reminder and the Renew (PrivacyWallet.groundworksLease); null when no split is chosen. */
-    val groundworksLease: Reminders.GroundworksLease? = null,
     /** The Groundworks split this wallet votes with (empty: none). */
     val groundworksSplit: Map<Long, Long> = emptyMap(),
     /** Spendable note counts per denom where a merge would help. */
     val mergeable: Map<String, Int>,
-    /** This wallet's private stake per validator: what may move now, what waits for its window. */
+    /** This wallet's private stake per validator and vintage: what may move now, what waits for its window, what is due a check-in or retired. */
     val stake: List<PrivacyWallet.StakeHolding> = emptyList(),
     /** The chain's label window as last read (0: never): how long moved stake stays put. */
     val labelWindowSeconds: Long = 0,
@@ -81,18 +79,14 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val loader = network.erth.wallet.ui.Loader(viewModelScope) {
         val ctx = getApplication<Application>()
-        var lease: Reminders.GroundworksLease? = null
         _state.value = withContext(Dispatchers.IO) {
             val w = runCatching { PrivacySession.wallet(ctx) }.getOrNull()
             // Read the store after a sync, not beside one: run next to the
             // wallet's read, this showed the notes from before the last tx.
             w?.let { runCatching { it.syncIfStale() } }
-            // An unread list says nothing about a lapse: no lease then, rather than a false "lapsed".
             val votes = w?.let { runCatching { it.groundworksVotes() }.getOrNull() }
-            lease = votes?.let { v -> runCatching { w.groundworksLease(v) }.getOrNull() }
             PrivacyActionsState(
                 groundworksVotes = votes.orEmpty(),
-                groundworksLease = lease,
                 groundworksSplit = w?.groundworksSplit.orEmpty(),
                 mergeable = w?.let { it.mergeable() + it.stakeMergeable() }.orEmpty(),
                 stake = w?.let { runCatching { it.stakeHoldings() }.getOrNull() }.orEmpty(),
@@ -100,9 +94,7 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                 stakeNotes = w?.stakeNotes.orEmpty(),
             )
         }
-        // The votes just read give the Groundworks reminder: no second download.
-        val read = lease
-        _personal.value = withContext(Dispatchers.IO) { personalOf(ctx, read, leaseRead = true) }
+        _personal.value = withContext(Dispatchers.IO) { personalOf(ctx) }
     }
 
     private val _personal = MutableStateFlow<PersonalState?>(null)
@@ -131,11 +123,7 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
-        /**
-         * [lease]: this wallet's Groundworks lease as just read ([leaseRead];
-         * otherwise read here, from the whole public list as ever).
-         */
-        fun personalOf(ctx: android.content.Context, lease: Reminders.GroundworksLease? = null, leaseRead: Boolean = false): PersonalState? {
+        fun personalOf(ctx: android.content.Context): PersonalState? {
             val w = runCatching { PrivacySession.wallet(ctx) }.getOrNull() ?: return null
             val now = System.currentTimeMillis() / 1000
             val st = w.store.state
@@ -150,7 +138,8 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
             val addressed = dir?.let { (d, at) -> runCatching { w.reconcileHandle(d, at) }.getOrNull() }.orEmpty()
             val entry = if (st.handle.isEmpty()) null else dir?.first?.get(st.handle)
             val caretakerExp = runCatching { w.caretakerExpiresAt() }.getOrDefault(0L)
-            val groundworks = if (leaseRead) lease else runCatching { w.groundworksLease(w.groundworksVotes()) }.getOrNull()
+            // Local: the stake notes and the base vintage last read.
+            val stakeRetiresAt = runCatching { w.checkInRetiresAt() }.getOrNull() ?: 0L
             // The move reminder's deadline, read here too, not only when Identity opens.
             runCatching { PrivacySession.refreshMoveDeadline(ctx) }
             val reminders = Reminders.due(
@@ -164,7 +153,7 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                     handleEntry = entry,
                     addressed = addressed,
                     ownAddress = w.address.encode(),
-                    groundworks = groundworks,
+                    stakeRetiresAt = stakeRetiresAt,
                     moveSuggestedAt = w.moveSuggestionDue(),
                     moveDeadline = w.moveDeadline(),
                     // The chain's registered_at is the registration's block time (activated_at).

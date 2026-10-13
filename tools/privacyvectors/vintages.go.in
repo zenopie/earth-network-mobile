@@ -1,0 +1,236 @@
+// Command vintages prints the chain's stake-vintage vectors (v1.3.0) for the
+// Android privacy core: android/app/src/test/resources/privacy/vintage_vectors.json
+// (VintagesTest). Run it through gen-vintages.sh, which points a throwaway
+// module at a committed chain ref, as gen.sh does for vectors.json. The
+// helpers below are main.go's, kept identical so the msgs here are laid out
+// as vectors.json's are.
+package main
+
+import (
+	"bytes"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+	"github.com/cosmos/gogoproto/proto"
+
+	allocationtypes "github.com/earth-network/earth/x/allocation/types"
+	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
+	stakingtypes "github.com/earth-network/earth/x/shieldedstaking/types"
+	"github.com/earth-network/earth/zk/orchard"
+	"github.com/earth-network/earth/zk/poseidon2"
+	"github.com/earth-network/earth/zk/privacy"
+)
+
+const chainID = "earth-1"
+
+func hx(e fr.Element) string { return hex.EncodeToString(privacy.FieldBytes(e)) }
+func u(v uint64) fr.Element  { return privacy.U64(v) }
+func fe(i uint64) fr.Element { return poseidon2.Hash([]fr.Element{u(i)}) }
+func fb(i uint64) []byte     { return privacy.FieldBytes(fe(i)) }
+
+func must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func bundle(seed uint64, bal ...shieldedtypes.ValueBalance) shieldedtypes.Bundle {
+	b := shieldedtypes.Bundle{Balances: bal, BindingSig: bytes.Repeat([]byte{byte(seed)}, orchard.BindingSigSize)}
+	for i := uint64(0); i < 2; i++ {
+		s := seed*10 + i
+		cv := orchard.ValueCommit(privacy.AssetID("uerth"), 1000+s, privacy.AssetID("uanml"), s, fe(s+500))
+		b.Actions = append(b.Actions, shieldedtypes.Action{
+			Anchor: fb(s + 1), Nullifier: fb(s + 2), Commitment: fb(s + 3), Cv: orchard.PointBytes(cv),
+			Ciphertext: []byte(fmt.Sprintf("ct-%d", s)), Proof: []byte{0xde, 0xad, byte(s)},
+		})
+	}
+	return b
+}
+
+func fee(seed, amount uint64) shieldedtypes.Bundle {
+	return bundle(seed, shieldedtypes.ValueBalance{Denom: "uerth", Amount: amount})
+}
+
+func stakeProof(seed uint64, spends int, creates, credits, clears bool) stakingtypes.StakeProof {
+	zero := make([]byte, 32)
+	p := stakingtypes.StakeProof{Proof: []byte{0x5e, byte(seed)}, Anchor: fb(seed),
+		GroundworksTags: [][]byte{fb(seed + 8), fb(seed + 9)},
+		Commitment: zero, CreditNullifier: zero, CreditCommitment: zero, DebtRoot: zero,
+		CreditGroundworksTag: zero, VoteTag: zero, CreditVoteTag: zero, PendingKey: zero}
+	for i := 0; i < 2; i++ {
+		nf := zero
+		if i < spends {
+			nf = fb(seed + 1 + uint64(i))
+		}
+		p.Nullifiers = append(p.Nullifiers, nf)
+	}
+	if creates {
+		p.Commitment, p.Ciphertext = fb(seed+3), sct(byte(seed))
+	}
+	if credits {
+		p.CreditNullifier, p.CreditCommitment, p.CreditCiphertext = fb(seed+4), fb(seed+5), sct(byte(seed+1))
+		p.CreditGroundworksTag = fb(seed + 10)
+	}
+	if clears {
+		p.ClearBefore, p.DebtRoot = 1_790_000_000+seed, fb(seed+6)
+	}
+	return p
+}
+
+func voting(p stakingtypes.StakeProof, seed, w, cw uint64) stakingtypes.StakeProof {
+	p.VoteTag, p.VoteWeight = fb(seed+11), w
+	if cw > 0 {
+		p.CreditVoteTag, p.CreditVoteWeight = fb(seed+12), cw
+	}
+	return p
+}
+
+func pending(p stakingtypes.StakeProof, seed, time, ex uint64) stakingtypes.StakeProof {
+	p.PendingKey, p.PendingTime, p.PendingExposed = fb(seed+13), time, ex
+	return p
+}
+
+func sct(seed byte) []byte {
+	b := make([]byte, privacy.WalletStakeCiphertextBytes)
+	for i := range b {
+		b[i] = seed ^ byte(i)
+	}
+	return b
+}
+
+func bct(seed byte) []byte {
+	b := make([]byte, privacy.BlindNoteCiphertextBytes)
+	for i := range b {
+		b[i] = seed + byte(i)
+	}
+	return b
+}
+
+type msgVec struct {
+	TypeURL    string `json:"type_url"`
+	Proto      string `json:"proto"`
+	Sighash    string `json:"sighash"`
+	PrivateFee string `json:"private_fee"`
+	GasLimit   uint64 `json:"gas_limit"`
+}
+
+func main() {
+	ac := addresscodec.NewBech32Codec("earth")
+	out := map[string]any{"chain_id": chainID}
+	valraw := make([]byte, 20)
+	val, err := addresscodec.NewBech32Codec("earthvaloper").BytesToString(valraw)
+	must(err)
+	val2raw := make([]byte, 20)
+	for i := range val2raw {
+		val2raw[i] = byte(i + 1)
+	}
+	val2, err := addresscodec.NewBech32Codec("earthvaloper").BytesToString(val2raw)
+	must(err)
+	out["validator"], out["validator2"] = val, val2
+
+	// Denoms: VintageDenom and ParseDerthDenom, both forms.
+	const base, cur = uint32(202610), uint32(202703)
+	out["base_vintage"], out["current_vintage"] = base, cur
+	denoms := map[string]string{}
+	for _, m := range []uint32{base, 202611, cur, 202701} {
+		denoms[fmt.Sprint(m)] = stakingtypes.VintageDenom(val, m, base)
+	}
+	out["vintage_denoms"] = denoms
+	type parsed struct {
+		Valoper string `json:"valoper"`
+		Month   uint32 `json:"month"`
+		Ok      bool   `json:"ok"`
+	}
+	parses := map[string]parsed{}
+	for _, d := range []string{
+		"derth/" + val, "derth/" + val + "/202611", "derth/" + val + "/202610", "derth/" + val + "/202613", "derth/" + val + "/20261",
+		"derth/" + val + "/1999012", "derth/" + val + "/199912", "derth/" + val + "/x02611", "derth/", "derth//202611", "derth/" + val + "/202611/1", "uerth",
+	} {
+		v, m, ok := stakingtypes.ParseDerthDenom(d)
+		parses[d] = parsed{v, m, ok}
+	}
+	out["parse"] = parses
+	// Retirement times and liveness.
+	type ret struct {
+		RetiresAt int64 `json:"retires_at"`
+		Start     int64 `json:"start"`
+		Live      bool  `json:"live_in_current"`
+		Retired   bool  `json:"retired_in_current"`
+	}
+	rets := map[string]ret{}
+	for _, m := range []uint32{202602, 202603, 202604, 202610, 202612, cur, 202704} {
+		rets[fmt.Sprint(m)] = ret{stakingtypes.VintageRetiresAt(m).Unix(), stakingtypes.VintageStart(m).Unix(), stakingtypes.VintageLive(m, cur), stakingtypes.VintageRetired(m, cur)}
+	}
+	out["retirement"] = rets
+	out["asset_ids"] = map[string]string{
+		stakingtypes.VintageDenom(val, 202611, base): hx(privacy.AssetID(stakingtypes.VintageDenom(val, 202611, base))),
+		stakingtypes.VintageDenom(val, base, base):   hx(privacy.AssetID(stakingtypes.VintageDenom(val, base, base))),
+	}
+
+	// Msgs: proto and sighash (gas limit 2,600,000, as vectors.json's).
+	msgs := map[string]msgVec{}
+	txf := orchard.TxFields{GasLimit: 2_600_000}
+	add := func(name string, m sdk.Msg) {
+		bz, err := proto.Marshal(m)
+		must(err)
+		pm := m.(shieldedtypes.PrivateMsg)
+		s, err := shieldedtypes.Sighash(pm, chainID, txf, ac)
+		must(err)
+		msgs[name] = msgVec{TypeURL: sdk.MsgTypeURL(m), Proto: hex.EncodeToString(bz), Sighash: hx(s), PrivateFee: fmt.Sprint(pm.PrivateFee()), GasLimit: txf.GasLimit}
+	}
+	splits := []allocationtypes.AllocationWeight{{OptionId: 2, Percent: 100}}
+	add("check_in", &stakingtypes.MsgCheckIn{Bundle: fee(300, 2000), Validator: val, FromVintage: 202611, Amount: 400_000,
+		Stake: stakeProof(300, 1, true, true, true)})
+	add("check_in_vote", &stakingtypes.MsgCheckIn{Bundle: fee(310, 2000), Validator: val, FromVintage: base, Amount: 400_000,
+		Stake: pending(voting(stakeProof(310, 1, true, true, true), 310, 0, 400_000), 310, 1_790_000_100, 300_000), GroundworksSplit: splits})
+	add("delegate_vintage", &stakingtypes.MsgDelegate{Bundle: fee(320, 502000), Validator: val, Amount: 500000, Derth: 449_995,
+		Stake: stakeProof(320, 1, true, false, true), Vintage: cur})
+	add("restake_vintage", &stakingtypes.MsgRestake{Bundle: fee(330, 2000), Validator: val, Stake: stakeProof(330, 2, true, false, true), Vintage: 202611})
+	add("undelegate_withdrawal", &stakingtypes.MsgUndelegate{Bundle: fee(340, 2000), Validator: val, Amount: 400000,
+		Stake: stakeProof(340, 1, true, false, true), Pc: fb(341), Ciphertext: bct(34), Vintage: base})
+	add("redelegate_vintage", &stakingtypes.MsgRedelegate{Bundle: fee(350, 2000), SrcValidator: val, DstValidator: val2, Amount: 400000,
+		Stake: stakeProof(350, 1, true, true, true), DstDerth: 380_000, MoveTime: 1_790_000_123, Vintage: 202611})
+	opts := []*govv1.WeightedVoteOption{{Option: govv1.OptionYes, Weight: "1.000000000000000000"}}
+	add("stake_vote_vintage", &stakingtypes.MsgStakeVote{Bundle: fee(360, 2000), ProposalId: 7, Validator: val, Options: opts, Weight: 999, Proof: []byte{0x70, 0x7e},
+		VoteNullifiers: [][]byte{fb(361), fb(362)}, DebtRoot: fb(363), Vintage: 202611})
+	out["msgs"] = msgs
+
+	// The circuits' public inputs as the chain lays them out (StakeLanes(vc), VotePublicInputs(vc)).
+	vc := stakingtypes.VintageCtx{Base: base, Current: cur}
+	pis := map[string][]string{}
+	for name, m := range map[string]stakingtypes.StakeMsg{
+		"check_in": &stakingtypes.MsgCheckIn{Validator: val, FromVintage: 202611, Amount: 400_000, Stake: stakeProof(300, 1, true, true, true)},
+		"check_in_base": &stakingtypes.MsgCheckIn{Validator: val, FromVintage: base, Amount: 400_000,
+			Stake: pending(voting(stakeProof(310, 1, true, true, true), 310, 0, 400_000), 310, 1_790_000_100, 300_000), GroundworksSplit: splits},
+		"delegate_vintage":  &stakingtypes.MsgDelegate{Validator: val, Amount: 500000, Derth: 449_995, Stake: stakeProof(320, 1, true, false, true), Vintage: cur},
+		"undelegate_base_0": &stakingtypes.MsgUndelegate{Validator: val, Amount: 400000, Stake: stakeProof(340, 1, true, false, true)},
+		"redelegate_vintage": &stakingtypes.MsgRedelegate{SrcValidator: val, DstValidator: val2, Amount: 400000, Stake: stakeProof(350, 1, true, true, true),
+			DstDerth: 380_000, MoveTime: 1_790_000_123, Vintage: 202611},
+	} {
+		p := m.StakeProofOf()
+		in := p.PublicInputs(m.StakeLanes(vc), fe(77))
+		ss := make([]string, len(in))
+		for i := range in {
+			ss[i] = hex.EncodeToString(in[i])
+		}
+		pis[name] = ss
+	}
+	vm := &stakingtypes.MsgStakeVote{ProposalId: 7, Validator: val, Weight: 999, VoteNullifiers: [][]byte{fb(361), fb(362)}, DebtRoot: fb(363), Vintage: 202611}
+	vin := vm.VotePublicInputs(vc, fb(131), fb(132), fe(77))
+	vs := make([]string, len(vin))
+	for i := range vin {
+		vs[i] = hex.EncodeToString(vin[i])
+	}
+	pis["stake_vote_vintage"] = vs
+	out["public_inputs"] = pis
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	must(enc.Encode(out))
+}

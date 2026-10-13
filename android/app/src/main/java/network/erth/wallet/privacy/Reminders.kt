@@ -5,10 +5,12 @@ import network.erth.wallet.privacy.handles.Handles
 
 /**
  * What the wallet reminds its owner to do, in place of doing it unasked: the
- * day's ANML claim, the caretaker vote's refresh before it lapses, the
- * Groundworks vote's before its lease ends, and the handle's
- * renewal before (and through) its renewal period. Each costs a fee, so each
- * is the owner's decision; nothing here broadcasts anything.
+ * day's ANML claim, the caretaker vote's refresh before it lapses, the stake
+ * check-in before the oldest vintage holding stake retires (which also keeps
+ * its Groundworks vote: stake votes have no lease since v1.3.0, they end
+ * with their vintage), and the handle's renewal before (and through) its
+ * renewal period. Each costs a fee, so each is the owner's decision; nothing
+ * here broadcasts anything.
  *
  * [due] is pure (unit-tested); the app reads its inputs after a sync.
  */
@@ -16,7 +18,7 @@ object Reminders {
     /** How long before a caretaker vote or handle lapses the reminder starts. */
     const val LEAD_SECONDS = Handles.REMINDER_LEAD_SECONDS
 
-    /** How long after a caretaker vote or the Groundworks vote lapsed the reminder to cast it again stays. */
+    /** How long after a caretaker vote lapsed the reminder to cast it again stays. */
     const val LAPSED_SECONDS = 30L * 86_400
 
     sealed interface Reminder {
@@ -26,8 +28,12 @@ object Reminders {
         /** The caretaker vote lapses at [expiresAt] (lapsed when in the past): cast it again to keep it counted. */
         data class CaretakerExpiring(val expiresAt: Long, val lapsed: Boolean) : Reminder
 
-        /** The Groundworks vote lapses at [expiresAt] ([lapsed]: it has): renew or re-cast it. */
-        data class GroundworksExpiring(val expiresAt: Long, val lapsed: Boolean) : Reminder
+        /**
+         * Stake of a vintage retiring at [retiresAt] (the oldest holding
+         * this wallet's stake): check it in before then, or it stops earning
+         * and voting and can only be withdrawn.
+         */
+        data class CheckInDue(val retiresAt: Long) : Reminder
 
         /**
          * The handle's lease ends at [expiresAt]; until [renewalUntil] only
@@ -63,26 +69,6 @@ object Reminders {
         data class RenewBeforeLapse(val registrationEndsAt: Long, val handle: String, val handleExpiresAt: Long, val voteExpiresAt: Long) : Reminder
     }
 
-    /**
-     * This wallet's Groundworks vote as its lease stands: the earliest lease
-     * end of its votes on chain, or the last one seen once they lapsed
-     * (PrivacyWallet.groundworksLease).
-     */
-    data class GroundworksLease(
-        /** When the vote stops (or stopped) counting; 0 unknown. */
-        val expiresAt: Long,
-        /** The chain still holds a vote of ours (it deletes one at its lapse). */
-        val held: Boolean,
-        /** The split a renewal casts again. */
-        val split: Map<Long, Long>,
-    ) {
-        /** The split no longer counts: cleared, or past its lease end and not yet cleared. */
-        fun lapsed(now: Long): Boolean = !held || expiresAt in 1..now
-
-        /** The reminder window before the lease end has opened, and the split still counts. */
-        fun renewalDue(now: Long): Boolean = !lapsed(now) && expiresAt > 0 && now >= Handles.satSub(expiresAt, LEAD_SECONDS)
-    }
-
     data class Inputs(
         val now: Long,
         val identityLive: Boolean,
@@ -102,8 +88,12 @@ object Reminders {
         val addressed: List<HandleEntry> = emptyList(),
         /** This wallet's shielded address ("" unknown): a held handle paying another is pointed out. */
         val ownAddress: String = "",
-        /** This wallet's Groundworks vote's lease (stake, so not tied to a live identity; null: none). */
-        val groundworks: GroundworksLease? = null,
+        /**
+         * When the oldest live vintage holding this wallet's stake retires
+         * (PrivacyWallet.checkInRetiresAt; 0: none, or unknown). Stake, so
+         * not tied to a live identity.
+         */
+        val stakeRetiresAt: Long = 0,
         /** PrivacyWallet.moveSuggestionDue: the suggested move time once it has come (0: none). */
         val moveSuggestedAt: Long = 0,
         /** PrivacyWallet.moveDeadline: when what is to move stops being movable (0: unknown). */
@@ -122,7 +112,7 @@ object Reminders {
         if (i.identityLive && c > 0 && i.now >= Handles.satSub(c, LEAD_SECONDS) && i.now < Handles.satAdd(c, LAPSED_SECONDS)) {
             out.add(Reminder.CaretakerExpiring(c, lapsed = i.now >= c))
         }
-        i.groundworks?.let { groundworks(it, i.now) }?.let { out.add(it) }
+        checkIn(i.stakeRetiresAt, i.now)?.let { out.add(it) }
         if (!i.identityLive) return out
         // Until what is to move stops being movable; past that a move cannot bring it.
         if (i.moveSuggestedAt in 1..i.now && (i.moveDeadline <= 0 || i.now < i.moveDeadline)) out.add(Reminder.MoveSuggested(i.moveSuggestedAt, i.moveDeadline))
@@ -157,16 +147,13 @@ object Reminders {
     }
 
     /**
-     * [g]'s reminder, as the caretaker vote's: from [LEAD_SECONDS] before the
-     * lease end until [LAPSED_SECONDS] after it. None while the lease end is
-     * unknown.
+     * The check-in reminder: from [Vintages.CHECK_IN_LEAD_SECONDS] before
+     * the oldest live vintage holding stake retires ([retiresAt]) until it
+     * does. None without stake, or while the vintages are unknown.
      */
-    fun groundworks(g: GroundworksLease, now: Long): Reminder.GroundworksExpiring? {
-        val e = g.expiresAt
-        if (e <= 0) return null
-        val lapsed = g.lapsed(now)
-        val due = if (lapsed) now < Handles.satAdd(e, LAPSED_SECONDS) else g.renewalDue(now)
-        return if (due) Reminder.GroundworksExpiring(e, lapsed) else null
+    fun checkIn(retiresAt: Long, now: Long): Reminder.CheckInDue? {
+        if (retiresAt <= 0 || now >= retiresAt || now < Handles.satSub(retiresAt, Vintages.CHECK_IN_LEAD_SECONDS)) return null
+        return Reminder.CheckInDue(retiresAt)
     }
 
     /** The reminder's line for a banner. */
@@ -175,9 +162,8 @@ object Reminders {
         is Reminder.CaretakerExpiring ->
             if (r.lapsed) "Your caretaker vote has lapsed and no longer counts. Cast it again to keep directing emissions."
             else "Your caretaker vote expires in ${days(Handles.satSub(r.expiresAt, now))}. Renew it to keep it counted."
-        is Reminder.GroundworksExpiring ->
-            if (r.lapsed) "Your Groundworks vote has lapsed and no longer counts. Vote again to keep directing emissions."
-            else "Your Groundworks vote expires in ${days(Handles.satSub(r.expiresAt, now))}. Renew it to keep it counted."
+        is Reminder.CheckInDue ->
+            "Check in your stake within ${days(Handles.satSub(r.retiresAt, now))} to keep it earning and voting."
         is Reminder.HandleExpiring ->
             if (r.inRenewal) "@${r.handle} has expired and no longer receives payments. Renew it within ${days(Handles.satSub(r.renewalUntil, now))} or anyone may claim it."
             else "@${r.handle} expires in ${days(Handles.satSub(r.expiresAt, now))}. Renew it to keep it."

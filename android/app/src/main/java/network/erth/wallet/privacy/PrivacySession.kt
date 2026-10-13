@@ -438,8 +438,10 @@ object PrivacySession {
         }
 
         override fun groundworksVotes() = PrivacyQueries.groundworksVotes().map {
-            PrivacyChainReads.GroundworksVote(it.id, it.validator, it.derth, it.weight, it.tag, it.splits, it.splitExpiresAt, it.pending, it.maturesAt)
+            PrivacyChainReads.GroundworksVote(it.id, it.validator, it.derth, it.weight, it.tag, it.splits, it.splitExpiresAt, it.pending, it.maturesAt, it.vintage)
         }
+
+        override fun vintages(validator: String) = PrivacyQueries.vintages(validator)
 
         override fun minGroundworksVote(): Long = PrivacyQueries.minGroundworksVote()
 

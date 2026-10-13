@@ -29,6 +29,7 @@ enum class PrivateActivityKind(val label: String, val sent: Boolean) {
     UNSTAKE("Unstaked", true),
     REDELEGATE("Redelegated", true),
     RESTAKE("Merged stake", true),
+    CHECK_IN("Checked in stake", true),
     VOTE("Voted", true),
     CARETAKER("Caretaker vote", true),
     POSITION("Groundworks position", true),

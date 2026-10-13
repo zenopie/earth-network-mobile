@@ -2,6 +2,7 @@ package network.erth.wallet.privacy.sync
 
 import java.io.IOException
 import network.erth.wallet.privacy.PrivateActivity
+import network.erth.wallet.privacy.Vintages
 import network.erth.wallet.privacy.keys.PrivacyKeys
 import network.erth.wallet.privacy.note.AssetDenoms
 import network.erth.wallet.privacy.note.Denoms
@@ -219,6 +220,13 @@ class WalletSync(
     enum class IdentityStatus { NONE, LIVE, ZEROED }
 
     companion object {
+        /**
+         * The earliest suffixed vintage a stake note is looked for in before
+         * the base vintage is known: earth-1's relaunch month (v1.3.0, which
+         * suffixes every vintage after its own, came later).
+         */
+        const val VINTAGE_FLOOR = 202609
+
         /** Pending marks made before txs carried a timeout_height are released after this long (wall clock). */
         const val PENDING_TIMEOUT_S = 15 * 60L
 
@@ -1069,6 +1077,7 @@ class WalletSync(
     private fun beginDenoms(s: PrivacyState) {
         chainAssetsRead = false
         validatorsRead = false
+        stakeCandidates = null
         val own = (s.notes.map { it.note.denom } + s.stakeNotes.map { it.denom }).filterTo(sortedSetOf(), Denoms::valid)
         s.denoms.clear()
         own.take(Denoms.MAX).forEach { s.denoms.add(it) }
@@ -1226,12 +1235,15 @@ class WalletSync(
     }
 
     /**
-     * derth/<valoper> for a stake note's asset id: known already, or found
-     * among the chain's validators (read at most once a sync; each candidate
-     * learned only as the hash of its own name). Null: no validator's (a stake
-     * note of an asset the wallet cannot name is not one it can use). A list
-     * that cannot be read throws an IOException, which the row loop does not
-     * swallow: the sync fails before the cursor passes a note it could not name.
+     * A stake note's denom for its asset id: known already, or found among
+     * the chain's validators (read at most once a sync) in every vintage a
+     * note can carry: derth/<valoper> (the base vintage, and every note from
+     * before v1.3.0) and derth/<valoper>/<YYYYMM> from [VINTAGE_FLOOR] (the
+     * base vintage once known) to next month. Only the denom that hashes to
+     * the id is learned. Null: no validator's (a stake note of an asset the
+     * wallet cannot name is not one it can use). A list that cannot be read
+     * throws an IOException, which the row loop does not swallow: the sync
+     * fails before the cursor passes a note it could not name.
      */
     private fun stakeDenom(asset: Fr): String? {
         assetDenoms.resolve(asset).takeIf { !it.startsWith(NotePlaintext.UNRESOLVED_PREFIX) }?.let { return it }
@@ -1239,10 +1251,33 @@ class WalletSync(
             val ops = runCatching { chain.validatorOperators() }.getOrNull()
                 ?: throw IOException("the validator list could not be read, so a stake note of this wallet cannot be named yet")
             validatorsRead = true
+            stakeCandidates = null
+            stakeOps = ops
             ops.forEach { op -> assetDenoms.learn("derth/$op") }
         }
-        return assetDenoms.resolve(asset).takeIf { !it.startsWith(NotePlaintext.UNRESOLVED_PREFIX) }
+        assetDenoms.resolve(asset).takeIf { !it.startsWith(NotePlaintext.UNRESOLVED_PREFIX) }?.let { return it }
+        val candidates = stakeCandidates ?: HashMap<Fr, String>().also { m ->
+            val t = maxOf(now(), runCatching { chain.latestBlock()?.time }.getOrNull() ?: 0L)
+            val last = Vintages.addMonths(Vintages.monthOf(t), 1)
+            val first = store.state.baseVintage.takeIf { it > 0 }?.let { minOf(it, VINTAGE_FLOOR) } ?: VINTAGE_FLOOR
+            for (op in stakeOps) {
+                var mo = first
+                while (Vintages.index(mo) <= Vintages.index(last)) {
+                    val d = Vintages.denom(op, mo, 0)
+                    m[network.erth.wallet.privacy.zk.Privacy.assetId(d)] = d
+                    mo = Vintages.addMonths(mo, 1)
+                }
+            }
+            stakeCandidates = m
+        }
+        val d = candidates[asset] ?: return null
+        assetDenoms.learn(d)
+        return d
     }
+
+    /** This sync's validator list and the vintaged stake denoms it gives, by asset id (built once, on a note no known denom names). */
+    private var stakeOps: List<String> = emptyList()
+    private var stakeCandidates: Map<Fr, String>? = null
 
     private fun syncStakeNullifiers(s: PrivacyState, limit: Int) {
         val mine = s.stakeNotes.withIndex().filter { it.value.unspent }.associate { it.value.nf to it.index }

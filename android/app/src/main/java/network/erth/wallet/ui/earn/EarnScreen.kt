@@ -69,21 +69,27 @@ import network.erth.wallet.ui.theme.EarthTheme
  * claiming ANML is a one-tap action on a balance, not a position to manage.
  *
  * The stake half is private stake only: one big number, Stake and Unstake,
- * a row per validator (its Add / Move / Unstake in its own sheet), then what
- * is on its way back. There is no claim: private stake compounds into its
- * validator's rate. A delegation bonds in its own block, so stake earns
- * from then on while its validator does; a validator operator's public
- * self-bond is not shown.
+ * a row per validator and vintage (its Add / Move / Unstake in its own
+ * sheet), then what is on its way back. There is no claim: private stake
+ * compounds into its validator's rate. A delegation bonds in its own block,
+ * so stake earns from then on while its validator does; a validator
+ * operator's public self-bond is not shown.
+ *
+ * Stake vintages (v1.3.0): stake earns for 12 to 13 months after it was
+ * last checked in. Each row says until when ("check in by"); within a month
+ * of it the row warns, and one Check in button checks in everything older
+ * than this month (a tx per note, on one confirmation). A retired vintage
+ * earns nothing: its row says since when and offers Withdraw.
  */
 @Composable
 fun EarnScreen(
     state: EarnUiState?,
     /** Open the stake sheet, for one validator or the picker. */
     onStake: (validator: String?) -> Unit,
-    /** Open the unstake sheet, for one validator or (null) the picker. */
-    onUnstake: (validator: String?) -> Unit,
+    /** Open the unstake sheet, for one row's stake (its denom) or (null) the picker. */
+    onUnstake: (stake: String?) -> Unit,
     modifier: Modifier = Modifier,
-    /** This wallet's private stake per validator (one note each, as a rule). */
+    /** This wallet's private stake per validator and vintage (one note each, as a rule). */
     /** Null until the wallet's stake notes are read. */
     privateStake: List<PrivateStakeRow>? = emptyList(),
     /** Undelegations waiting for their payout, from this wallet's own record. */
@@ -92,10 +98,14 @@ fun EarnScreen(
     /** Whether a stake can be started (the private wallet is open). */
     canStake: Boolean = true,
     balancesVisible: Boolean = true,
-    /** Move stake from a validator (MsgRedelegate). */
-    onMove: (validator: String) -> Unit = {},
-    /** Merge a validator's notes into one (MsgRestake): only offered when it holds more than one. */
-    onMerge: (validator: String) -> Unit = {},
+    /** Move a row's stake (its denom) to another validator (MsgRedelegate). */
+    onMove: (stake: String) -> Unit = {},
+    /** Merge a row's notes into one (MsgRestake): only offered when it holds more than one. */
+    onMerge: (stake: String) -> Unit = {},
+    /** Check in every row older than this month (MsgCheckIn, a tx per note). */
+    onCheckIn: () -> Unit = {},
+    /** Withdraw a retired row's stake (its denom). */
+    onWithdraw: (stake: String) -> Unit = {},
     // --- the liquidity half ---
     pools: List<Dex.Pool>? = null,
     swapFeePercent: String? = null,
@@ -107,7 +117,7 @@ fun EarnScreen(
 ) {
     val dimens = EarthTheme.dimens
     var showPools by rememberSaveable { mutableStateOf(false) }
-    /** The validator whose sheet is open. */
+    /** The row (its denom) whose sheet is open. */
     var opened by rememberSaveable { mutableStateOf<String?>(null) }
     // Re-drawn each minute so a payout date that passes updates.
     val now by produceState(System.currentTimeMillis() / 1000) {
@@ -159,37 +169,42 @@ fun EarnScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(dimens.space12)) {
             PillButton("Stake", enabled = view.loaded && canStake, modifier = Modifier.weight(1f)) { onStake(null) }
             if (view.loaded && !empty) {
-                // One validator: straight to it. Several: pick first.
-                val leaving = privateStake.filter { it.free > 0 }
+                // One row: straight to it. Several: pick first.
+                val leaving = privateStake.filter { it.free > 0 && !it.retired }
                 PillButton("Unstake", enabled = leaving.isNotEmpty(), primary = false, modifier = Modifier.weight(1f)) {
-                    onUnstake(leaving.singleOrNull()?.validator)
+                    onUnstake(leaving.singleOrNull()?.denom)
                 }
             }
+        }
+        // One button for every check-in due: shown from a month before the oldest vintage retires.
+        if (view.loaded && canStake && privateStake.any { it.checkInDue(view.now) }) {
+            Spacer(Modifier.height(dimens.space12))
+            PillButton("Check in", onClick = onCheckIn)
         }
 
         Spacer(Modifier.height(dimens.space24))
         privateStake.forEach { p ->
-            StakeListRow(p, view) { opened = p.validator }
+            StakeListRow(p, view) { if (p.retired) onWithdraw(p.denom) else opened = p.denom }
         }
         unstaking.forEach { u -> UnstakingListRow(u, view) }
         Spacer(Modifier.height(dimens.space32))
     }
 
-    privateStake.firstOrNull { it.validator == opened }?.let { p ->
+    privateStake.firstOrNull { it.denom == opened && !it.retired }?.let { p ->
         ValidatorStakeSheet(
             p = p,
             view = view,
             canAdd = canStake && state?.validators?.any { it.validatorOperator == p.validator } == true,
             onAdd = { opened = null; onStake(p.validator) },
-            onMove = { opened = null; onMove(p.validator) },
-            onUnstake = { opened = null; onUnstake(p.validator) },
-            onMerge = { opened = null; onMerge(p.validator) },
+            onMove = { opened = null; onMove(p.denom) },
+            onUnstake = { opened = null; onUnstake(p.denom) },
+            onMerge = { opened = null; onMerge(p.denom) },
             onDismiss = { opened = null },
         )
     }
 }
 
-/** One validator's private stake, resolved for display. */
+/** One validator's private stake of one vintage, resolved for display. */
 data class PrivateStakeRow(
     val validator: String,
     val moniker: String,
@@ -207,7 +222,16 @@ data class PrivateStakeRow(
     /** Its validator's standing; null when the list lacks it. */
     val standing: StakeRound.Standing? = null,
     val commission: Double = 0.0,
-)
+    /** The stake denom (derth/<validator>[/<YYYYMM>]): the row's key. */
+    val denom: String = network.erth.wallet.privacy.PrivacyWallet.derthDenom(validator),
+    /** When its vintage retires (or retired), unix seconds; 0 unknown (no vintages yet). */
+    val retiresAt: Long = 0,
+    /** Its vintage has retired: it earns nothing and is only withdrawn. */
+    val retired: Boolean = false,
+) {
+    /** Within a month of its retirement: the row warns and Check in shows. */
+    fun checkInDue(now: Long): Boolean = !retired && retiresAt > 0 && now >= retiresAt - network.erth.wallet.privacy.Vintages.CHECK_IN_LEAD_SECONDS
+}
 
 /** An undelegation on its way back: the chain pays it, nothing to do. */
 data class UnstakingRow(
@@ -225,7 +249,7 @@ private class StakeView(val state: EarnUiState?, val now: Long, val visible: Boo
 
     /** The validator's rate after its commission; null when unknown or it earns nothing now. */
     fun apr(p: PrivateStakeRow): Double? =
-        if (p.standing?.earns == false) null else state?.let { StakingApr.forValidator(it.totalBondedUerth, p.commission) }
+        if (p.retired || p.standing?.earns == false) null else state?.let { StakingApr.forValidator(it.totalBondedUerth, p.commission) }
 
     /**
      * What the whole stake earns, weighted by value: idle stake counts at
@@ -250,7 +274,20 @@ private enum class StakeStatus { EARNING, IDLE }
 
 /** The row's dot. */
 private val PrivateStakeRow.status: StakeStatus
-    get() = if (standing?.earns == false) StakeStatus.IDLE else StakeStatus.EARNING
+    get() = if (retired || standing?.earns == false) StakeStatus.IDLE else StakeStatus.EARNING
+
+/**
+ * The row's one line: "Earning · check in by Oct 31, 2027"; within a month
+ * of it, "Check in by Oct 31, 2027" (warning); retired, "Not earning since
+ * Nov 1, 2026 · Withdraw". Null before vintages (nothing to say).
+ */
+private fun PrivateStakeRow.vintageLine(now: Long): Pair<String, Boolean>? = when {
+    retiresAt <= 0 -> null
+    retired -> "Not earning since ${longDay(retiresAt)} · Withdraw" to false
+    checkInDue(now) -> "Check in by ${longDay(retiresAt)}" to true
+    standing?.earns == false -> "${standing.label} · check in by ${longDay(retiresAt)}" to false
+    else -> "Earning · check in by ${longDay(retiresAt)}" to false
+}
 
 /** The big number, "ERTH" under it, and at most one short line. */
 @Composable
@@ -354,7 +391,7 @@ internal fun ValidatorMark(moniker: String, muted: Boolean = false, size: Dp = 4
     }
 }
 
-/** A validator you are staked with: initial, name and dot, amount. Tapping opens its sheet. */
+/** A validator you are staked with (one vintage): initial, name and dot, its vintage line, amount. Tapping opens its sheet, or a retired row's withdrawal. */
 @Composable
 private fun StakeListRow(p: PrivateStakeRow, view: StakeView, onClick: () -> Unit) {
     Row(
@@ -363,11 +400,24 @@ private fun StakeListRow(p: PrivateStakeRow, view: StakeView, onClick: () -> Uni
     ) {
         ValidatorMark(p.moniker, muted = p.status == StakeStatus.IDLE)
         Spacer(Modifier.width(12.dp))
-        Text(p.moniker, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary, maxLines = 1,
-            modifier = Modifier.weight(1f, fill = false))
-        Spacer(Modifier.width(6.dp))
-        StatusDot(p.status)
-        Spacer(Modifier.weight(1f).width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(p.moniker, style = EarthTypography.textMd, fontWeight = FontWeight.SemiBold, color = EarthColors.Text.textPrimary, maxLines = 1,
+                    modifier = Modifier.weight(1f, fill = false))
+                Spacer(Modifier.width(6.dp))
+                StatusDot(p.status)
+            }
+            p.vintageLine(view.now)?.let { (text, warn) ->
+                Text(text, style = EarthTypography.textSm, maxLines = 1,
+                    fontWeight = if (warn || p.retired) FontWeight.SemiBold else FontWeight.Normal,
+                    color = when {
+                        warn -> EarthAccent.warnInk
+                        p.retired -> EarthAccent.ink
+                        else -> EarthColors.Text.textTertiary
+                    })
+            }
+        }
+        Spacer(Modifier.width(8.dp))
         Text(view.amount(p.valueUerth), style = EarthTypography.textMd.copy(fontSize = 17.sp), fontWeight = FontWeight.SemiBold,
             color = EarthColors.Text.textPrimary, maxLines = 1)
     }
@@ -486,6 +536,12 @@ private fun dailyText(uerth: Double): String {
 /** A payout or window date: "Oct 28, 6:00 AM". */
 internal fun day(unix: Long): String {
     val pattern = android.text.format.DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "MMMdjmm")
+    return java.text.SimpleDateFormat(pattern, java.util.Locale.getDefault()).format(java.util.Date(unix * 1000))
+}
+
+/** A vintage date: "Oct 31, 2027". */
+internal fun longDay(unix: Long): String {
+    val pattern = android.text.format.DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "MMMdyyyy")
     return java.text.SimpleDateFormat(pattern, java.util.Locale.getDefault()).format(java.util.Date(unix * 1000))
 }
 

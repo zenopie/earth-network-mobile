@@ -25,7 +25,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import network.erth.wallet.ui.components.PieChart
 import network.erth.wallet.ui.components.PieLegend
-import network.erth.wallet.privacy.Reminders
 import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.designsystem.component.EarthButton
 import network.erth.wallet.ui.designsystem.component.EarthButtonDefaults
@@ -293,23 +292,20 @@ private fun LensTab(
 }
 
 /**
- * The Groundworks vote: Vote / Change vote, when it counts until, Renew when
- * due or lapsed, Stop voting. Each is one confirmation; nothing renews on its
- * own. [split]: the one this wallet votes with (empty: none); [lease]: its
- * lease (PrivacyWallet.groundworksLease; null when no split is chosen).
+ * The Groundworks vote: Vote / Change vote, Stop voting. Each is one
+ * confirmation. [split]: the one this wallet votes with (empty: none). A
+ * stake vote has no lease (v1.3.0): it counts while its stake is checked in,
+ * so there is nothing to renew here (the check-in reminder keeps it).
  */
 @Composable
 fun GroundworksVoteControls(
     split: Map<Long, Long>,
-    lease: Reminders.GroundworksLease?,
     options: List<network.erth.wallet.chain.Allocation.OptionInfo>,
-    now: Long,
     /** What this wallet's live votes weigh and its private stake, in uerth at the live rates; null when balances are hidden. */
     voting: Pair<Long, Long>?,
     /** When the last moved-in stake voting pending starts counting (null: none pending). */
     pendingUntil: Long?,
     onVote: () -> Unit,
-    onRenew: (Map<Long, Long>) -> Unit,
     onStop: () -> Unit,
 ) {
     val dimens = EarthTheme.dimens
@@ -341,30 +337,6 @@ fun GroundworksVoteControls(
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
             )
-        }
-        if (lease != null) {
-            val lapsed = lease.lapsed(now)
-            if (lapsed) {
-                Spacer(Modifier.height(dimens.space12))
-                Text(
-                    text = "Your vote lapsed",
-                    style = EarthTypography.textSm,
-                    fontWeight = FontWeight.SemiBold,
-                    color = network.erth.wallet.ui.theme.EarthAccent.warnInk,
-                )
-            } else if (lease.expiresAt > 0) {
-                Spacer(Modifier.height(dimens.space12))
-                Text(
-                    text = "Counts until ${countsUntil(lease.expiresAt)}",
-                    style = EarthTypography.textSm,
-                    color = EarthColors.Text.textTertiary,
-                )
-            }
-            // A split naming an option the fund has since removed cannot be cast again as it is.
-            if ((lapsed || lease.renewalDue(now)) && !removed(lease.split)) {
-                Spacer(Modifier.height(dimens.space12))
-                network.erth.wallet.ui.earn.PillButton("Renew", primary = false) { onRenew(lease.split) }
-            }
         }
         if (split.isNotEmpty()) {
             Spacer(Modifier.height(dimens.space12))

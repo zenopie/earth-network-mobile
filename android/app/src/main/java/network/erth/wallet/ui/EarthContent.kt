@@ -188,13 +188,14 @@ internal fun EarthContent(
         context.startActivity(android.content.Intent.createChooser(send, null))
     }
 
-    // Private stake: derth notes per validator.
+    // Private stake: derth notes per validator and vintage.
     val derthHeld = loaded.shielded.filterKeys { it.startsWith("derth/") }
     val privateStake = Amounts.satSum(derthHeld.values)
     // The same stake in ERTH: derth is a claim at rate_v, so face value
-    // under-reports it once rewards have compounded.
-    fun derthValue(derth: Long, validator: String): Long =
-        earnState?.derthValue(derth, validator) ?: derth
+    // under-reports it once rewards have compounded. One rate per validator:
+    // [key] is a validator or one of its stake denoms (any vintage).
+    fun derthValue(derth: Long, key: String): Long =
+        earnState?.derthValue(derth, network.erth.wallet.privacy.Vintages.parse(key)?.validator ?: key) ?: derth
     fun monikerOf(validator: String): String =
         earnState?.monikerOf(validator) ?: validator
     val activityView = ActivityView(visible = balancesVisible, name = ::monikerOf, now = now)
@@ -246,11 +247,11 @@ internal fun EarthContent(
         }
     }
 
-    // Votes all of this wallet's stake in Groundworks with [split] (empty:
-    // stops): one restake per validator, sent one after the other on this one
-    // confirmation (PrivacyWallet.castGroundworks).
+    // Votes all of this wallet's live stake in Groundworks with [split]
+    // (empty: stops): one restake per validator and vintage, sent one after
+    // the other on this one confirmation (PrivacyWallet.castGroundworks).
     fun castGroundworks(split: Map<Long, Long>, action: String) {
-        val validators = derthHeld.count { it.value > 0 }
+        val validators = privacyState?.stake?.count { !it.retired && it.derth > 0 } ?: derthHeld.count { it.value > 0 }
         val options = allocationState?.capital?.options.orEmpty()
         tx.requestPrivate(
             details = TxConfirmDetails(
@@ -319,7 +320,7 @@ internal fun EarthContent(
                     // The Claim button already says so.
                     Reminders.Reminder.AnmlReady -> return@mapNotNull null
                     is Reminders.Reminder.CaretakerExpiring -> { { nav.push(EarthRoute.Stream(true)) } }
-                    is Reminders.Reminder.GroundworksExpiring -> { { nav.push(EarthRoute.Stream(false)) } }
+                    is Reminders.Reminder.CheckInDue -> { { nav.selectTab(EarthRoute.Earn) } }
                     is Reminders.Reminder.HandleExpiring, is Reminders.Reminder.HandlePaysElsewhere -> { { nav.push(EarthRoute.Handle) } }
                     is Reminders.Reminder.MoveSuggested -> { { nav.push(EarthRoute.Personhood) } }
                     // The handle first when it is one of them; the caretaker vote is renewed where it is cast.
@@ -333,7 +334,7 @@ internal fun EarthContent(
             holdings = state?.shielded.orEmpty()
                 .filterKeys { it.startsWith("derth/") }
                 .map { (denom, amount) ->
-                    val op = denom.removePrefix("derth/")
+                    val op = network.erth.wallet.privacy.Vintages.parse(denom)?.validator ?: denom.removePrefix("derth/")
                     Holding(
                         denom = denom,
                         symbol = "Staked (private)",
@@ -374,7 +375,7 @@ internal fun EarthContent(
                 notes = ps.stakeNotes,
                 rate = { v -> earnState?.derthRates?.get(v) ?: java.math.BigDecimal.ONE },
             ).map { line ->
-                val h = privacyState?.stake?.firstOrNull { it.validator == line.validator }
+                val h = privacyState?.stake?.firstOrNull { it.denom == line.denom }
                 PrivateStakeRow(
                     validator = line.validator,
                     moniker = monikerOf(line.validator),
@@ -388,6 +389,9 @@ internal fun EarthContent(
                     mergeable = h?.mergeable ?: false,
                     standing = earnState?.all?.firstOrNull { it.validator == line.validator }?.let { network.erth.wallet.privacy.StakeRound.Standing.of(it) },
                     commission = earnState?.commissionOf(line.validator) ?: 0.0,
+                    denom = line.denom,
+                    retiresAt = h?.retiresAt ?: 0L,
+                    retired = h?.retired ?: false,
                 )
             } },
             unstaking = state?.unstaking?.map { u ->
@@ -399,19 +403,88 @@ internal fun EarthContent(
                     dueBy = u.dueBy,
                 )
             },
-            onMerge = { validator ->
+            onMerge = { denom ->
                 tx.requestPrivate(
                     details = TxConfirmDetails(
                         action = "Merge stake notes",
                         msgTypeUrl = PrivateMsgs.RESTAKE,
                         balanceUerth = 0L,
-                        recipient = validator,
+                        recipient = network.erth.wallet.privacy.Vintages.parse(denom)?.validator ?: denom,
                         recipientLabel = "Validator",
                     ),
                     shieldedErth = loaded.shieldedErthUerth,
-                    run = { ctx -> PrivacySession.wallet(ctx).restake(validator).hash },
+                    run = { ctx -> PrivacySession.wallet(ctx).restake(denom).hash },
                 )
             },
+            // Every check-in due, on one confirmation: a tx per note, in turn.
+            onCheckIn = { scope.launch {
+                val items = withContext(Dispatchers.IO) { runCatching { PrivacySession.wallet(context).checkIns() } }
+                items.onFailure { tx.showFailure("Check in", it) }.onSuccess { list ->
+                    if (list.isEmpty()) {
+                        tx.showFailure("Check in", IllegalStateException("Nothing to check in right now."))
+                        return@onSuccess
+                    }
+                    val total = Amounts.satSum(list) { derthValue(it.amount, it.validator) }
+                    val kept = list.filter { it.keptExposed > 0 }
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Check in stake",
+                            msgTypeUrl = PrivateMsgs.CHECK_IN,
+                            balanceUerth = 0L,
+                            amountLabel = "Stake",
+                            amountValue = "${formatUerth(total)} ERTH",
+                            recipient = if (list.size == 1) "1 transaction" else "${list.size} transactions, one per note",
+                            recipientLabel = "Sends",
+                            rows = listOf("Earns until" to network.erth.wallet.ui.earn.longDay(
+                                network.erth.wallet.privacy.Vintages.retiresAt(network.erth.wallet.privacy.Vintages.monthOf(now)))),
+                            notes = listOfNotNull(
+                                // An open move label's exposure must stay in its vintage.
+                                kept.takeIf { it.isNotEmpty() }?.let { k ->
+                                    val until = k.mapNotNull { it.keptUntil }.maxOrNull()
+                                    "${formatUerth(Amounts.satSum(k) { derthValue(it.keptExposed, it.validator) })} ERTH moved here recently stays behind" +
+                                        (until?.let { " until ${network.erth.wallet.ui.earn.longDay(it)}" } ?: "") + "; check it in after that."
+                                },
+                                haircutNote(Amounts.satSum(list) { it.haircut }, null),
+                            ),
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        run = { ctx ->
+                            PrivacySession.wallet(ctx).checkInAll().lastOrNull()?.hash
+                                ?: throw IllegalStateException("Nothing to check in right now.")
+                        },
+                    )
+                }
+            } },
+            // A retired row: its payout, now or at the held payout's maturity.
+            onWithdraw = { denom -> scope.launch {
+                val quote = withContext(Dispatchers.IO) { runCatching { PrivacySession.wallet(context).quoteWithdraw(denom) } }
+                quote.onFailure { tx.showFailure("Withdraw", it) }.onSuccess { q ->
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Withdraw stake",
+                            msgTypeUrl = PrivateMsgs.UNDELEGATE,
+                            balanceUerth = 0L,
+                            amountLabel = "You receive",
+                            amountValue = "${formatUerth(q.value)} ERTH",
+                            recipient = monikerOf(q.validator),
+                            recipientLabel = "From validator",
+                            rows = listOf(
+                                "Arrives" to when {
+                                    q.paysNow -> "In the next block"
+                                    q.paysAt != null -> "About ${network.erth.wallet.ui.earn.longDay(q.paysAt)}"
+                                    else -> "When its unbonding completes"
+                                },
+                            ),
+                            notes = listOfNotNull(
+                                "Not earning since ${network.erth.wallet.ui.earn.longDay(q.retiredAt)}.",
+                                haircutNote(q.haircut, null),
+                            ),
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        run = { ctx -> PrivacySession.wallet(ctx).withdraw(q).hash },
+                    )
+                }
+            } },
             modifier = inset,
           )
         }
@@ -919,7 +992,6 @@ internal fun EarthContent(
                 modifier = inset,
                 onAddOption = if (route.human) { { nav.push(EarthRoute.AddCaretakerOption) } } else null,
                 address = loaded.address,
-                startPreferred = !route.human && privacyState?.groundworksLease?.let { it.lapsed(now) || it.renewalDue(now) } == true,
                 onClaim = { o, owed ->
                     tx.request(
                         details = TxConfirmDetails(
@@ -949,16 +1021,13 @@ internal fun EarthContent(
                             network.erth.wallet.ui.components.LoadingDots(modifier = Modifier.fillMaxWidth().wrapContentWidth())
                         } else GroundworksVoteControls(
                             split = privacyState?.groundworksSplit.orEmpty(),
-                            lease = privacyState?.groundworksLease,
                             options = allocationState?.capital?.options.orEmpty(),
-                            now = now,
                             voting = if (!balancesVisible) null else {
                                 Amounts.satSum(countedVotes) { derthValue(Amounts.satAdd(it.derth, it.pending), it.validator) } to
-                                    Amounts.satSum(derthHeld.entries.toList()) { (d, v) -> derthValue(v, d.removePrefix("derth/")) }
+                                    Amounts.satSum(derthHeld.entries.toList()) { (d, v) -> derthValue(v, d) }
                             },
                             pendingUntil = countedVotes.filter { it.pending > 0 }.maxOfOrNull { it.maturesAt },
                             onVote = { editing = id },
-                            onRenew = { split -> castGroundworks(split, "Renew Groundworks vote") },
                             onStop = { castGroundworks(emptyMap(), "Stop Groundworks vote") },
                         )
                     }
@@ -989,7 +1058,7 @@ internal fun EarthContent(
             // a note votes once per proposal, and on every open proposal.
             eligibility = if (privateStake <= 0) "No private stake" else null,
             // The stake held now; only what was held when voting opened counts.
-            stakeWeight = Amounts.satSum(derthHeld.entries.toList()) { (d, v) -> derthValue(v, d.removePrefix("derth/")) }
+            stakeWeight = Amounts.satSum(derthHeld.entries.toList()) { (d, v) -> derthValue(v, d) }
                 .takeIf { it > 0 }?.let { "${formatUerth(it)} ERTH" },
             onVote = { proposal, vote -> scope.launch {
                 // Every vote this wallet's stake takes: one per validator
@@ -1061,7 +1130,7 @@ internal fun EarthContent(
     LaunchedEffect(stakeVoting) {
         val v = stakeVoting ?: return@LaunchedEffect
         stakeVoting = null
-        v.items.filterIsInstance<PrivacyWallet.StakeVoteItem.Validator>().firstOrNull { it.parts > 1 && it.validator !in v.inParts }?.let {
+        v.items.filterIsInstance<PrivacyWallet.StakeVoteItem.Validator>().firstOrNull { it.parts > 1 && it.denom !in v.inParts }?.let {
             partsChoice = v to it
             return@LaunchedEffect
         }
@@ -1117,7 +1186,7 @@ internal fun EarthContent(
                         partsChoice = null
                         stakeVoting = v.copy(
                             items = v.items.flatMap { if (it == item) List(item.parts) { item } else listOf(it) },
-                            inParts = v.inParts + item.validator,
+                            inParts = v.inParts + item.denom,
                         )
                     }) { androidx.compose.material3.Text("Vote in parts") }
                     androidx.compose.material3.TextButton(onClick = {
@@ -1131,7 +1200,7 @@ internal fun EarthContent(
                                 recipientLabel = "Validator",
                             ),
                             shieldedErth = loaded.shieldedErthUerth,
-                            run = { ctx -> PrivacySession.wallet(ctx).mergeStake(PrivacyWallet.derthDenom(item.validator)).hash },
+                            run = { ctx -> PrivacySession.wallet(ctx).mergeStake(item.denom).hash },
                         )
                     }) { androidx.compose.material3.Text("Merge notes") }
                 }
@@ -1143,13 +1212,16 @@ internal fun EarthContent(
     }
 
     staking?.let { intent ->
-        // What may leave each validator now: moved-in stake whose window is
-        // open stays where it is (refused up front, explained).
-        val holdings = privacyState?.stake.orEmpty()
+        // What may leave each validator's live vintage now: moved-in stake
+        // whose window is open stays where it is (refused up front,
+        // explained); a retired vintage is only withdrawn. A row's key is its
+        // stake denom; a validator held in more than one vintage says which.
+        val holdings = privacyState?.stake.orEmpty().filter { !it.retired }
         val derthRows = holdings.filter { it.free > 0 }.map { h ->
+            val several = holdings.count { it.validator == h.validator } > 1
             DelegationRow(
-                validatorOperator = h.validator,
-                moniker = monikerOf(h.validator),
+                validatorOperator = h.denom,
+                moniker = monikerOf(h.validator) + if (several && h.retiresAt > 0) " · until ${network.erth.wallet.ui.earn.longDay(h.retiresAt)}" else "",
                 amountUerth = h.free,
                 commission = earnState?.commissionOf(h.validator) ?: 0.0,
             )
@@ -1253,7 +1325,7 @@ internal fun EarthContent(
                                     balanceUerth = 0L,
                                     amountLabel = "Amount",
                                     amountValue = "${formatUerth(amount)} derth (${formatUerth(q.value)} ERTH)",
-                                    recipient = validator,
+                                    recipient = q.validator,
                                     recipientLabel = "From validator",
                                     notes = listOfNotNull(haircutNote(cut, null)),
                                 ),
@@ -1261,7 +1333,7 @@ internal fun EarthContent(
                                 // A stake proof spends two notes (at most one
                                 // holding moved-in stake): spread over more, it
                                 // is refused with "merge them first".
-                                run = { ctx -> PrivacySession.wallet(ctx).undelegate(validator, amount, maxHaircut = cut).hash },
+                                run = { ctx -> PrivacySession.wallet(ctx).undelegate(q.denom, amount, maxHaircut = cut).hash },
                             )
                         }
                     }

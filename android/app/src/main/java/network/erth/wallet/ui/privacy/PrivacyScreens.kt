@@ -120,6 +120,8 @@ fun NotesScreen(
 private fun String.label(): String = when {
     this == "uerth" -> "ERTH"
     this == "uanml" -> "ANML"
-    startsWith("derth/") -> "Staked ERTH · ${removePrefix("derth/").take(20)}…"
+    startsWith("derth/") -> network.erth.wallet.privacy.Vintages.parse(this).let { p ->
+        "Staked ERTH · ${(p?.validator ?: removePrefix("derth/")).take(20)}…" + (p?.month?.takeIf { it > 0 }?.let { " · ${it / 100}-${"%02d".format(it % 100)}" } ?: "")
+    }
     else -> this
 }

@@ -495,7 +495,8 @@ class PrivateTxEngine(
             for (b in PrivateMsgs.bundles(msg)) g += BUNDLE_GAS + ACTION_GAS * b.actionsCount
             PrivateMsgs.stake(msg)?.let { p ->
                 g += STAKE_GAS
-                if (!Fr.fromBytes(p.creditNullifier.toByteArray()).isZero) g += CREDIT_GAS + REDELEGATE_RECORD_GAS
+                // A check-in's credit lane moves nothing in x/staking: no record to price.
+                if (!Fr.fromBytes(p.creditNullifier.toByteArray()).isZero) g += CREDIT_GAS + if (msg is network.erth.earth.proto.shieldedstaking.MsgCheckIn) 0L else REDELEGATE_RECORD_GAS
             }
             if (a.membership != null) g += MEMBERSHIP_GAS
             if (a.move != null) g += MEMBERSHIP_GAS + if (msg is network.erth.earth.proto.personhood.MsgMoveCaretaker) MOVE_CARETAKER_EXTRA_GAS else MOVE_HANDLE_EXTRA_GAS

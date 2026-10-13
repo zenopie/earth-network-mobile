@@ -19,6 +19,7 @@ import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.Bundle
 import network.erth.earth.proto.shielded.MsgSend
+import network.erth.earth.proto.shieldedstaking.MsgCheckIn
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
 import network.erth.earth.proto.shieldedstaking.MsgRedelegate
 import network.erth.earth.proto.shieldedstaking.MsgRestake
@@ -61,6 +62,7 @@ object PrivateMsgs {
     const val UNDELEGATE = "/earth.shieldedstaking.v1.MsgUndelegate"
     const val STAKE_VOTE = "/earth.shieldedstaking.v1.MsgStakeVote"
     const val REDELEGATE = "/earth.shieldedstaking.v1.MsgRedelegate"
+    const val CHECK_IN = "/earth.shieldedstaking.v1.MsgCheckIn"
     const val NOTE_SWAP = "/earth.dex.v1.MsgNoteSwap"
     const val ADD_LIQUIDITY_SHIELDED = "/earth.dex.v1.MsgAddLiquidityShielded"
     const val REMOVE_LIQUIDITY_SHIELDED = "/earth.dex.v1.MsgRemoveLiquidityShielded"
@@ -223,6 +225,7 @@ object PrivateMsgs {
         is MsgUndelegate -> listOf(msg.bundle)
         is MsgStakeVote -> listOf(msg.bundle)
         is MsgRedelegate -> listOf(msg.bundle)
+        is MsgCheckIn -> listOf(msg.bundle)
         is MsgNoteSwap -> listOf(msg.bundle)
         is MsgAddLiquidityShielded -> listOf(msg.bundle)
         is MsgRemoveLiquidityShielded -> listOf(msg.bundle)
@@ -274,8 +277,16 @@ object PrivateMsgs {
         is MsgRestake -> msg.stake
         is MsgUndelegate -> msg.stake
         is MsgRedelegate -> msg.stake
+        is MsgCheckIn -> msg.stake
         else -> null
     }
+
+    /**
+     * A stake msg's vintage, appended to its pre-v1.3.0 sighash fields as
+     * U64(vintage) when it names one: vintage 0 (the base vintage) hashes as
+     * before, so the two spellings of the base vintage never share a sighash.
+     */
+    private fun withVintage(fields: List<Fr>, vintage: Int): List<Fr> = if (vintage == 0) fields else fields + u(vintage.toLong() and 0xffffffffL)
 
     /**
      * StakeFields: anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm,
@@ -335,22 +346,26 @@ object PrivateMsgs {
         is MsgProposeRemoval -> listOf(u(msg.optionId))
         is MsgVoteRemoval -> listOf(u(msg.optionId), u(msg.optionValue.toLong()))
         // groundworks_split: the split the stake proof's outputs vote with (empty: none votes).
-        is MsgDelegate -> stakeFields(msg.stake) + listOf(
+        is MsgDelegate -> withVintage(stakeFields(msg.stake) + listOf(
             bytes(msg.validator), u(msg.amount), u(msg.derth), Privacy.bytes(splitsBytes(msg.groundworksSplitList)),
-        )
-        is MsgRestake -> stakeFields(msg.stake) + listOf(bytes(msg.validator), Privacy.bytes(splitsBytes(msg.groundworksSplitList)))
-        is MsgUndelegate -> stakeFields(msg.stake) + listOf(
+        ), msg.vintage)
+        is MsgRestake -> withVintage(stakeFields(msg.stake) + listOf(bytes(msg.validator), Privacy.bytes(splitsBytes(msg.groundworksSplitList))), msg.vintage)
+        is MsgUndelegate -> withVintage(stakeFields(msg.stake) + listOf(
             bytes(msg.validator), u(msg.amount), f(msg.pc), bytes(msg.ciphertext), Privacy.bytes(splitsBytes(msg.groundworksSplitList)),
-        )
+        ), msg.vintage)
         // A vote carries no stake proof (ORCHARD_DESIGN 8.5): its vote proof's statement is the chain's.
         is MsgStakeVote -> {
             require(msg.voteNullifiersCount == MAX_VOTE_NOTES) { "a stake vote carries exactly $MAX_VOTE_NOTES vote nullifiers" }
-            listOf(u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight)) +
-                msg.voteNullifiersList.map { f(it) } + listOf(f(msg.debtRoot))
+            withVintage(listOf(u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight)) +
+                msg.voteNullifiersList.map { f(it) } + listOf(f(msg.debtRoot)), msg.vintage)
         }
-        is MsgRedelegate -> stakeFields(msg.stake) + listOf(
+        is MsgRedelegate -> withVintage(stakeFields(msg.stake) + listOf(
             bytes(msg.srcValidator), bytes(msg.dstValidator), u(msg.amount), u(msg.dstDerth), u(msg.moveTime),
             Privacy.bytes(splitsBytes(msg.groundworksSplitList)),
+        ), msg.vintage)
+        // v1.3.0: always names its month (from_vintage is never 0), so nothing is appended.
+        is MsgCheckIn -> stakeFields(msg.stake) + listOf(
+            bytes(msg.validator), u(msg.fromVintage.toLong() and 0xffffffffL), u(msg.amount), Privacy.bytes(splitsBytes(msg.groundworksSplitList)),
         )
         is MsgNoteSwap -> listOf(
             bytes(msg.denomIn), u(msg.amountIn), bytes(msg.denomOut), u(msg.minAmountOut), f(msg.pc), bytes(msg.ciphertext),
@@ -398,6 +413,7 @@ object PrivateMsgs {
         is MsgUndelegate -> UNDELEGATE
         is MsgStakeVote -> STAKE_VOTE
         is MsgRedelegate -> REDELEGATE
+        is MsgCheckIn -> CHECK_IN
         is MsgNoteSwap -> NOTE_SWAP
         is MsgAddLiquidityShielded -> ADD_LIQUIDITY_SHIELDED
         is MsgRemoveLiquidityShielded -> REMOVE_LIQUIDITY_SHIELDED

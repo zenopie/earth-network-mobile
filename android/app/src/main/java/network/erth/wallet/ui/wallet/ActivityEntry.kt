@@ -122,7 +122,7 @@ data class ActivityEntry(
         val copy = counterparty.takeIf { ' ' !in it && it.startsWith("earth") }
         val label = when (kind) {
             PrivateActivityKind.SEND, PrivateActivityKind.UNSHIELD, PrivateActivityKind.MOVE -> "To"
-            PrivateActivityKind.STAKE, PrivateActivityKind.UNSTAKE, PrivateActivityKind.RESTAKE -> "Validator"
+            PrivateActivityKind.STAKE, PrivateActivityKind.UNSTAKE, PrivateActivityKind.RESTAKE, PrivateActivityKind.CHECK_IN -> "Validator"
             PrivateActivityKind.REDELEGATE -> "Validators"
             PrivateActivityKind.VOTE, PrivateActivityKind.CARETAKER -> "Vote"
             PrivateActivityKind.ADD_LIQUIDITY, PrivateActivityKind.REMOVE_LIQUIDITY -> "Pool"
@@ -245,6 +245,7 @@ data class ActivityEntry(
             PrivateActivityKind.UNSTAKE -> "Unstaked"
             PrivateActivityKind.REDELEGATE -> "Moved stake"
             PrivateActivityKind.RESTAKE -> "Merged stake"
+            PrivateActivityKind.CHECK_IN -> "Checked in stake"
             PrivateActivityKind.VOTE, PrivateActivityKind.CARETAKER -> "Voted"
             PrivateActivityKind.POSITION -> if (counterparty.startsWith("unlocked")) "Unlocked Groundworks" else "Groundworks"
             PrivateActivityKind.CLAIM_ANML -> "Claimed ANML"
@@ -275,6 +276,7 @@ data class ActivityEntry(
             PrivateActivityKind.UNSTAKE -> "Unstake"
             PrivateActivityKind.REDELEGATE -> "Redelegation"
             PrivateActivityKind.RESTAKE -> "Stake merge"
+            PrivateActivityKind.CHECK_IN -> "Stake check-in"
             PrivateActivityKind.VOTE -> "Vote"
             PrivateActivityKind.CARETAKER -> "Caretaker vote"
             PrivateActivityKind.POSITION -> "Groundworks position"
@@ -294,7 +296,7 @@ data class ActivityEntry(
             PrivateActivityKind.SEND, PrivateActivityKind.UNSHIELD, PrivateActivityKind.MOVE, PrivateActivityKind.SHIELD -> Glyph.SEND
             PrivateActivityKind.SWAP, PrivateActivityKind.ADD_LIQUIDITY, PrivateActivityKind.REMOVE_LIQUIDITY, PrivateActivityKind.LP_PAYOUT -> Glyph.SWAP
             PrivateActivityKind.STAKE, PrivateActivityKind.UNSTAKE, PrivateActivityKind.REDELEGATE, PrivateActivityKind.RESTAKE,
-            PrivateActivityKind.POSITION, PrivateActivityKind.UNBONDING_PAYOUT -> Glyph.STAKE
+            PrivateActivityKind.CHECK_IN, PrivateActivityKind.POSITION, PrivateActivityKind.UNBONDING_PAYOUT -> Glyph.STAKE
             PrivateActivityKind.REGISTER, PrivateActivityKind.SWITCH -> Glyph.REGISTER
             PrivateActivityKind.VOTE, PrivateActivityKind.CARETAKER -> Glyph.VOTE
             PrivateActivityKind.HANDLE -> Glyph.HANDLE

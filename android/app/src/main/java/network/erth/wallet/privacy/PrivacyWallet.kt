@@ -17,6 +17,7 @@ import network.erth.earth.proto.personhood.MsgMoveHandle
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.MsgSend
+import network.erth.earth.proto.shieldedstaking.MsgCheckIn
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
 import network.erth.earth.proto.shieldedstaking.MsgRedelegate
 import network.erth.earth.proto.shieldedstaking.MsgRestake
@@ -118,11 +119,62 @@ interface PrivacyChainReads {
         val weight: Long = 0,
         val tag: Fr,
         val splits: Map<Long, Long>,
-        /** When the vote stops counting (x/allocation groundworks_lease_seconds after it was cast). */
+        /** The vote's lease end before v1.3.0; always 0 since (a stake vote ends with its vintage). */
         val splitExpiresAt: Long,
         /** Moved-in derth voting pending: counted from [maturesAt] (when its move's window closes). */
         val pending: Long = 0,
         val maturesAt: Long = 0,
+        /** The voting note's vintage (YYYYMM; 0 before v1.3.0): the vote ends when it retires. */
+        val vintage: Int = 0,
+    )
+
+    /** One live vintage at a validator holding supply (Query/Vintages). */
+    data class LiveVintage(val vintage: Int, val denom: String, val supply: java.math.BigInteger, val retiresAt: Long)
+
+    /**
+     * A retired vintage not yet fully withdrawn (Query/Vintages): what it
+     * held and was worth when it retired, and what its notes have not yet
+     * withdrawn ([remainingSupply] derth worth [remainingValue] uerth); its
+     * held payout's unbond record ([recordStatus] 0 pending, 1 unbonding, 2
+     * matured; [completionTime] unix seconds, 0 unknown), absent ([hasRecord]
+     * false) once nothing is held.
+     */
+    data class RetiredVintage(
+        val validator: String,
+        val vintage: Int,
+        val denom: String,
+        val supply: java.math.BigInteger,
+        val value: java.math.BigInteger,
+        val remainingSupply: java.math.BigInteger,
+        val remainingValue: java.math.BigInteger,
+        val epoch: Long,
+        val retiredAt: Long,
+        val hasRecord: Boolean = false,
+        val recordStatus: Int = 0,
+        val completionTime: Long = 0,
+    ) {
+        /** Whether a withdrawal pays in the next block (the held payout's record has matured) rather than at its maturity. */
+        val paysNow: Boolean get() = hasRecord && recordStatus == UNBOND_MATURED
+
+        /**
+         * What withdrawing [derth] of it pays now (the chain's rule):
+         * floor(d x remaining_value / remaining_supply), all of
+         * remaining_value for the whole remaining supply.
+         */
+        fun payout(derth: Long): java.math.BigInteger {
+            val d = java.math.BigInteger.valueOf(derth)
+            if (remainingSupply.signum() <= 0 || d > remainingSupply) return java.math.BigInteger.ZERO
+            return if (d == remainingSupply) remainingValue else d.multiply(remainingValue).divide(remainingSupply)
+        }
+    }
+
+    /** x/shieldedstaking Query/Vintages{validator}: the current month, the base vintage, the live and the (first page of) retired vintages. */
+    data class VintageState(
+        val current: Int,
+        val base: Int,
+        val live: List<LiveVintage>,
+        val retired: List<RetiredVintage>,
+        val nextRetirement: Long,
     )
 
     /**
@@ -207,6 +259,8 @@ interface PrivacyChainReads {
     companion object {
         const val BOND_STATUS_BONDED = "BOND_STATUS_BONDED"
         const val BOND_STATUS_UNBONDED = "BOND_STATUS_UNBONDED"
+        /** UnbondStatus UNBOND_STATUS_MATURED. */
+        const val UNBOND_MATURED = 2
     }
 
     /** RedelegationLoad: the pair's x/staking record, its [entries] and [countedEntries] (those of positive height). */
@@ -255,6 +309,16 @@ interface PrivacyChainReads {
      * time): never a query about this wallet's undelegation. Null: unknown.
      */
     fun unbondDueBy(epoch: Long): Long? = null
+
+    /**
+     * x/shieldedstaking Query/Vintages{validator} (v1.3.0): null when the
+     * chain has no vintages (before the upgrade: every stake note is the
+     * unsuffixed derth/<valoper>, every msg names vintage 0). A read that
+     * fails throws. Public, but it names a validator: the wallet asks it of
+     * the first listed validator (for the base vintage, once a chain) or of
+     * every listed one, never of one it holds stake at alone.
+     */
+    fun vintages(validator: String): VintageState? = null
 }
 
 /**
@@ -1693,6 +1757,81 @@ class PrivacyWallet(
     /** Stake notes of [denom] this wallet can spend now. */
     fun spendableStake(denom: String): List<OwnedStakeNote> = store.state.stakeNotes.filter { it.spendable && it.denom == denom }
 
+    // ---- stake vintages (chain v1.3.0, ORCHARD_DESIGN 8.9) -------------------
+
+    /** A stake whose vintage has retired: it earns and votes nothing, and only a withdrawal takes it out. */
+    class StakeRetired(retiredAt: Long) : IllegalStateException(
+        "this stake stopped earning when its vintage retired on ${dateText(retiredAt)}; withdraw it instead",
+    )
+
+    /**
+     * The chain's vintages for a tx: its base vintage (read once a chain,
+     * from the first validator listed, never one this wallet holds stake at,
+     * and kept) and the current month (the chain's latest block time). Null on
+     * a chain without vintages (before v1.3.0): every note is the unsuffixed
+     * derth/<valoper> and every msg names vintage 0.
+     */
+    fun vintageContext(): Vintages.Context? {
+        val known = synchronized(store) { store.state.baseVintage }
+        // A clock before the base vintage (never the chain's) reads as the base month.
+        if (known > 0) return Vintages.Context(known, Vintages.monthOf(chainNow()).let { if (Vintages.index(it) < Vintages.index(known)) known else it })
+        val first = reads.validators().validators.firstOrNull()?.validator ?: return null
+        val v = reads.vintages(first) ?: return null
+        synchronized(store) {
+            store.state.baseVintage = v.base
+            store.save()
+        }
+        return Vintages.Context(v.base, v.current)
+    }
+
+    /**
+     * The vintages as this device knows them, with no read: the base
+     * vintage last read and the month of the device's clock. For display and
+     * reminders only; null until the base vintage was read.
+     */
+    fun localVintages(): Vintages.Context? = store.state.baseVintage.takeIf { it > 0 }?.let { b ->
+        Vintages.Context(b, Vintages.monthOf(now()).let { if (Vintages.index(it) < Vintages.index(b)) b else it })
+    }
+
+    /**
+     * The derth denom a stake action names: [stake] itself when it is one
+     * (one validator's one vintage), else the validator [stake]'s newest
+     * live vintage this wallet holds (its current one when it holds none).
+     */
+    private fun stakeDenomOf(stake: String, ctx: Vintages.Context?): String {
+        if (stake.startsWith(DERTH_PREFIX)) {
+            require(Vintages.parse(stake) != null) { "$stake is not a stake denom" }
+            return stake
+        }
+        if (ctx == null) return derthDenom(stake)
+        val held = synchronized(this) { store.state.stakeNotes.filter { it.spendable } }.mapNotNull { n ->
+            Vintages.parse(n.denom)?.takeIf { it.validator == stake }?.let { n.denom to ctx.monthOf(n.denom)!! }
+        }.filter { ctx.live(it.second) }
+        return held.maxByOrNull { Vintages.index(it.second) }?.first ?: ctx.currentDenom(stake)
+    }
+
+    /** The vintage a msg on [denom] names: its month (the base's for the unsuffixed form; v1.3.0 wallets always name it), 0 on a chain without vintages. */
+    private fun msgVintage(denom: String, ctx: Vintages.Context?): Int {
+        if (ctx == null) {
+            require(Vintages.parse(denom)?.month == 0) { "a vintaged stake denom on a chain without vintages" }
+            return 0
+        }
+        return ctx.monthOf(denom) ?: throw IllegalArgumentException("$denom is not a stake denom")
+    }
+
+    /** Refuses a tx other than a withdrawal on a retired vintage's [denom], before anything is proven. */
+    private fun requireLive(denom: String, ctx: Vintages.Context?) {
+        val m = ctx?.monthOf(denom) ?: return
+        if (ctx.retired(m)) throw StakeRetired(Vintages.retiresAt(m))
+        if (!ctx.live(m)) throw IllegalStateException("this stake's vintage ($m) has not begun")
+    }
+
+    /** Whether [n] is stake of a live vintage (true on a chain without vintages, or while the base vintage is unknown). */
+    private fun liveStake(n: OwnedStakeNote, ctx: Vintages.Context?): Boolean {
+        val m = ctx?.monthOf(n.denom) ?: return Vintages.parse(n.denom) != null
+        return ctx.live(m)
+    }
+
     /**
      * The chain's slash debt now (Query/DebtTree, ORCHARD_DESIGN 8.7): its
      * root and size, the label window and the clear_before a proof may name.
@@ -1808,7 +1947,7 @@ class PrivacyWallet(
         return "moved stake can move again after ${dateText(until)}: until then a slash of the validator it left can still reach it, so it stays where it is (the rest of this stake moves freely)"
     }
 
-    /** One validator's stake as this wallet holds it. */
+    /** One validator's stake of one vintage ([denom]) as this wallet holds it. */
     data class StakeHolding(
         val validator: String,
         /** derth held (every spendable note). */
@@ -1822,18 +1961,33 @@ class PrivacyWallet(
         val notes: Int,
         /** Whether two of them can merge now (at most one labelled). */
         val mergeable: Boolean,
-    )
+        /** The stake denom: derth/<validator>, or derth/<validator>/<YYYYMM>. */
+        val denom: String = derthDenom(validator),
+        /** Its vintage (YYYYMM; 0 unknown: the base vintage not read yet, or a chain without vintages). */
+        val vintage: Int = 0,
+        /** When its vintage retires (or retired), unix seconds; 0 unknown. */
+        val retiresAt: Long = 0,
+        /** Its vintage has retired: it earns nothing and can only be withdrawn. */
+        val retired: Boolean = false,
+    ) {
+        /** Its check-in is due: within [Vintages.CHECK_IN_LEAD_SECONDS] of its retirement (and not retired, nor the current month's). */
+        fun checkInDue(now: Long): Boolean = !retired && retiresAt > 0 && now >= retiresAt - Vintages.CHECK_IN_LEAD_SECONDS
+    }
 
     /**
-     * This wallet's stake per validator. [d] (null) reads the chain's debt
-     * view only when a label is held; without it a closed window counts as
-     * still open (nothing is shown as movable that is not).
+     * This wallet's stake per validator and vintage. [d] (null) reads the
+     * chain's debt view only when a label is held; without it a closed window
+     * counts as still open (nothing is shown as movable that is not). The
+     * vintages are the device's ([localVintages]: the base vintage last read,
+     * read here once when unknown).
      */
     fun stakeHoldings(d: DebtView? = null): List<StakeHolding> {
-        val notes = synchronized(this) { store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) } }
+        val notes = synchronized(this) { store.state.stakeNotes.filter { it.spendable && Vintages.parse(it.denom) != null } }
         val view = d ?: if (notes.any { it.label != null }) runCatching { debtView() }.getOrNull() else null
+        val ctx = localVintages() ?: if (notes.isNotEmpty()) runCatching { vintageContext() }.getOrNull()?.let { localVintages() } else null
         return notes.groupBy { it.denom }.toSortedMap().map { (denom, ns) ->
             val open = ns.mapNotNull { it.label }.filter { view == null || !view.clearable(it) }
+            val m = ctx?.monthOf(denom) ?: 0
             StakeHolding(
                 validator = parseDerth(denom),
                 derth = Amounts.satSum(ns) { it.amount },
@@ -1842,6 +1996,10 @@ class PrivacyWallet(
                 lockedUntil = open.minOfOrNull { movableAfter(it, view?.windowSeconds ?: labelWindowSeconds) },
                 notes = ns.size,
                 mergeable = ns.size >= 2 && ns.count { it.label == null } >= 1,
+                denom = denom,
+                vintage = m,
+                retiresAt = if (m > 0) Vintages.retiresAt(m) else 0,
+                retired = m > 0 && ctx!!.retired(m),
             )
         }
     }
@@ -1927,9 +2085,18 @@ class PrivacyWallet(
     /**
      * A delegation's quote (ORCHARD_DESIGN 12.2), shown on its confirm sheet:
      * [derth] credited to our note at [validator] for [amount] uerth, and the
-     * [haircut] a merge clearing a moved-in label takes (0: none).
+     * [haircut] a merge clearing a moved-in label takes (0: none). The
+     * credit lands in the current vintage ([denom], [vintage]: 0 on a chain
+     * without vintages).
      */
-    data class DelegateQuote(val validator: String, val amount: Long, val derth: Long, val haircut: Long)
+    data class DelegateQuote(
+        val validator: String,
+        val amount: Long,
+        val derth: Long,
+        val haircut: Long,
+        val denom: String = derthDenom(validator),
+        val vintage: Int = 0,
+    )
 
     fun quoteDelegate(validator: String, amount: Long): DelegateQuote {
         require(amount > 0)
@@ -1939,22 +2106,28 @@ class PrivacyWallet(
         val book = takesStake(list.of(validator))
         val derth = creditFor(java.math.BigInteger.valueOf(amount), book, list.bondedTokens)
         if (derth < min || derth <= 0) throw IllegalArgumentException("${amount}uerth buys less than the least derth a delegation may credit; stake more")
+        val ctx = vintageContext()
+        val denom = ctx?.currentDenom(validator) ?: derthDenom(validator)
         val d = debtView()
-        val plan = laneA(derthDenom(validator), StakeSelection.merge(spendableStake(derthDenom(validator))) { freeOf(it, d) }, derth, 0, d)
-        return DelegateQuote(validator, amount, derth, haircutOf(plan))
+        val plan = laneA(denom, StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }, derth, 0, d)
+        return DelegateQuote(validator, amount, derth, haircutOf(plan), denom, msgVintage(denom, ctx))
     }
 
     /**
      * Stakes [q].amount uerth with its validator (ORCHARD_DESIGN 8.1): the
      * bundle releases it (and the fee) into the module; the stake proof
-     * merges the quoted derth into our note there (up to two of them, a
-     * labelled one cleared once its window closed), or pads its input when we
-     * hold none, so a first delegation looks like a top-up. A rate that
-     * outran the quote is refused in the ante: nothing spent, nothing paid.
+     * merges the quoted derth into our note of the current vintage there (up
+     * to two of them, a labelled one cleared once its window closed), or pads
+     * its input when we hold none, so a first delegation looks like a top-up.
+     * A rate that outran the quote is refused in the ante: nothing spent,
+     * nothing paid. So is a quote from last month (the chain credits the
+     * current month only).
      */
     fun delegate(q: DelegateQuote): TxResult {
         val gw = groundworksContext()
-        val denom = derthDenom(q.validator)
+        val ctx = vintageContext()
+        val denom = ctx?.currentDenom(q.validator) ?: derthDenom(q.validator)
+        if (denom != q.denom) throw QuoteChanged("a new month began since the quote: stake now lands in this month's vintage; review it again")
         val d = debtView()
         val stake = laneA(denom, StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }, q.derth, 0, d, gw = gw)
         if (haircutOf(stake) > q.haircut) throw QuoteChanged("a slash reached stake you moved to this validator since the quote; review it again")
@@ -1963,7 +2136,7 @@ class PrivacyWallet(
             val b = bundle(release = mapOf(FEE to Math.addExact(q.amount, fee)))
             Assembled(listOf(b), stake) { bs, sp, _ ->
                 MsgDelegate.newBuilder().setBundle(bs[0]).setValidator(q.validator).setAmount(q.amount).setDerth(q.derth).setStake(sp!!)
-                    .addAllGroundworksSplit(gw.split(stake)).build()
+                    .addAllGroundworksSplit(gw.split(stake)).setVintage(q.vintage).build()
             }
         }
     }
@@ -1972,73 +2145,89 @@ class PrivacyWallet(
     fun delegate(validator: String, amount: Long): TxResult = delegate(quoteDelegate(validator, amount))
 
     /**
-     * Merges two of our notes at [validator] (MsgRestake, ORCHARD_DESIGN
+     * Merges two of our notes of one vintage (MsgRestake, ORCHARD_DESIGN
      * 20.3): needed only for a note made beside a labelled one (a move into a
      * validator where ours was labelled) or by another device. At most one
-     * labelled; a closed window clears. One user tap; nothing merges by itself.
+     * labelled; a closed window clears. One user tap; nothing merges by
+     * itself. [stake]: a derth denom, or a validator (its newest live
+     * vintage). A retired vintage merges nothing (it is only withdrawn).
      */
-    fun restake(validator: String): TxResult {
+    fun restake(stake: String): TxResult {
         val gw = groundworksContext()
-        val denom = derthDenom(validator)
+        val ctx = vintageContext()
+        val denom = stakeDenomOf(stake, ctx)
+        requireLive(denom, ctx)
         val d = debtView()
         val two = StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }
         require(two.size == 2) {
             if (spendableStake(denom).size >= 2) "these notes each hold stake moved here recently; they merge once one of their windows closes"
             else "nothing to merge"
         }
-        val stake = laneA(denom, two, 0, 0, d, gw = gw)
+        val validator = parseDerth(denom)
+        val stakePlan = laneA(denom, two, 0, 0, d, gw = gw)
         return run(Act(PrivateActivityKind.RESTAKE, validator)) { fee ->
-            Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setStake(sp!!).addAllGroundworksSplit(gw.split(stake)).build()
+            Assembled(listOf(feeBundle(fee)), stakePlan) { bs, sp, _ ->
+                MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setStake(sp!!).addAllGroundworksSplit(gw.split(stakePlan))
+                    .setVintage(msgVintage(denom, ctx)).build()
             }
         }
     }
 
-    /** derth denoms held in more than one stake note that can merge now. */
+    /** derth denoms (one validator's one vintage, live as this device knows it) held in more than one stake note that can merge now. */
     @Synchronized
-    fun stakeMergeable(): Map<String, Int> =
-        store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) }
+    fun stakeMergeable(): Map<String, Int> {
+        val ctx = localVintages()
+        return store.state.stakeNotes.filter { it.spendable && liveStake(it, ctx) }
             .groupBy { it.denom }.filter { (_, ns) -> ns.size >= 2 && ns.any { it.label == null } }.mapValues { it.value.size }
+    }
 
-    /** Merges two stake notes of [denom] (derth/<valoper>) into one. */
-    fun mergeStake(denom: String): TxResult = restake(parseDerth(denom))
+    /** Merges two stake notes of [denom] (derth/<valoper>[/<YYYYMM>]) into one. */
+    fun mergeStake(denom: String): TxResult = restake(denom)
 
     /**
-     * What leaving [amount] derth/[validator] (an undelegation or a move)
-     * spends: the notes whose free value covers it, refused up front when
-     * the exposure a window keeps in place is what it would take.
+     * What leaving [amount] of [denom] (an undelegation or a move) spends:
+     * the notes whose free value covers it, refused up front when the
+     * exposure a window keeps in place is what it would take.
      */
     private fun leave(
-        validator: String,
+        denom: String,
         amount: Long,
         d: DebtView,
         credit: StakePlan.Credit? = null,
         gw: GroundworksContext = GroundworksContext.NONE,
     ): StakePlan {
-        val denom = derthDenom(validator)
         val notes = spendableStake(denom)
         val ins = StakeSelection.cover(notes, amount, { freeOf(it, d) }) { lockedText(notes, d) }
         return laneA(denom, ins, 0, amount, d, credit, gw)
     }
 
-    /** What leaving [amount] derth/[validator] costs beyond its fee: a cleared label's slash cut (0: none). Refuses as the tx would. */
-    fun leaveHaircut(validator: String, amount: Long): Long = haircutOf(leave(validator, amount, debtView()))
+    /** What leaving [amount] of [stake] (a derth denom, or a validator's newest live vintage) costs beyond its fee: a cleared label's slash cut (0: none). Refuses as the tx would. */
+    fun leaveHaircut(stake: String, amount: Long): Long {
+        val ctx = vintageContext()
+        val denom = stakeDenomOf(stake, ctx)
+        requireLive(denom, ctx)
+        return haircutOf(leave(denom, amount, debtView()))
+    }
 
     /**
      * An undelegation's quote, for its confirm sheet: [amount] derth worth
      * [value] uerth at the validator's live rate now (what the chain books
      * it at, floor(amount x B / S); a slash before the payout lowers what
-     * arrives), and the [haircut] a cleared label takes (0: none).
+     * arrives), and the [haircut] a cleared label takes (0: none). One rate
+     * per validator: every live vintage is worth the same per derth.
      */
-    data class UndelegateQuote(val validator: String, val amount: Long, val value: Long, val haircut: Long)
+    data class UndelegateQuote(val validator: String, val amount: Long, val value: Long, val haircut: Long, val denom: String = derthDenom(validator))
 
-    fun quoteUndelegate(validator: String, amount: Long): UndelegateQuote {
+    fun quoteUndelegate(stake: String, amount: Long): UndelegateQuote {
         require(amount > 0)
-        val haircut = leaveHaircut(validator, amount)
+        val ctx = vintageContext()
+        val denom = stakeDenomOf(stake, ctx)
+        val validator = parseDerth(denom)
+        val haircut = leaveHaircut(denom, amount)
         val book = reads.validators().of(validator)
         check(book.supply.signum() > 0 && java.math.BigInteger.valueOf(amount) <= book.supply) { "more derth than this validator has" }
         val value = java.math.BigInteger.valueOf(amount).multiply(book.backing).divide(book.supply)
-        return UndelegateQuote(validator, amount, value.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), haircut)
+        return UndelegateQuote(validator, amount, value.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), haircut, denom)
     }
 
     /** [book], refused with the chain's own reason when it takes no delegation or redelegation now (1102). */
@@ -2050,14 +2239,16 @@ class PrivacyWallet(
     }
 
     /**
-     * Undelegates [amount] derth/[validator] (ORCHARD_DESIGN 8.4): the
-     * stake proof spends it (the change, or a zero note when nothing is left,
-     * back to us) and the msg names where the chain pays it out, a fresh pool
-     * note opening of our own (pc and its v2 amount-blind ciphertext). At
-     * maturity the chain mints the ERTH there by itself, as one note or, past
-     * 2^63-1, several sharing that ciphertext; sync finds them by trial
-     * decryption like any minted note. Nothing to claim, nothing sent later.
-     * Moved-in derth whose window is open cannot leave: refused up front.
+     * Undelegates [amount] derth of [stake] (a derth denom, or a validator's
+     * newest live vintage; ORCHARD_DESIGN 8.4): the stake proof spends it
+     * (the change, or a zero note when nothing is left, back to us) and the
+     * msg names where the chain pays it out, a fresh pool note opening of our
+     * own (pc and its v2 amount-blind ciphertext). At maturity the chain
+     * mints the ERTH there by itself, as one note or, past 2^63-1, several
+     * sharing that ciphertext; sync finds them by trial decryption like any
+     * minted note. Nothing to claim, nothing sent later. Moved-in derth whose
+     * window is open cannot leave: refused up front. A retired vintage is
+     * refused too: it leaves by [withdraw].
      *
      * The undelegation is remembered locally ([PendingUnbond]) from the
      * moment the node takes the tx, with its epoch, value and payout id from
@@ -2065,22 +2256,31 @@ class PrivacyWallet(
      * shows while it waits. The chain's per-id payout query is never asked
      * (it would tie this wallet's IP to the undelegation).
      */
-    fun undelegate(validator: String, amount: Long, maxHaircut: Long = Long.MAX_VALUE): TxResult {
+    fun undelegate(stake: String, amount: Long, maxHaircut: Long = Long.MAX_VALUE): TxResult {
         val gw = groundworksContext()
-        val stake = leave(validator, amount, debtView(), gw = gw)
-        if (haircutOf(stake) > maxHaircut) throw QuoteChanged("a slash reached stake you moved to this validator since the sheet was shown; review it again")
+        val ctx = vintageContext()
+        val denom = stakeDenomOf(stake, ctx)
+        requireLive(denom, ctx)
+        val validator = parseDerth(denom)
+        val stakePlan = leave(denom, amount, debtView(), gw = gw)
+        if (haircutOf(stakePlan) > maxHaircut) throw QuoteChanged("a slash reached stake you moved to this validator since the sheet was shown; review it again")
+        return sendUndelegate(validator, amount, stakePlan, msgVintage(denom, ctx), gw.split(stakePlan), null)
+    }
+
+    /** MsgUndelegate of [stake] ([amount] derth leaving lane A), its payout opening made and expected, the undelegation remembered. */
+    private fun sendUndelegate(validator: String, amount: Long, stake: StakePlan, vintage: Int, split: List<AllocationWeight>, value: Long?): TxResult {
         val payout = mint(FEE)
         val pc = payout.pc
         expect(PrivateActivityKind.UNBONDING_PAYOUT, payout)
         val r = run(
             Act(PrivateActivityKind.UNSTAKE, validator),
-            accepted = { hash, timeout -> recordUnbond(PendingUnbond(hash, validator, amount, pc, now(), timeout)) },
+            accepted = { hash, timeout -> recordUnbond(PendingUnbond(hash, validator, amount, pc, now(), timeout, value = value)) },
             rejected = { hash -> dropUnbond(hash) },
         ) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgUndelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount).setStake(sp!!)
                     .setPc(ByteString.copyFrom(pc.toBytes())).setCiphertext(ByteString.copyFrom(payout.ciphertext))
-                    .addAllGroundworksSplit(gw.split(stake)).build()
+                    .addAllGroundworksSplit(split).setVintage(vintage).build()
             }
         }
         confirmUnbond(r)
@@ -2089,15 +2289,15 @@ class PrivacyWallet(
 
     /**
      * A move's quote (MsgRedelegate, ORCHARD_DESIGN 8.7), shown on its
-     * confirm sheet: [amount] derth/[src] worth [value] uerth at src's live
-     * rate arrives as [dstDerth] derth/[dst] (dst's live rate, less the
-     * margin and what may stay behind in src's book), merged into our
-     * unlabelled note there ([merges]) or a new note; [haircut] is a cleared
-     * label's slash cut on the src side (0: none). The credited derth is
-     * labelled: it cannot move again until the label window
-     * ([windowSeconds]) has passed. [pairEntries] and [pairCounted] are the
-     * (src, dst) x/staking record's entries when quoted: what the move's gas
-     * headroom is sized by ([redelegateHeadroom]).
+     * confirm sheet: [amount] derth of [srcDenom] (at [src]) worth [value]
+     * uerth at src's live rate arrives as [dstDerth] derth/[dst] of the
+     * current vintage (dst's live rate, less the margin and what may stay
+     * behind in src's book), merged into our unlabelled note there ([merges])
+     * or a new note; [haircut] is a cleared label's slash cut on the src side
+     * (0: none). The credited derth is labelled: it cannot move again until
+     * the label window ([windowSeconds]) has passed. [pairEntries] and
+     * [pairCounted] are the (src, dst) x/staking record's entries when
+     * quoted: what the move's gas headroom is sized by ([redelegateHeadroom]).
      */
     data class MoveQuote(
         val src: String,
@@ -2110,20 +2310,28 @@ class PrivacyWallet(
         val windowSeconds: Long,
         val pairEntries: Long = 0,
         val pairCounted: Long = 0,
+        val srcDenom: String = derthDenom(src),
+        val dstDenom: String = derthDenom(dst),
     )
 
-    /** The note at [dst] a move's credit merges into: our largest unlabelled one there (none: the lane pads, making a second note beside a labelled one). */
-    private fun creditTarget(dst: String): OwnedStakeNote? =
-        spendableStake(derthDenom(dst)).filter { it.label == null }.maxWithOrNull(compareBy<OwnedStakeNote> { it.amount }.thenBy { -it.position })
+    /** The note of [denom] a credit merges into: our largest unlabelled one (none: the lane pads, making a second note beside a labelled one). */
+    private fun creditTarget(denom: String): OwnedStakeNote? =
+        spendableStake(denom).filter { it.label == null }.maxWithOrNull(compareBy<OwnedStakeNote> { it.amount }.thenBy { -it.position })
 
+    /** [src]: a derth denom, or a validator's newest live vintage there. */
     fun quoteMove(src: String, dst: String, amount: Long): MoveQuote {
         require(amount > 0)
-        require(src != dst) { "move stake to another validator" }
+        val ctx = vintageContext()
+        val srcDenom = stakeDenomOf(src, ctx)
+        requireLive(srcDenom, ctx)
+        val srcValidator = parseDerth(srcDenom)
+        require(srcValidator != dst) { "move stake to another validator" }
+        val dstDenom = ctx?.currentDenom(dst) ?: derthDenom(dst)
         val d = debtView()
-        val plan = leave(src, amount, d)
+        val plan = leave(srcDenom, amount, d)
         val min = reads.minDelegation()
         val list = reads.validators()
-        val a = list.of(src)
+        val a = list.of(srcValidator)
         val b = takesStake(list.of(dst))
         check(a.supply.signum() > 0 && java.math.BigInteger.valueOf(amount) <= a.supply) { "more derth than this validator has" }
         val u = java.math.BigInteger.valueOf(amount).multiply(a.backing).divide(a.supply)
@@ -2132,36 +2340,236 @@ class PrivacyWallet(
         if (credit < min || credit <= 0) throw IllegalArgumentException("this move would credit less than the least derth a move may credit; move more")
         val load = a.redelegations[dst]
         return MoveQuote(
-            src, dst, amount, u.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), credit, haircutOf(plan), creditTarget(dst) != null,
-            d.windowSeconds, load?.entries ?: 0, load?.countedEntries ?: 0,
+            srcValidator, dst, amount, u.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), credit, haircutOf(plan), creditTarget(dstDenom) != null,
+            d.windowSeconds, load?.entries ?: 0, load?.countedEntries ?: 0, srcDenom, dstDenom,
         )
     }
 
     /**
-     * Moves [q].amount derth from [q].src to [q].dst with no unbonding gap
+     * Moves [q].amount derth of [q].srcDenom to [q].dst with no unbonding gap
      * (MsgRedelegate). Lane A
-     * spends our src notes (free value only: moved-in stake whose window is
-     * open stays put, refused up front) with the change back; the credit lane
-     * merges the quoted derth/dst into our unlabelled note there (or pads),
-     * labelled with this move: move key = the lane's nullifier, move_time =
-     * the chain's latest block time (the chain takes it within 600 s before
-     * its block), exposed = the credit. A refusal (the rates outran the
-     * quote, move_time too old) costs nothing: the ante runs before any spend.
+     * spends our src notes of that vintage (free value only: moved-in stake
+     * whose window is open stays put, refused up front) with the change back;
+     * the credit lane merges the quoted derth into our unlabelled note of
+     * dst's current vintage (or pads), labelled with this move: move key =
+     * the lane's nullifier, move_time = the chain's latest block time (the
+     * chain takes it within 600 s before its block), exposed = the credit. A
+     * refusal (the rates outran the quote, move_time too old) costs nothing:
+     * the ante runs before any spend.
      */
     fun redelegate(q: MoveQuote): TxResult {
         val gw = groundworksContext()
+        val ctx = vintageContext()
+        requireLive(q.srcDenom, ctx)
+        val dstDenom = ctx?.currentDenom(q.dst) ?: derthDenom(q.dst)
+        if (dstDenom != q.dstDenom) throw QuoteChanged("a new month began since the quote: the move now lands in this month's vintage; review it again")
         val d = debtView()
         val moveTime = roots.latestBlock()?.time?.takeIf { it > 0 } ?: throw IllegalStateException("the node did not say its latest block time; try again")
-        val target = creditTarget(q.dst)
-        val credit = StakePlan.credit(keys, derthDenom(q.dst), target, target?.let { store.stakeTree.path(it.position) }, q.dstDerth, moveTime)
-        val stake = leave(q.src, q.amount, d, credit = credit, gw = gw)
+        val target = creditTarget(dstDenom)
+        val credit = StakePlan.credit(keys, dstDenom, target, target?.let { store.stakeTree.path(it.position) }, q.dstDerth, moveTime)
+        val stake = leave(q.srcDenom, q.amount, d, credit = credit, gw = gw)
         if (haircutOf(stake) > q.haircut) throw QuoteChanged("a slash reached stake you moved to this validator since the quote; review it again")
+        val vintage = msgVintage(q.srcDenom, ctx)
         return run(Act(PrivateActivityKind.REDELEGATE, "${q.src} → ${q.dst}")) { fee ->
             Assembled(listOf(feeBundle(fee)), stake, extraGas = redelegateHeadroom(q.pairEntries, q.pairCounted)) { bs, sp, _ ->
                 MsgRedelegate.newBuilder().setBundle(bs[0]).setSrcValidator(q.src).setDstValidator(q.dst).setAmount(q.amount)
-                    .setStake(sp!!).setDstDerth(q.dstDerth).setMoveTime(moveTime).addAllGroundworksSplit(gw.split(stake)).build()
+                    .setStake(sp!!).setDstDerth(q.dstDerth).setMoveTime(moveTime).addAllGroundworksSplit(gw.split(stake)).setVintage(vintage).build()
             }
         }
+    }
+
+    // ---- check-ins and withdrawals (v1.3.0) ----------------------------------
+
+    /**
+     * One note's check-in (MsgCheckIn): [amount] derth of [note] (at
+     * [validator], vintage [fromVintage], retiring at [retiresAt]) moves into
+     * the current vintage. A note holding moved-in stake whose window is open
+     * keeps that exposure where it is ([keptExposed], free to check in after
+     * [keptUntil]); one whose window has closed clears it, losing [haircut]
+     * to a slash of the move's source (0: none).
+     */
+    data class CheckIn(
+        val note: OwnedStakeNote,
+        val validator: String,
+        val fromVintage: Int,
+        val amount: Long,
+        val retiresAt: Long,
+        val keptExposed: Long = 0,
+        val keptUntil: Long? = null,
+        val haircut: Long = 0,
+    )
+
+    /**
+     * Every check-in this wallet's stake takes now: each spendable note of a
+     * live vintage before the current month, one tx each (nothing is checked
+     * in by itself). A note whose whole amount is moved-in stake still in its
+     * window has nothing to check in yet and is left out. Oldest first.
+     */
+    fun checkIns(): List<CheckIn> {
+        val ctx = vintageContext() ?: return emptyList()
+        val notes = synchronized(this) { store.state.stakeNotes.filter { it.spendable } }.filter { n ->
+            val m = ctx.monthOf(n.denom) ?: return@filter false
+            ctx.live(m) && Vintages.index(m) < Vintages.index(ctx.current)
+        }
+        if (notes.isEmpty()) return emptyList()
+        val d = debtView()
+        return notes.mapNotNull { checkInOf(it, ctx, d) }.sortedWith(compareBy<CheckIn> { Vintages.index(it.fromVintage) }.thenBy { it.note.position })
+    }
+
+    private fun checkInOf(n: OwnedStakeNote, ctx: Vintages.Context, d: DebtView): CheckIn? {
+        val m = ctx.monthOf(n.denom) ?: return null
+        val amount = freeOf(n, d)
+        if (amount <= 0) return null
+        val l = n.label
+        val kept = if (l != null && !d.clearable(l)) l else null
+        val cut = if (l != null && d.clearable(l)) l.exposed - d.retained(l) else 0L
+        return CheckIn(n, parseDerth(n.denom), m, amount, Vintages.retiresAt(m), kept?.exposed ?: 0L, kept?.let { movableAfter(it, d.windowSeconds) }, cut)
+    }
+
+    /**
+     * Checks in [c] (ORCHARD_DESIGN 8.9): lane A spends the note in its
+     * vintage (v_out = the amount; a kept label's exposure comes back as its
+     * change, still labelled, else a zero note), the credit lane merges the
+     * amount into our unlabelled note of the current vintage, or pads
+     * (cr_v_in = amount, cr_move_time 0: unlabelled). Nothing moves in
+     * x/staking and its value does not change. The Groundworks split rides
+     * along: both outputs vote with it, so the vote goes on in the new
+     * vintage. The amount, validator and vintage are public.
+     */
+    fun checkIn(c: CheckIn): TxResult {
+        val gw = groundworksContext()
+        val ctx = vintageContext() ?: throw IllegalStateException("this chain has no stake vintages yet")
+        val note = synchronized(this) { store.state.stakeNotes.firstOrNull { it.position == c.note.position && it.spendable } }
+            ?: throw IllegalStateException("this stake note is already spent or in a transaction")
+        val from = ctx.monthOf(note.denom) ?: throw IllegalArgumentException("not a stake note")
+        if (ctx.retired(from)) throw StakeRetired(Vintages.retiresAt(from))
+        if (Vintages.index(from) >= Vintages.index(ctx.current)) throw IllegalStateException("this stake is already in this month's vintage")
+        val d = debtView()
+        val cur = checkInOf(note, ctx, d) ?: throw IllegalStateException(lockedText(listOf(note), d) ?: "nothing of this note can be checked in now")
+        if (cur.amount != c.amount || cur.haircut > c.haircut) throw QuoteChanged("this stake changed since the sheet was shown; review it again")
+        val validator = parseDerth(note.denom)
+        val dst = ctx.currentDenom(validator)
+        val target = creditTarget(dst)
+        val credit = StakePlan.credit(keys, dst, target, target?.let { store.stakeTree.path(it.position) }, cur.amount, 0)
+        val stake = laneA(note.denom, listOf(note), 0, cur.amount, d, credit, gw)
+        return run(Act(PrivateActivityKind.CHECK_IN, validator)) { fee ->
+            Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
+                MsgCheckIn.newBuilder().setBundle(bs[0]).setValidator(validator).setFromVintage(from).setAmount(cur.amount).setStake(sp!!)
+                    .addAllGroundworksSplit(gw.split(stake)).build()
+            }
+        }
+    }
+
+    /**
+     * Checks in everything [checkIns] lists, one tx per note in turn (the
+     * wallet syncs between them, so each pays its fee from what the last one
+     * left, and a credit merges into the note the last one made). On the
+     * user's one confirmation; stops at the first that fails.
+     */
+    fun checkInAll(): List<TxResult> {
+        val out = ArrayList<TxResult>()
+        for (c in checkIns()) {
+            out.add(checkIn(c))
+            syncThrough(out.last())
+        }
+        return out
+    }
+
+    /**
+     * When the check-in reminder is due from: the retirement of the oldest
+     * live vintage this wallet holds stake in, less
+     * [Vintages.CHECK_IN_LEAD_SECONDS]; 0 when it holds none (or the vintages
+     * are unknown). Local: the base vintage last read and the device's month.
+     */
+    fun checkInDueAt(): Long = checkInRetiresAt()?.let { it - Vintages.CHECK_IN_LEAD_SECONDS } ?: 0L
+
+    /** The retirement of the oldest live vintage holding our stake (null: none, or unknown). */
+    fun checkInRetiresAt(): Long? {
+        val ctx = localVintages() ?: return null
+        return synchronized(this) { store.state.stakeNotes.filter { it.spendable } }
+            .mapNotNull { ctx.monthOf(it.denom) }.filter { ctx.live(it) }
+            .minByOrNull { Vintages.index(it) }?.let { Vintages.retiresAt(it) }
+    }
+
+    /**
+     * A withdrawal's quote (a retired vintage's MsgUndelegate, ORCHARD_DESIGN
+     * 8.9): [amount] derth of [denom] (up to two notes) pays [value] uerth,
+     * its share of what the vintage was worth when it retired (less any
+     * slash since, which reaches the payout itself), [paysNow] in the next
+     * block or else at the held payout's maturity, about [paysAt] (null:
+     * unknown). [haircut]: a cleared label's slash cut (0: none).
+     */
+    data class WithdrawQuote(
+        val denom: String,
+        val validator: String,
+        val vintage: Int,
+        val amount: Long,
+        val value: Long,
+        val paysNow: Boolean,
+        val paysAt: Long?,
+        val haircut: Long,
+        val retiredAt: Long,
+    )
+
+    /** A retired vintage's withdrawal opens once the chain has booked its retirement (in the first block of the month, or soon after). */
+    class WithdrawalNotOpen : IllegalStateException("the chain has not booked this vintage's retirement yet; try again in a few minutes")
+
+    /**
+     * What withdrawing our stake of retired [denom] pays. The retired
+     * vintage's state is read from Query/Vintages of every listed validator
+     * (never ours alone).
+     */
+    fun quoteWithdraw(denom: String): WithdrawQuote {
+        val ctx = vintageContext() ?: throw IllegalStateException("this chain has no stake vintages yet")
+        val m = ctx.monthOf(denom) ?: throw IllegalArgumentException("$denom is not a stake denom")
+        if (!ctx.retired(m)) throw IllegalStateException("this stake still earns: check it in or unstake it")
+        val validator = parseDerth(denom)
+        val d = debtView()
+        val plan = withdrawal(denom, d)
+        val rv = retiredState(validator, m) ?: throw WithdrawalNotOpen()
+        val w = rv.payout(plan.vOut)
+        if (rv.remainingSupply < java.math.BigInteger.valueOf(plan.vOut)) throw IllegalStateException("more derth than this vintage has left to withdraw")
+        val at = when {
+            rv.paysNow -> null
+            rv.recordStatus == 1 && rv.completionTime > 0 -> rv.completionTime
+            else -> runCatching { reads.unbondDueBy(rv.epoch) }.getOrNull()
+        }
+        return WithdrawQuote(denom, validator, m, plan.vOut, w.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), rv.paysNow, at, haircutOf(plan), Vintages.retiresAt(m))
+    }
+
+    /** Lane A of a withdrawal: up to two notes of [denom], all their free value leaving (a zero note back, or a still-labelled exposure as change). */
+    private fun withdrawal(denom: String, d: DebtView): StakePlan {
+        val ins = StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }
+        val free = Amounts.exactSum(ins) { freeOf(it, d) }
+        if (ins.isEmpty() || free <= 0) throw IllegalStateException(lockedText(spendableStake(denom), d) ?: "nothing of this stake can be withdrawn now")
+        return laneA(denom, ins, 0, free, d)
+    }
+
+    /** [validator]'s retired vintage [m] (null: not booked yet, or fully withdrawn), from every listed validator's Query/Vintages. */
+    private fun retiredState(validator: String, m: Int): PrivacyChainReads.RetiredVintage? {
+        var found: PrivacyChainReads.RetiredVintage? = null
+        for (v in reads.validators().validators.map { it.validator }.toSortedSet()) {
+            val st = reads.vintages(v) ?: return null
+            if (v == validator) found = st.retired.firstOrNull { it.validator == validator && it.vintage == m }
+        }
+        return found
+    }
+
+    /**
+     * Withdraws [q] (a retired vintage's MsgUndelegate): the stake proof
+     * spends the notes (a zero note back, unless a label still open keeps its
+     * exposure), no Groundworks split and no vote (the chain refuses either),
+     * and the chain pays our share of the vintage's held value to a fresh
+     * note of ours: in the next block once the held payout has matured,
+     * else at its maturity. Remembered as any undelegation until it arrives.
+     */
+    fun withdraw(q: WithdrawQuote): TxResult {
+        val ctx = vintageContext() ?: throw IllegalStateException("this chain has no stake vintages yet")
+        if (!ctx.retired(q.vintage)) throw IllegalStateException("this stake still earns: check it in or unstake it")
+        val d = debtView()
+        val plan = withdrawal(q.denom, d)
+        if (plan.vOut != q.amount || haircutOf(plan) > q.haircut) throw QuoteChanged("this stake changed since the sheet was shown; review it again")
+        return sendUndelegate(q.validator, q.amount, plan, q.vintage, emptyList(), q.value)
     }
 
     /** Undelegations of this wallet whose payout has not arrived yet, oldest first. */
@@ -2183,10 +2591,12 @@ class PrivacyWallet(
         val i = s.pendingUnbonds.indexOfFirst { it.txHash.equals(r.hash, ignoreCase = true) }
         if (i < 0) return@synchronized
         if (r.code != 0) { s.pendingUnbonds.removeAt(i); store.save(); return@synchronized }
-        fun attr(k: String) = r.attr(UNDELEGATE_EVENT, k)?.let { Amounts.parseU64(it) }?.takeIf { it >= 0 }
+        // A retired vintage's withdrawal books under its own event, with the same attributes.
+        val event = if (r.attr(UNDELEGATE_EVENT, "epoch") == null && r.attr(WITHDRAWAL_EVENT, "epoch") != null) WITHDRAWAL_EVENT else UNDELEGATE_EVENT
+        fun attr(k: String) = r.attr(event, k)?.let { Amounts.parseU64(it) }?.takeIf { it >= 0 }
         val epoch = attr("epoch")
         s.pendingUnbonds[i] = s.pendingUnbonds[i].copy(
-            confirmed = true, epoch = epoch, value = attr("value"), payoutId = attr("payout_id"),
+            confirmed = true, epoch = epoch, value = attr("value") ?: s.pendingUnbonds[i].value, payoutId = attr("payout_id"),
             dueBy = epoch?.let { e -> runCatching { reads.unbondDueBy(e) }.getOrNull() },
         )
         store.save()
@@ -2249,29 +2659,33 @@ class PrivacyWallet(
      * its vote nullifier): it is recorded and the vote laid out again without
      * it, within this one confirmed action, until it carries only fresh notes.
      */
-    fun stakeVote(proposalId: Long, validator: String, options: List<WeightedVoteOption>): TxResult {
+    fun stakeVote(proposalId: Long, stake: String, options: List<WeightedVoteOption>): TxResult {
+        val ctx = vintageContext()
+        val denom = stakeDenomOf(stake, ctx)
+        // Only live stake votes (the chain refuses a retired vintage's, 1121).
+        requireLive(denom, ctx)
         repeat(PrivateMsgs.MAX_VOTE_NOTES) {
             try {
-                return stakeVoteOnce(proposalId, validator, options)
+                return stakeVoteOnce(proposalId, denom, ctx, options)
             } catch (e: NoteVoted) {
                 // Recorded; lay the vote out again with the notes left.
             }
         }
-        return stakeVoteOnce(proposalId, validator, options)
+        return stakeVoteOnce(proposalId, denom, ctx, options)
     }
 
     /** A 1119 naming one of the vote's notes, refused before it reached a block: that note is recorded, the rest may vote. */
     private class NoteVoted : Exception()
 
-    private fun stakeVoteOnce(proposalId: Long, validator: String, options: List<WeightedVoteOption>): TxResult {
-        val denom = derthDenom(validator)
+    private fun stakeVoteOnce(proposalId: Long, denom: String, ctx: Vintages.Context?, options: List<WeightedVoteOption>): TxResult {
+        val validator = parseDerth(denom)
         val snap = snapshot(proposalId)
         val tree = store.stakeTree
         // A snapshot past the local tree (stake landed since the last sync) cannot be checked here.
         if (snap.treeSize < 0 || snap.treeSize > tree.size) throw SyncFirst("the proposal's stake snapshot is ahead of this wallet; sync first")
         check(tree.rootAt(snap.treeSize) == snap.root) { "the local stake tree disagrees with the proposal's snapshot root" }
         val nfRoot = snap.nfRoot ?: throw IllegalStateException("this proposal's snapshot has no stake nullifier root; it takes no stake vote")
-        val candidates = eligible(proposalId, snap).filter { it.denom == denom }.sortedWith(VOTE_ORDER)
+        val candidates = eligible(proposalId, snap, ctx).filter { it.denom == denom }.sortedWith(VOTE_ORDER)
         if (candidates.isEmpty()) throw AlreadyVoted()
         // Every vote names the current debt root (the chain checks it is current), labelled notes or not.
         val d = debtView()
@@ -2317,7 +2731,7 @@ class PrivacyWallet(
                 Assembled(listOf(feeBundle(fee)), vote = vote) { bs, _, _ ->
                     MsgStakeVote.newBuilder().setBundle(bs[0]).setProposalId(proposalId).setValidator(validator)
                         .addAllOptions(PrivateMsgs.canonicalOptions(options)).setWeight(weight)
-                        .setDebtRoot(ByteString.copyFrom(d.root.toBytes())).build()
+                        .setDebtRoot(ByteString.copyFrom(d.root.toBytes())).setVintage(msgVintage(denom, ctx)).build()
                 }
             }
             used.forEach { recordVote(StakeVoteRecord(proposalId, it, r.hash, null, confirmed = true)) }
@@ -2496,14 +2910,15 @@ class PrivacyWallet(
     /**
      * Derth notes that may vote on [proposalId]: in the stake tree at the
      * snapshot, not spent before it as far as sync knows (the cast checks the
-     * snapshot's nullifier tree itself), and not already voted on it. A note
-     * spent after the snapshot still votes; its outputs cannot.
+     * snapshot's nullifier tree itself), not already voted on it, and of a
+     * live vintage now ([ctx]: a retired vintage votes nothing). A note spent
+     * after the snapshot still votes; its outputs cannot.
      */
-    private fun eligible(proposalId: Long, snap: PrivacyChainReads.Snapshot): List<OwnedStakeNote> {
+    private fun eligible(proposalId: Long, snap: PrivacyChainReads.Snapshot, ctx: Vintages.Context?): List<OwnedStakeNote> {
         if (snap.nfRoot == null) return emptyList()
         resolveVotes()
         return store.state.stakeNotes.filter {
-            it.denom.startsWith(DERTH_PREFIX) && it.amount > 0 && it.position < snap.treeSize &&
+            liveStake(it, ctx) && it.amount > 0 && it.position < snap.treeSize &&
                 // Spent in the snapshot's own block is spent before it (the
                 // snapshot is the trees at that block's end).
                 (it.spentHeight == null || snap.height == 0L || it.spentHeight > snap.height) &&
@@ -2517,7 +2932,8 @@ class PrivacyWallet(
      * own weight and fee).
      */
     sealed interface StakeVoteItem {
-        data class Validator(val validator: String, val notes: Int) : StakeVoteItem {
+        /** [notes] of [validator]'s vintage [denom] (one vote's notes are one asset: one vintage). */
+        data class Validator(val validator: String, val notes: Int, val denom: String = derthDenom(validator)) : StakeVoteItem {
             val parts: Int get() = (notes + PrivateMsgs.MAX_VOTE_NOTES - 1) / PrivateMsgs.MAX_VOTE_NOTES
         }
     }
@@ -2530,8 +2946,8 @@ class PrivacyWallet(
      */
     fun stakeVoteItems(proposalId: Long): List<StakeVoteItem> {
         val snap = snapshot(proposalId)
-        return eligible(proposalId, snap).groupBy { parseDerth(it.denom) }.toSortedMap()
-            .map { (v, ns) -> StakeVoteItem.Validator(v, ns.size) }
+        return eligible(proposalId, snap, vintageContext()).groupBy { it.denom }.toSortedMap()
+            .map { (denom, ns) -> StakeVoteItem.Validator(parseDerth(denom), ns.size, denom) }
     }
 
     /** What one stake vote weighs: the notes it carries and the ERTH its weight is worth at the snapshot. */
@@ -2542,7 +2958,7 @@ class PrivacyWallet(
         val snap = snapshot(proposalId)
         return when (item) {
             is StakeVoteItem.Validator -> {
-                val part = eligible(proposalId, snap).filter { it.denom == derthDenom(item.validator) }
+                val part = eligible(proposalId, snap, vintageContext()).filter { it.denom == item.denom }
                     .sortedWith(VOTE_ORDER).take(PrivateMsgs.MAX_VOTE_NOTES)
                 val d = if (part.any { it.label != null }) runCatching { debtView() }.getOrNull() else null
                 val v = Amounts.satSum(part) { voteValue(it, d) }
@@ -2569,9 +2985,9 @@ class PrivacyWallet(
      */
     fun castStakeVote(proposalId: Long, item: StakeVoteItem, options: List<WeightedVoteOption>): String? = when (item) {
         is StakeVoteItem.Validator -> try {
-            stakeVote(proposalId, item.validator, options).hash
+            stakeVote(proposalId, item.denom, options).hash
         } catch (e: AlreadyVoted) {
-            if (eligible(proposalId, snapshot(proposalId)).none { it.denom == derthDenom(item.validator) }) null else throw e
+            if (eligible(proposalId, snapshot(proposalId), vintageContext()).none { it.denom == item.denom }) null else throw e
         } catch (e: SpentBeforeSnapshot) { null }
     }
 
@@ -2629,10 +3045,11 @@ class PrivacyWallet(
         /** derth x the validator's epoch rate (0 when a reset made it stale). */
         val weight: Long,
         val split: Map<Long, Long>,
-        val expiresAt: Long,
         /** Moved-in derth voting pending, counted from [maturesAt] by the chain itself. */
         val pending: Long = 0,
         val maturesAt: Long = 0,
+        /** The voting note's vintage (0 before v1.3.0): the vote counts until it retires (no lease since v1.3.0). */
+        val vintage: Int = 0,
     )
 
     /**
@@ -2643,7 +3060,7 @@ class PrivacyWallet(
         val all = reads.groundworksVotes()
         adopt(all)
         val mine = myTags()
-        return all.filter { it.tag in mine }.map { GroundworksVoteView(it.validator, it.derth, it.weight, it.splits, it.splitExpiresAt, it.pending, it.maturesAt) }
+        return all.filter { it.tag in mine }.map { GroundworksVoteView(it.validator, it.derth, it.weight, it.splits, it.pending, it.maturesAt, it.vintage) }
     }
 
     private fun myTags(): Set<Fr> = synchronized(this) {
@@ -2664,41 +3081,20 @@ class PrivacyWallet(
             if (s.groundworksChosen || s.groundworksSplit.isNotEmpty()) return@synchronized s.groundworksSplit
             val v = all.filter { it.tag in mine && it.splits.isNotEmpty() }.maxByOrNull { it.id } ?: return@synchronized emptyMap()
             s.groundworksSplit = v.splits
-            s.groundworksExpiresAt = v.splitExpiresAt
             runCatching { store.save() }
             v.splits
         }
     }
 
     /**
-     * This wallet's Groundworks vote's lease, for the reminder: the earliest
-     * lease end among [votes] (ours, [groundworksVotes]), remembered; with
-     * none left on chain while a split is chosen, the last seen (it lapsed).
-     * Null when no split is chosen.
-     */
-    fun groundworksLease(votes: List<GroundworksVoteView>): Reminders.GroundworksLease? = synchronized(this) {
-        val s = store.state
-        val split = s.groundworksSplit
-        if (split.isEmpty()) return@synchronized null
-        val e = votes.map { it.expiresAt }.filter { it > 0 }.minOrNull()
-        if (e != null) {
-            if (e != s.groundworksExpiresAt) {
-                s.groundworksExpiresAt = e
-                runCatching { store.save() }
-            }
-            Reminders.GroundworksLease(e, held = true, split = split)
-        } else {
-            Reminders.GroundworksLease(s.groundworksExpiresAt, held = false, split = split)
-        }
-    }
-
-    /**
      * Votes every validator's stake of ours with [split] (or, empty, stops
-     * voting): a restake per validator, its notes merged into one that votes
-     * (or does not; more restakes while more notes can merge), and from then
-     * on every stake tx carries the split. Each restake is its own tx, sent
-     * in turn: the wallet syncs between them, so each pays its fee from what
-     * the last one left.
+     * voting): a restake per validator and live vintage, its notes merged
+     * into one that votes (or does not; more restakes while more notes can
+     * merge), and from then on every stake tx carries the split. Each restake
+     * is its own tx, sent in turn: the wallet syncs between them, so each pays
+     * its fee from what the last one left. A vote has no lease (v1.3.0): it
+     * counts until its vintage retires, and a check-in carries it on. A
+     * retired vintage votes nothing and is left alone.
      */
     fun castGroundworks(split: Map<Long, Long>): List<TxResult> {
         // A split naming a removed option is refused by the chain: never saved or sent.
@@ -2712,8 +3108,9 @@ class PrivacyWallet(
                 throw IllegalStateException("an option in this split has been removed from the fund; choose another split")
             }
         }
+        val ctx = vintageContext()
         var denoms = synchronized(this) {
-            store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) }.map { it.denom }.toSortedSet().toList()
+            store.state.stakeNotes.filter { it.spendable && liveStake(it, ctx) }.map { it.denom }.toSortedSet().toList()
         }
         // A validator whose stake is too small to vote is skipped (a restake
         // there would only cost a fee), unless a note there holds a vote to
@@ -2725,7 +3122,8 @@ class PrivacyWallet(
             val gw = GroundworksContext(split, min, list)
             val all = reads.groundworksVotes()
             val mine = myTags()
-            val held = all.filter { it.tag in mine }.map { derthDenom(it.validator) }.toSet()
+            val voting = all.map { it.tag }.filter { it in mine }.toSet()
+            val held = synchronized(this) { store.state.stakeNotes.filter { it.spendable && Privacy.stakeGw(keys.nk, it.rho) in voting }.map { it.denom }.toSet() }
             val can = synchronized(this) { denoms.filter { d -> votes(gw, d, Amounts.satSum(spendableStake(d)) { it.amount }) } }
             if (can.isEmpty() && denoms.isNotEmpty()) throw IllegalStateException("the stake at each validator is below the least a Groundworks vote may weigh")
             denoms = denoms.filter { it in can || it in held }
@@ -2738,9 +3136,8 @@ class PrivacyWallet(
         val out = ArrayList<TxResult>()
         for (denom in denoms) {
             // A restake merges two notes: again while more can merge, so all of it votes.
-            val v = parseDerth(denom)
             for (i in 0 until 8) {
-                out.add(revote(v))
+                out.add(revote(denom))
                 syncThrough(out.last())
                 if (mergeableStake(denom) < 2) break
             }
@@ -2754,7 +3151,7 @@ class PrivacyWallet(
                 }
             }
             for (n in stale) {
-                out.add(revote(v, only = n))
+                out.add(revote(denom, only = n))
                 syncThrough(out.last())
             }
         }
@@ -2768,21 +3165,26 @@ class PrivacyWallet(
     }.getOrDefault(0)
 
     /**
-     * Respends our notes at [validator] onto one (merging up to two), voting
-     * with the chosen split when it weighs enough: a vote cast, changed,
-     * renewed or (no split) cancelled. [only]: respend just that note.
+     * Respends our notes of [stake] (a derth denom, or a validator's newest
+     * live vintage) onto one (merging up to two), voting with the chosen
+     * split when it weighs enough: a vote cast, changed or (no split)
+     * cancelled. [only]: respend just that note.
      */
-    fun revote(validator: String, only: OwnedStakeNote? = null): TxResult {
+    fun revote(stake: String, only: OwnedStakeNote? = null): TxResult {
         val gw = groundworksContext()
-        val denom = derthDenom(validator)
+        val ctx = vintageContext()
+        val denom = stakeDenomOf(stake, ctx)
+        requireLive(denom, ctx)
+        val validator = parseDerth(denom)
         val d = debtView()
         val ins = only?.let { n -> spendableStake(denom).filter { it.position == n.position } }
             ?: StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }
         require(ins.isNotEmpty()) { "no stake at this validator" }
-        val stake = laneA(denom, ins, 0, 0, d, gw = gw)
+        val plan = laneA(denom, ins, 0, 0, d, gw = gw)
         return run(Act(PrivateActivityKind.RESTAKE, validator)) { fee ->
-            Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setStake(sp!!).addAllGroundworksSplit(gw.split(stake)).build()
+            Assembled(listOf(feeBundle(fee)), plan) { bs, sp, _ ->
+                MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setStake(sp!!).addAllGroundworksSplit(gw.split(plan))
+                    .setVintage(msgVintage(denom, ctx)).build()
             }
         }
     }
@@ -3044,6 +3446,8 @@ class PrivacyWallet(
 
         /** The event an undelegation emits: its epoch, value and payout_id. */
         const val UNDELEGATE_EVENT = "shieldedstaking_undelegate"
+        /** A retired vintage's withdrawal's event (v1.3.0): validator, vintage, derth, value, epoch, payout_id, remaining_*. */
+        const val WITHDRAWAL_EVENT = "shieldedstaking_retired_withdrawal"
 
         /** The notes one stake vote takes first: the largest (the most weight in one msg), then by position. */
         val VOTE_ORDER: Comparator<OwnedStakeNote> = compareByDescending<OwnedStakeNote> { it.amount }.thenBy { it.position }
@@ -3313,9 +3717,7 @@ class PrivacyWallet(
         fun derthDenom(valoper: String) = "$DERTH_PREFIX$valoper"
         fun lpDenom(poolId: Long) = "$LP_PREFIX$poolId"
 
-        fun parseDerth(denom: String): String {
-            require(denom.startsWith(DERTH_PREFIX)) { "not a derth note" }
-            return denom.removePrefix(DERTH_PREFIX)
-        }
+        /** A derth denom's validator, either form (derth/<valoper>, derth/<valoper>/<YYYYMM>). */
+        fun parseDerth(denom: String): String = Vintages.parse(denom)?.validator ?: throw IllegalArgumentException("not a derth note")
     }
 }

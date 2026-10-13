@@ -55,6 +55,7 @@ abstract class WalletTest {
         override fun debtTree(start: Long, limit: Int) = chain.debtTreeRead(start, limit)
         override fun validators() = chain.validatorsRead()
         override fun minDelegation() = chain.minDelegation
+        override fun vintages(validator: String) = chain.vintagesRead(validator)
         override fun unbondDueBy(epoch: Long) = due(epoch)
     }
 

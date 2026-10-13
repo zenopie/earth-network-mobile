@@ -61,9 +61,10 @@ class StakePlan(
     }
 
     /**
-     * The credit lane (a redelegation): the wallet's unlabelled note of
-     * [denom] merged with [vIn] ([spend], or a padding input when there is
-     * none), labelled with the move made at [moveTime].
+     * The credit lane (a redelegation, a check-in): the wallet's unlabelled
+     * note of [denom] merged with [vIn] ([spend], or a padding input when
+     * there is none), labelled with the move made at [moveTime] (0: a
+     * check-in's credit, unlabelled).
      */
     class Credit(
         val denom: String,
@@ -74,10 +75,9 @@ class StakePlan(
         val padRho: Fr,
         val padRcm: Fr,
         val out: Out,
-    ) {
-        /** The credit nullifier: the move's key. */
-        val nullifier: Fr get() = out.label!!.moveKey
-    }
+        /** The credit lane's nullifier (a move's key). */
+        val nullifier: Fr,
+    )
 
     init {
         require(spends.size <= 2 && paths.size == spends.size)
@@ -139,7 +139,7 @@ class StakePlan(
         fun b(f: Fr) = ByteString.copyFrom(f.toBytes())
         check(!w.commitment.isZero) { "lane A creates a note (the merged note, the change or a zero note)" }
         // The credit's label (in its ciphertext) names the nullifier the proof publishes.
-        check(credit == null || credit.nullifier == w.crNf) { "the credit's move key is not its nullifier" }
+        check(credit == null || (credit.nullifier == w.crNf && credit.out.label?.moveKey.let { it == null || it == w.crNf })) { "the credit's move key is not its nullifier" }
         return StakeProof.newBuilder()
             .setProof(ByteString.copyFrom(proof))
             .setAnchor(b(anchor))
@@ -174,19 +174,19 @@ class StakePlan(
         }
 
         /**
-         * The credit lane of a redelegation into [denom]: [spend] (our
-         * unlabelled note there) or a fresh padding input, merged with [vIn]
-         * and labelled (move key = the lane's own nullifier, [moveTime],
-         * exposed = vIn).
+         * The credit lane into [denom]: [spend] (our unlabelled note there) or
+         * a fresh padding input, merged with [vIn]; a redelegation's labelled
+         * (move key = the lane's own nullifier, [moveTime], exposed = vIn), a
+         * check-in's ([moveTime] 0) not.
          */
         fun credit(keys: PrivacyKeys, denom: String, spend: OwnedStakeNote?, path: List<Fr>?, vIn: Long, moveTime: Long): Credit {
-            require(vIn > 0 && moveTime > 0)
+            require(vIn > 0 && moveTime >= 0)
             require(spend == null || (spend.label == null && path != null))
             val padRho = NotePlaintext.randomField()
             val padRcm = NotePlaintext.randomField()
             val nf = if (spend != null) spend.nf else Privacy.stakeNf(keys.nk, padRho, 0)
-            val label = StakeLabel(nf, moveTime, vIn)
-            return Credit(denom, spend, path, vIn, moveTime, padRho, padRcm, out(keys, denom, Math.addExact(spend?.amount ?: 0L, vIn), label))
+            val label = if (moveTime != 0L) StakeLabel(nf, moveTime, vIn) else null
+            return Credit(denom, spend, path, vIn, moveTime, padRho, padRcm, out(keys, denom, Math.addExact(spend?.amount ?: 0L, vIn), label), nf)
         }
     }
 }

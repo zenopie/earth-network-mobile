@@ -19,7 +19,9 @@ import network.erth.wallet.ui.components.toUerthOrNull
  * and where it goes as two rows, one button.
  *
  * [sources] carry what may move now as their amount: stake moved in recently
- * stays where it is until its window closes, so it is not offered. The
+ * stays where it is until its window closes, so it is not offered. A source
+ * row is one validator's one vintage: its key ([DelegationRow.validatorOperator])
+ * may be that stake's denom. The
  * destinations are the bonded set less the source, unsorted, as on the stake
  * sheet. The confirm sheet that follows shows the chain's own numbers (what
  * arrives, at the live rates).
@@ -30,7 +32,7 @@ fun MoveStakeSheet(
     destinations: List<DelegationRow>,
     onConfirm: (src: String, dst: String, amountDerth: Long) -> Unit,
     onDismiss: () -> Unit,
-    /** The validator it leaves, when a validator sheet's Move opened it. */
+    /** The source row it leaves (its key), when a validator sheet's Move opened it. */
     initial: String? = null,
     /** A source row's line: what may move now, in ERTH. */
     sourceDetail: (DelegationRow) -> String = { "${stakeAmount(it.amountUerth)} derth" },
@@ -53,14 +55,14 @@ fun MoveStakeSheet(
                 ValidatorPicker(sources, src?.validatorOperator, sourceDetail) { v ->
                     if (src?.validatorOperator != v.validatorOperator) amount = ""
                     src = v
-                    if (dst?.validatorOperator == v.validatorOperator) dst = null
+                    if (dst?.validatorOperator == validatorOf(v.validatorOperator)) dst = null
                     picking = null
                 }
                 return@EarthSheet
             }
             false -> {
                 SheetTitle("Move to")
-                ValidatorPicker(destinations.filter { it.validatorOperator != src?.validatorOperator }, dst?.validatorOperator, destinationDetail) { v ->
+                ValidatorPicker(destinations.filter { it.validatorOperator != src?.validatorOperator?.let(::validatorOf) }, dst?.validatorOperator, destinationDetail) { v ->
                     dst = v
                     picking = null
                 }
@@ -85,3 +87,6 @@ fun MoveStakeSheet(
         }
     }
 }
+
+/** A source row's validator: its key itself, or the validator its stake denom names. */
+private fun validatorOf(key: String): String = network.erth.wallet.privacy.Vintages.parse(key)?.validator ?: key

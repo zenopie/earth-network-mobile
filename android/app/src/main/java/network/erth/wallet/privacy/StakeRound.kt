@@ -9,24 +9,27 @@ import network.erth.wallet.privacy.note.OwnedStakeNote
  * so stake earns from then on: there is no wait for the round to end.
  */
 object StakeRound {
-    /** One validator's private stake: what the Stake screen's card and total show. */
+    /** One validator's private stake of one vintage: what the Stake screen's row and total show. */
     data class Line(
         val validator: String,
         /** derth in spendable stake notes. */
         val derth: Long,
         /** At the live rate, in uerth (floor(derth x rate), as the chain converts it). */
         val value: Long,
+        /** The stake denom (derth/<validator>[/<YYYYMM>]): one row per validator and vintage. */
+        val denom: String = PrivacyWallet.derthDenom(validator),
     )
 
-    /** A line per validator where the wallet holds stake, in validator order. [rate] is rate_v (1 until read). */
+    /** A line per validator and vintage where the wallet holds stake, in denom order. [rate] is rate_v (1 until read): one per validator, every vintage alike. */
     fun lines(notes: List<OwnedStakeNote>, rate: (String) -> java.math.BigDecimal): List<Line> {
-        val prefix = PrivacyWallet.DERTH_PREFIX
         val held = java.util.TreeMap<String, Long>()
-        for (n in notes) if (n.spendable && n.denom.startsWith(prefix)) {
-            val v = n.denom.removePrefix(prefix)
-            held[v] = Amounts.satAdd(held[v] ?: 0L, n.amount)
+        for (n in notes) if (n.spendable && Vintages.parse(n.denom) != null) {
+            held[n.denom] = Amounts.satAdd(held[n.denom] ?: 0L, n.amount)
         }
-        return held.map { (v, d) -> Line(v, d, PrivacyWallet.derthValue(d, rate(v))) }
+        return held.map { (denom, d) ->
+            val v = PrivacyWallet.parseDerth(denom)
+            Line(v, d, PrivacyWallet.derthValue(d, rate(v)), denom)
+        }
     }
 
     /** "20h 15m", "45m", "under a minute"; "now" once due. */

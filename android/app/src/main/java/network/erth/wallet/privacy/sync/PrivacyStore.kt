@@ -450,8 +450,12 @@ class PrivacyState {
     var groundworksSplit: Map<Long, Long> = emptyMap()
     /** The split was chosen here (cast, changed or stopped): never replaced by one read off the chain's votes (PrivacyWallet.adopt). */
     var groundworksChosen: Boolean = false
-    /** The latest lease end seen on this wallet's own votes (0: none seen): a lapsed vote is deleted on chain, so only this says when it lapsed. */
-    var groundworksExpiresAt: Long = 0
+    /**
+     * The chain's base stake vintage (YYYYMM: the month whose denom is the
+     * unsuffixed derth/<valoper>, Query/Vintages), fixed for a chain's life;
+     * 0 until read, or on a chain without vintages (before v1.3.0).
+     */
+    var baseVintage: Int = 0
     /**
      * The earliest note position holding a value-0 note of ours with a
      * record's magic whose tag matched no generation tried (-1: none), and
@@ -523,7 +527,7 @@ class PrivacyState {
         })
         put("identity_heights", JSONArray(identityHeights)); put("identity_rows_seen", identityRowsSeen)
         put("groundworks_split", splitJson(groundworksSplit)); put("groundworks_chosen", groundworksChosen)
-        put("groundworks_expires_at", groundworksExpiresAt)
+        put("base_vintage", baseVintage)
         put("unmatched_record_from", unmatchedRecordFrom); put("unmatched_record_window", unmatchedRecordWindow)
         put("stake_next", stakeNext); put("stake_height", stakeHeight); put("stake_nullifiers_next", stakeNullifiersNext)
         put("label_window_seconds", labelWindowSeconds)
@@ -595,7 +599,7 @@ class PrivacyState {
             }
             identityHeights.addAll(longs(j.optJSONArray("identity_heights"))); identityRowsSeen = j.optLong("identity_rows_seen")
             groundworksSplit = splitFromJson(j.optJSONObject("groundworks_split")); groundworksChosen = j.optBoolean("groundworks_chosen")
-            groundworksExpiresAt = j.optLong("groundworks_expires_at")
+            baseVintage = j.optInt("base_vintage").takeIf { network.erth.wallet.privacy.Vintages.valid(it) } ?: 0
             unmatchedRecordFrom = j.optLong("unmatched_record_from", -1); unmatchedRecordWindow = j.optInt("unmatched_record_window")
             stakeNext = j.optLong("stake_next"); stakeHeight = j.optLong("stake_height"); stakeNullifiersNext = j.optLong("stake_nullifiers_next")
             labelWindowSeconds = j.optLong("label_window_seconds")
@@ -790,7 +794,7 @@ class PrivacyStore private constructor(
                 stakeVotes.addAll(old.stakeVotes)
                 // What it sent and expects: the resync finds the notes again and folds them in.
                 activity = old.activity.copy()
-                groundworksExpiresAt = old.groundworksExpiresAt
+                baseVintage = old.baseVintage
                 labelWindowSeconds = old.labelWindowSeconds
                 // Notes a tx in flight spends stay unspendable through the resync.
                 carriedMarks.putAll(old.carriedMarks)

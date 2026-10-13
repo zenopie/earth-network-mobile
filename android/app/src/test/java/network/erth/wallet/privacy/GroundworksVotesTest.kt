@@ -9,8 +9,9 @@ import org.junit.Test
 
 /**
  * Groundworks votes by stake note: the split rides every stake tx onto the
- * note it makes, a spend cancels the vote, and a vote lapses after its lease
- * (as GroundworksVoteTests.swift).
+ * note it makes, a spend cancels the vote, and (v1.3.0) a vote has no lease:
+ * it ends with its vintage, and a check-in carries it on (as
+ * GroundworksVoteTests.swift).
  */
 class GroundworksVotesTest : WalletTest() {
     private val vA = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
@@ -26,40 +27,8 @@ class GroundworksVotesTest : WalletTest() {
         return a
     }
 
-    private fun lease(a: PrivacyWallet, read: Boolean = true): Reminders.GroundworksLease =
-        a.groundworksLease(if (read) a.groundworksVotes() else emptyList())!!
-
     private fun held(a: PrivacyWallet, v: String): Long =
         a.stakeNotes.filter { it.spendable && it.denom == PrivacyWallet.derthDenom(v) }.sumOf { it.amount }
-
-    /**
-     * Reminded as the caretaker vote is (from 30 days before its lease end,
-     * for 30 days after), and never while the lease end is unknown.
-     */
-    @Test
-    fun groundworksLeaseReminders() {
-        val q = Reminders.Inputs(now, identityLive = false, claimOpensAt = null, claimedToday = true, caretakerExpiresAt = 0, handle = "", handleEntry = null)
-        fun due(g: Reminders.GroundworksLease?) = Reminders.due(q.copy(groundworks = g))
-        fun lease(e: Long, held: Boolean, split: Map<Long, Long> = mapOf(2L to 100L)) = Reminders.GroundworksLease(e, held, split)
-        fun expiring(e: Long, lapsed: Boolean) = listOf<Reminders.Reminder>(Reminders.Reminder.GroundworksExpiring(e, lapsed))
-        assertTrue(due(null).isEmpty())
-        assertTrue(due(lease(now + Reminders.LEAD_SECONDS + 1, true)).isEmpty())
-        assertEquals(expiring(now + 7 * 86_400, false), due(lease(now + 7 * 86_400, true)))
-        assertEquals(expiring(now + Reminders.LEAD_SECONDS, false), due(lease(now + Reminders.LEAD_SECONDS, true)))
-        // Past its end, deleted by the chain or not yet: lapsed.
-        assertEquals(expiring(now, true), due(lease(now, true)))
-        assertEquals(expiring(now - 86_400, true), due(lease(now - 86_400, false)))
-        assertTrue(due(lease(now - Reminders.LAPSED_SECONDS - 1, false)).isEmpty())
-        // Unknown lease end: no reminder.
-        assertTrue(due(lease(0, true)).isEmpty())
-        assertTrue(lease(0, false).lapsed(now))
-        assertFalse(lease(0, true).lapsed(now))
-        // Hostile times saturate.
-        Reminders.due(q.copy(now = Long.MIN_VALUE, groundworks = lease(Long.MAX_VALUE, true)))
-        Reminders.text(Reminders.Reminder.GroundworksExpiring(Long.MAX_VALUE, false), Long.MIN_VALUE)
-        assertTrue(Reminders.text(Reminders.Reminder.GroundworksExpiring(now + 7 * 86_400, false), now).contains("expires in 7 days"))
-        assertTrue(Reminders.text(Reminders.Reminder.GroundworksExpiring(now - 1, true), now).contains("Vote again"))
-    }
 
     /**
      * Casting votes all our stake in one tx per validator; every later stake
@@ -79,7 +48,9 @@ class GroundworksVotesTest : WalletTest() {
         assertEquals(vA, mine[0].validator)
         assertEquals(held(a, vA), mine[0].derth)
         assertEquals(mapOf(2L to 60L, 3L to 40L), mine[0].split)
-        assertEquals(chain.now + chain.groundworksLease, mine[0].expiresAt)
+        // No lease: the vote is filed under the note's vintage and ends with it.
+        assertEquals(chain.baseVintage, mine[0].vintage)
+        assertEquals(0L, chain.gwVotes.values.single().splitExpiresAt)
 
         // A top-up: the merged note votes it all, one vote.
         a.delegate(vA, 1_000_000); a.sync()
@@ -203,49 +174,47 @@ class GroundworksVotesTest : WalletTest() {
     }
 
     /**
-     * The lease: renewed by casting again, still known after the chain
-     * deletes a lapsed vote, with the split to cast again. Nothing is sent
-     * unless the wallet is asked.
+     * No lease (v1.3.0): the vote counts until its vintage retires, with
+     * nothing to renew; a check-in carries it into the current month (both
+     * outputs vote with the split), and only then does it outlive the old
+     * vintage. Nothing is sent unless the wallet is asked.
      */
     @Test
-    fun leaseRenewsAndLapses() {
-        val chain = FakeChain().apply { minGroundworksVote = 100_000; groundworksLease = 40L * 86_400 }
+    fun voteEndsWithItsVintageAndCheckInCarriesIt() {
+        val chain = FakeChain().apply { minGroundworksVote = 100_000 }
         val a = staked(chain)
         a.castGroundworks(mapOf(2L to 100L))
-        val l0 = lease(a)
-        assertEquals(chain.now + chain.groundworksLease, l0.expiresAt)
-        assertTrue(l0.held && !l0.lapsed(chain.now) && !l0.renewalDue(chain.now))
+        val base = chain.baseVintage
+        assertEquals(listOf(base), a.groundworksVotes().map { it.vintage })
 
-        // A week before the end: due, and nothing was sent on its own.
-        chain.now = l0.expiresAt - 7 * 86_400
+        // Eleven months on: still counting, nothing sent by itself.
+        chain.now = Vintages.start(Vintages.addMonths(base, 11)) + 86_400
         val txs = chain.txs.size
-        val l1 = lease(a)
-        assertTrue(l1.renewalDue(chain.now))
+        assertEquals(1, a.groundworksVotes().size)
         assertEquals(txs, chain.txs.size)
-        // Renew: the same split, a new lease from now.
-        a.castGroundworks(l1.split)
-        val l2 = lease(a)
-        assertEquals(chain.now + chain.groundworksLease, l2.expiresAt)
-        assertEquals(mapOf(2L to 100L), l2.split)
 
-        // The lapse: the chain deletes the vote; the wallet still knows when, and what it was.
-        chain.now = l2.expiresAt
-        chain.lapseSplits()
+        // The check-in moves the stake into this month and the vote with it.
+        a.sync()
+        val r = a.checkInAll()
+        assertEquals(1, r.size)
+        val m = chain.checkIns.single()
+        assertEquals(mapOf(2L to 100L), m.groundworksSplitList.associate { it.optionId to it.percent })
+        val month = chain.currentVintage()
+        val votes = a.groundworksVotes()
+        assertEquals(listOf(month), votes.map { it.vintage })
+        assertEquals(mapOf(2L to 100L), votes.single().split)
+
+        // Past the old vintage's retirement the vote still counts: it is in the new one.
+        chain.now = Vintages.retiresAt(base) + 3_600
+        assertEquals(1, a.groundworksVotes().size)
+
+        // Without a check-in a vintage's vote dies with it.
+        chain.now = Vintages.retiresAt(month) + 3_600
+        chain.retireDue()
         assertTrue(a.groundworksVotes().isEmpty())
-        val l3 = lease(a, read = false)
-        assertTrue(!l3.held && l3.lapsed(chain.now))
-        assertEquals(l2.expiresAt, l3.expiresAt)
-        assertEquals(mapOf(2L to 100L), l3.split)
-        assertEquals(Reminders.Reminder.GroundworksExpiring(l2.expiresAt, true), Reminders.groundworks(l3, chain.now))
-        // Survives an encode/decode of the store, and a re-cast counts again.
+        // The store carries no lease: only the split.
         val decoded = PrivacyState.fromJson(a.store.state.toJson())
-        assertEquals(l2.expiresAt, decoded.groundworksExpiresAt)
         assertEquals(mapOf(2L to 100L), decoded.groundworksSplit)
-        a.castGroundworks(l3.split)
-        val l4 = lease(a)
-        assertTrue(l4.held && !l4.lapsed(chain.now))
-        // Stopped: no lease.
-        a.castGroundworks(emptyMap())
-        assertNull(a.groundworksLease(emptyList()))
+        assertEquals(base, decoded.baseVintage)
     }
 }
