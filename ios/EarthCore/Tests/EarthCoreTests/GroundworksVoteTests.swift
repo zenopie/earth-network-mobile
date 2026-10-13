@@ -3,7 +3,8 @@ import XCTest
 @testable import EarthCore
 
 /// Groundworks votes by stake note: the split rides every stake tx onto the
-/// note it makes, a spend cancels the vote, and a vote lapses after its lease.
+/// note it makes, and a spend cancels the vote. (Since v1.3.0 a vote has no
+/// lease: it ends with its vintage, VintageFlowTests.)
 /// Ports `GroundworksVotesTest`.
 final class GroundworksVoteTests: PrivacyTestCase {
     let vA = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
@@ -19,41 +20,8 @@ final class GroundworksVoteTests: PrivacyTestCase {
         return a
     }
 
-    func lease(_ a: PrivacyWallet, read: Bool = true) async throws -> Reminders.GroundworksLease {
-        let votes = read ? try await a.groundworksVotes() : []
-        let l = await a.groundworksLease(votes)
-        return try XCTUnwrap(l)
-    }
-
     func held(_ a: PrivacyWallet, _ v: String) -> UInt64 {
         a.stakeNotes.filter { $0.spendable && $0.denom == PrivacyWallet.derthDenom(v) }.map(\.amount).reduce(0, +)
-    }
-
-    /// Reminded as the caretaker vote is (from 30 days before its lease end, for 30 days after),
-    /// and never while the lease end is unknown.
-    func testGroundworksLeaseReminders() {
-        let q = Reminders.Inputs(now: now, identityLive: false, claimOpensAt: nil, claimedToday: true, caretakerExpiresAt: 0, handle: "", handleEntry: nil)
-        func due(_ g: Reminders.GroundworksLease?) -> [Reminders.Reminder] { var i = q; i.groundworks = g; return Reminders.due(i) }
-        func lease(_ e: Int64, _ held: Bool, _ split: [UInt64: UInt64] = [2: 100]) -> Reminders.GroundworksLease {
-            Reminders.GroundworksLease(expiresAt: e, held: held, split: split)
-        }
-        XCTAssertTrue(due(nil).isEmpty)
-        XCTAssertTrue(due(lease(now + Reminders.leadSeconds + 1, true)).isEmpty)
-        XCTAssertEqual([.groundworksExpiring(expiresAt: now + 7 * 86_400, lapsed: false)], due(lease(now + 7 * 86_400, true)))
-        XCTAssertEqual([.groundworksExpiring(expiresAt: now + Reminders.leadSeconds, lapsed: false)], due(lease(now + Reminders.leadSeconds, true)))
-        // Past its end, deleted by the chain or not yet: lapsed.
-        XCTAssertEqual([.groundworksExpiring(expiresAt: now, lapsed: true)], due(lease(now, true)))
-        XCTAssertEqual([.groundworksExpiring(expiresAt: now - 86_400, lapsed: true)], due(lease(now - 86_400, false)))
-        XCTAssertTrue(due(lease(now - Reminders.lapsedSeconds - 1, false)).isEmpty)
-        // Unknown lease end: no reminder.
-        XCTAssertTrue(due(lease(0, true)).isEmpty)
-        XCTAssertTrue(lease(0, false).lapsed(now))
-        XCTAssertFalse(lease(0, true).lapsed(now))
-        // Hostile times saturate.
-        var h = q; h.now = .min; h.groundworks = lease(.max, true); _ = Reminders.due(h)
-        _ = Reminders.text(.groundworksExpiring(expiresAt: .max, lapsed: false), now: .min)
-        XCTAssertTrue(Reminders.text(.groundworksExpiring(expiresAt: now + 7 * 86_400, lapsed: false), now: now).contains("expires in 7 days"))
-        XCTAssertTrue(Reminders.text(.groundworksExpiring(expiresAt: now - 1, lapsed: true), now: now).contains("Vote again"))
     }
 
     /// Casting votes all our stake in one tx per validator; every later stake
@@ -203,53 +171,5 @@ final class GroundworksVoteTests: PrivacyTestCase {
         await assertThrowsAsync { _ = try await a.castGroundworks(split: [2: 100]) }
         XCTAssertEqual(txs, chain.txs.count)
         XCTAssertTrue(chain.gwVotes.isEmpty)
-    }
-
-    /// The lease: renewed by casting again, still known after the chain
-    /// deletes a lapsed vote, with the split to cast again. Nothing is sent
-    /// unless the wallet is asked.
-    func testLeaseRenewsAndLapses() async throws {
-        let chain = FakeChain()
-        chain.minGroundworksVote = 100_000
-        chain.groundworksLease = 40 * 86_400
-        let a = try await staked(chain)
-        _ = try await a.castGroundworks(split: [2: 100])
-        let l0 = try await lease(a)
-        XCTAssertEqual(chain.now + chain.groundworksLease, l0.expiresAt)
-        XCTAssertTrue(l0.held && !l0.lapsed(chain.now) && !l0.renewalDue(chain.now))
-
-        // A week before the end: due, and nothing was sent on its own.
-        chain.now = l0.expiresAt - 7 * 86_400
-        let txs = chain.txs.count
-        let l1 = try await lease(a)
-        XCTAssertTrue(l1.renewalDue(chain.now))
-        XCTAssertEqual(txs, chain.txs.count)
-        // Renew: the same split, a new lease from now.
-        _ = try await a.castGroundworks(split: l1.split)
-        let l2 = try await lease(a)
-        XCTAssertEqual(chain.now + chain.groundworksLease, l2.expiresAt)
-        XCTAssertEqual([2: 100], l2.split)
-
-        // The lapse: the chain deletes the vote; the wallet still knows when, and what it was.
-        chain.now = l2.expiresAt
-        chain.lapseSplits()
-        let gone = try await a.groundworksVotes()
-        XCTAssertTrue(gone.isEmpty)
-        let l3 = try await lease(a, read: false)
-        XCTAssertTrue(!l3.held && l3.lapsed(chain.now))
-        XCTAssertEqual(l2.expiresAt, l3.expiresAt)
-        XCTAssertEqual([2: 100], l3.split)
-        XCTAssertEqual(.groundworksExpiring(expiresAt: l2.expiresAt, lapsed: true), Reminders.groundworks(l3, now: chain.now))
-        // Survives an encode/decode of the store, and a re-cast counts again.
-        let decoded = try JSONDecoder().decode(PrivacyState.self, from: try JSONEncoder().encode(a.store.state))
-        XCTAssertEqual(l2.expiresAt, decoded.groundworksExpiresAt)
-        XCTAssertEqual([2: 100], decoded.groundworksSplit)
-        _ = try await a.castGroundworks(split: l3.split)
-        let l4 = try await lease(a)
-        XCTAssertTrue(l4.held && !l4.lapsed(chain.now))
-        // Stopped: no lease.
-        _ = try await a.castGroundworks(split: [:])
-        let none = await a.groundworksLease([])
-        XCTAssertNil(none)
     }
 }

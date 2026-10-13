@@ -98,7 +98,10 @@ struct NotesScreen: View {
     private func label(_ denom: String) -> String {
         if denom == "uerth" { return "ERTH" }
         if denom == "uanml" { return "ANML" }
-        if denom.hasPrefix("derth/") { return "Staked ERTH · " + String(denom.dropFirst(6).prefix(20)) + "…" }
+        if let p = Vintage.parse(denom) {
+            // A vintage's month when its denom names one (the base vintage's is unsuffixed).
+            return "Staked ERTH · " + String(p.valoper.prefix(20)) + "…" + (p.month == 0 ? "" : " · " + Vintage.monthText(p.month))
+        }
         if denom.hasPrefix("dexlp/") { return "LP shares · pool " + String(denom.dropFirst(6)) }
         return denom
     }

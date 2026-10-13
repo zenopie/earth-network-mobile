@@ -73,6 +73,17 @@ public protocol ChainRoots: Sendable {
     /// carries derth/<valoper>'s asset id only, so a wallet restored from the
     /// mnemonic names its stake by trying each (nil: the node cannot say).
     func validatorOperators() async -> [String]?
+    /// The chain's stake vintages (Query/Vintages of one fixed validator):
+    /// a stake ciphertext names derth/<valoper>/<YYYYMM> by its asset id
+    /// only, so a note of a vintage is named by trying each month from the
+    /// base vintage on. Nil: the node cannot say.
+    func vintageContext() async -> VintageRead?
+}
+
+/// What the node says of stake vintages: the chain predates them, or their context.
+public enum VintageRead: Sendable, Equatable {
+    case notServed
+    case ctx(VintageCtx)
 }
 
 public extension ChainRoots {
@@ -86,6 +97,7 @@ public extension ChainRoots {
     func txStatus(_ hash: String) async -> TxStatus? { nil }
     func assets() async -> [(denom: String, id: Fr)]? { nil }
     func validatorOperators() async -> [String]? { nil }
+    func vintageContext() async -> VintageRead? { .notServed }
 }
 
 /// Which chain the LCD serves: its chain id and the first 16 lowercase hex digits of its block 1 hash (nil: unavailable).
@@ -561,6 +573,9 @@ public final class WalletSync {
     private var chainAssetsRead = false
     /// Whether this sync has read the chain's validator list (at most once, and only when a stake note of ours needs it).
     private var validatorsRead = false
+    /// The validator list as read for naming stake notes, and the chain's vintages (nil: not read this sync).
+    private var stakeOperators: [String] = []
+    private var vintageRead: VintageRead?
 
     @discardableResult
     private func readTip() async throws -> ChainTip {
@@ -1046,6 +1061,8 @@ public final class WalletSync {
     private func beginDenoms() {
         chainAssetsRead = false
         validatorsRead = false
+        stakeOperators = []
+        vintageRead = nil
         let own = Set((store.state.notes.map(\.note.denom) + store.state.stakeNotes.map(\.denom)).filter(Denoms.valid))
         let kept = Set(own.sorted().prefix(Denoms.max))
         store.mutate { $0.denoms = kept }
@@ -1204,7 +1221,25 @@ public final class WalletSync {
                         throw PrivacyError("the validator list could not be read, so a stake note of this wallet cannot be named yet")
                     }
                     validatorsRead = true
-                    for op in ops.prefix(Denoms.max) { assetDenoms.learn("derth/\(op)") }
+                    stakeOperators = Array(ops.prefix(Denoms.max))
+                    for op in stakeOperators { assetDenoms.learn("derth/\(op)") }
+                }
+                // A vintage's suffixed denom (v1.3.0): each month from the
+                // base vintage to the next, for every validator, matched by id
+                // and only the matches learned.
+                let unnamed = Set(opened.map(\.1.asset).filter { assetDenoms.resolve($0).hasPrefix(NotePlaintext.unresolvedPrefix) })
+                if !unnamed.isEmpty, !stakeOperators.isEmpty {
+                    if vintageRead == nil {
+                        guard let v = await chain.vintageContext() else {
+                            throw PrivacyError("the chain's stake vintages could not be read, so a stake note of this wallet cannot be named yet")
+                        }
+                        vintageRead = v
+                        if case let .ctx(c) = v, store.state.vintageBase != c.base { store.mutate { $0.vintageBase = c.base } }
+                    }
+                    if case let .ctx(c) = vintageRead {
+                        let last = Vintage.addMonths(max(c.current, Vintage.monthOf(now())), 1)
+                        for d in Self.vintageDenoms(operators: stakeOperators, base: c.base, through: last, matching: unnamed) { learnOwn(d) }
+                    }
                 }
                 store.stakeTree.appendAll(rows.map(\.cm))
                 for (r, o) in opened {
@@ -1222,6 +1257,25 @@ public final class WalletSync {
             if !page.complete { break }
         }
         return found
+    }
+
+    /// The suffixed stake denoms whose asset ids are among `ids`: every
+    /// validator's, each month after `base` through `through` (the base
+    /// month's denom is the unsuffixed one, learned with the validators).
+    static func vintageDenoms(operators: [String], base: UInt32, through: UInt32, matching ids: Set<Fr>) -> [String] {
+        guard Vintage.valid(base), Vintage.valid(through) else { return [] }
+        var out: [String] = []
+        var left = ids
+        var m = through
+        // Newest first: a note is most likely of a recent month.
+        while Vintage.index(m) > Vintage.index(base), !left.isEmpty {
+            for op in operators {
+                let d = Vintage.denom(op, m, base: base)
+                if left.remove(PrivacyHash.assetID(d)) != nil { out.append(d) }
+            }
+            m = Vintage.addMonths(m, -1)
+        }
+        return out
     }
 
     /// A stake row is ours if its ciphertext opens (the wallet stake note,

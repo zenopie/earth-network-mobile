@@ -51,34 +51,42 @@ struct StakeCard {
     }
 }
 
-/// Private stake: one big number, Stake and Unstake, then the validators it
-/// sits with and what is on its way back. Everything else is a tap away in a
-/// validator's sheet.
+/// Private stake: one big number, Stake and Unstake (and Check in when a
+/// vintage is about to stop earning), then the validators it sits with,
+/// retired stake to withdraw, and what is on its way back. Everything else
+/// is a tap away in a validator's sheet.
 struct StakeOverview: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     let round: StakeRoundModel
     let open: (StakeAction) -> Void
+    /// Check in everything due (one confirmation), and withdraw one retired vintage.
+    var checkIn: () -> Void = {}
+    var withdraw: (String) -> Void = { _ in }
 
     var body: some View {
         // Re-drawn each minute so a payout date that passes updates.
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let now = Int64(context.date.timeIntervalSince1970)
             let cards = StakeCard.all(model)
+            let retired = model.stakeHoldings.flatMap(\.retired)
             let empty = cards.isEmpty && model.pendingUnbonds.isEmpty
             VStack(spacing: 0) {
                 hero(cards)
                 Spacer().frame(height: theme.space.x32)
                 buttons(empty: empty)
+                checkInButton(now: now)
                 Spacer().frame(height: theme.space.x24)
                 VStack(spacing: 0) {
                     // Notes not read yet: no rows is not "no stake".
                     if !model.has(.privacy) { ActivityPlaceholder().padding(.horizontal, -24) }
                     ForEach(cards, id: \.validator) { c in
-                        StakeRow(validator: c.validator, value: amount(c.value), status: c.status) {
+                        StakeRow(validator: c.validator, value: amount(c.value), status: c.status,
+                                 detail: c.holding.flatMap { Self.checkInLine($0, now: now) }) {
                             open(.validator(c.validator))
                         }
                     }
+                    ForEach(retired, id: \.denom) { r in retiredRow(r) }
                     ForEach(model.pendingUnbonds, id: \.txHash) { unbondRow($0, now: now) }
                 }
             }
@@ -158,7 +166,7 @@ struct StakeOverview: View {
 
     @ViewBuilder
     private func buttons(empty: Bool) -> some View {
-        let leaving = model.stakeHoldings.filter { $0.free > 0 }
+        let leaving = model.stakeHoldings.filter { $0.maxLeave > 0 }
         HStack(spacing: theme.space.x12) {
             EarthPillButton(title: "Stake") { open(.stake(validator: nil)) }
                 .disabled(model.privacy == nil)
@@ -170,6 +178,70 @@ struct StakeOverview: View {
                 .disabled(leaving.isEmpty)
             }
         }
+    }
+
+    /// One button for every check-in due: shown from 30 days before the
+    /// oldest vintage holding stake stops earning. Nothing checks in by itself.
+    @ViewBuilder
+    private func checkInButton(now: Int64) -> some View {
+        let by = model.checkInDueBy(now: now)
+        if by > 0 {
+            VStack(spacing: theme.space.x8) {
+                EarthPillButton(title: "Check in") { checkIn() }
+                    .disabled(model.privacy == nil)
+                Text("Keeps your stake earning · due \(Self.date(by))")
+                    .font(EarthType.bodySmall).fontWeight(.semibold)
+                    .foregroundStyle(theme.colors.warnInk)
+            }
+            .padding(.top, theme.space.x16)
+        }
+    }
+
+    /// A validator's line: when its oldest live vintage must check in by
+    /// ("expiring" within 30 days). Nil before vintages.
+    static func checkInLine(_ h: PrivacyWallet.StakeHolding, now: Int64) -> StakeRow.Detail? {
+        guard let v = h.vintages.filter({ $0.derth > 0 && $0.retiresAt > 0 }).min(by: { $0.retiresAt < $1.retiresAt }) else { return nil }
+        if v.dueSoon(now) { return .init(text: "Expiring · check in by \(date(v.retiresAt))", warn: true) }
+        return .init(text: "Earning · check in by \(date(v.retiresAt))", warn: false)
+    }
+
+    /// "Oct 1": a vintage's dates fall on the 1st, 00:00 UTC.
+    static func date(_ unix: Int64) -> String {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        var style = Date.FormatStyle.dateTime.month(.abbreviated).day()
+        style.timeZone = cal.timeZone
+        return Date(timeIntervalSince1970: TimeInterval(unix)).formatted(style)
+    }
+
+    /// A retired vintage: not earning, its withdrawal value (Query/Vintages), Withdraw.
+    private func retiredRow(_ r: PrivacyWallet.StakeVintage) -> some View {
+        let q = model.retiredStake.first { $0.denom == r.denom }
+        let validator = (try? PrivacyWallet.parseDerth(r.denom)) ?? ""
+        return Button { withdraw(r.denom) } label: {
+            HStack(spacing: theme.space.x12) {
+                ValidatorMark(validator: validator, size: 44, muted: true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.moniker(of: validator))
+                        .font(EarthType.body).fontWeight(.semibold)
+                        .foregroundStyle(theme.colors.textPrimary)
+                        .lineLimit(1)
+                    Text("Not earning since \(Self.date(r.retiresAt)) · Withdraw")
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.accentInk)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: theme.space.x8)
+                FigureText(model.balancesVisible ? Figures.when(q) { Figures.display(BigInt($0.value)) } : "••••")
+                    .font(.system(size: 17, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(theme.colors.textTertiary)
+                    .lineLimit(1)
+            }
+            .padding(.vertical, theme.space.x12)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(model.privacy == nil)
     }
 
     private func amount(_ uerth: UInt64) -> String {
@@ -215,18 +287,30 @@ struct StakeRow: View {
     let validator: String
     let value: String
     let status: StakeCard.Status
+    /// The line under the name: when the stake checks in by.
+    var detail: Detail? = nil
     let action: () -> Void
+
+    struct Detail { let text: String; let warn: Bool }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: theme.space.x12) {
                 ValidatorMark(validator: validator, size: 44, muted: status == .idle)
-                HStack(spacing: 6) {
-                    Text(model.moniker(of: validator))
-                        .font(EarthType.body).fontWeight(.semibold)
-                        .foregroundStyle(theme.colors.textPrimary)
-                        .lineLimit(1)
-                    StakeDot(status: status)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(model.moniker(of: validator))
+                            .font(EarthType.body).fontWeight(.semibold)
+                            .foregroundStyle(theme.colors.textPrimary)
+                            .lineLimit(1)
+                        StakeDot(status: status)
+                    }
+                    if let detail {
+                        Text(detail.text)
+                            .font(EarthType.bodySmall)
+                            .foregroundStyle(detail.warn ? theme.colors.warnInk : theme.colors.textTertiary)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer(minLength: theme.space.x8)
                 FigureText(value)
@@ -296,10 +380,14 @@ struct ValidatorStakeSheet: View {
     let round: StakeRoundModel
     let open: (StakeAction) -> Void
     let merge: (String) -> Void
+    var withdraw: (String) -> Void = { _ in }
 
     var body: some View {
         let card = StakeCard.all(model).first { $0.validator == validator }
-        let free = card?.holding?.free ?? 0
+        let holding = model.stakeHoldings.first { $0.validator == validator }
+        // One undelegation or move spends one vintage.
+        let free = card?.holding?.maxLeave ?? 0
+        let now = Int64(Date().timeIntervalSince1970)
         VStack(spacing: 0) {
             Spacer().frame(height: theme.space.x32)
             ValidatorMark(validator: validator, size: 56, muted: card?.status == .idle)
@@ -343,6 +431,20 @@ struct ValidatorStakeSheet: View {
                     }
                     .buttonStyle(.plain)
                 }
+                // Each vintage held: earning until it checks in, or retired and waiting to be withdrawn.
+                ForEach(holding?.vintages.filter { $0.derth > 0 && $0.retiresAt > 0 } ?? [], id: \.denom) { v in
+                    Text("\(v.dueSoon(now) ? "Expiring" : "Earning") · check in by \(StakeOverview.date(v.retiresAt))")
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(v.dueSoon(now) ? theme.colors.warnInk : theme.colors.textTertiary)
+                }
+                ForEach(holding?.retired ?? [], id: \.denom) { r in
+                    Button { withdraw(r.denom) } label: {
+                        Text("Not earning since \(StakeOverview.date(r.retiresAt)) · Withdraw")
+                            .font(EarthType.bodySmall).fontWeight(.semibold)
+                            .foregroundStyle(theme.colors.accentInk)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding(.top, theme.space.x12)
 
@@ -360,7 +462,7 @@ struct ValidatorStakeSheet: View {
         .padding(.horizontal, theme.space.gutter)
         .frame(maxWidth: .infinity)
         .background(theme.colors.bgPrimary)
-        .presentationDetents([.height(420)])
+        .presentationDetents([.height(420 + 24 * CGFloat((holding?.vintages.count ?? 0) + (holding?.retired.count ?? 0)))])
         .presentationDragIndicator(.visible)
     }
 

@@ -1,10 +1,12 @@
 import Foundation
 
 /// What the wallet reminds its owner to do, in place of doing it unasked:
-/// the day's ANML claim, the caretaker vote's refresh before it lapses, each
-/// Groundworks position's split before its lease ends, and the handle's
-/// renewal before (and through) its renewal period. Each costs a fee, so each
-/// is the owner's decision; nothing here broadcasts anything.
+/// the day's ANML claim, the caretaker vote's refresh before it lapses, the
+/// stake check-in before the oldest vintage holding stake retires, and the
+/// handle's renewal before (and through) its renewal period. Each costs a
+/// fee, so each is the owner's decision; nothing here broadcasts anything.
+/// (A stake's Groundworks vote has no lease since v1.3.0: it ends with its
+/// vintage, so the check-in keeps it too.)
 /// Ports `privacy/Reminders.kt`; `due` is pure (unit-tested).
 public enum Reminders {
     /// How long before a caretaker vote or handle lapses the reminder starts.
@@ -17,8 +19,8 @@ public enum Reminders {
         case anmlReady
         /// The caretaker vote lapses at `expiresAt` (lapsed when in the past): cast it again to keep it counted.
         case caretakerExpiring(expiresAt: Int64, lapsed: Bool)
-        /// The Groundworks vote lapses at `expiresAt` (`lapsed`: it has): renew or re-cast it.
-        case groundworksExpiring(expiresAt: Int64, lapsed: Bool)
+        /// Stake stops earning (and voting) at `retiresAt`, when its vintage retires: check it in before then.
+        case checkIn(retiresAt: Int64)
         /// The handle's lease ends at `expiresAt`; until `renewalUntil` only its owner may renew it (`inRenewal`: it no longer resolves).
         case handleExpiring(handle: String, expiresAt: Int64, renewalUntil: Int64, inRenewal: Bool)
         /// The live handle this identity holds pays another address (a handle moved here keeps the old
@@ -37,25 +39,6 @@ public enum Reminders {
         case renewBeforeLapse(registrationEndsAt: Int64, handle: String, handleExpiresAt: Int64, voteExpiresAt: Int64)
     }
 
-    /// This wallet's Groundworks vote as its lease stands: the earliest lease
-    /// end of its votes on chain, or the last one seen once they lapsed
-    /// (PrivacyWallet.groundworksLease).
-    public struct GroundworksLease: Equatable, Sendable {
-        /// When the vote stops (or stopped) counting; 0 unknown.
-        public let expiresAt: Int64
-        /// The chain still holds a vote of ours (it deletes one at its lapse).
-        public let held: Bool
-        /// The split a renewal casts again.
-        public let split: [UInt64: UInt64]
-        public init(expiresAt: Int64, held: Bool, split: [UInt64: UInt64]) {
-            self.expiresAt = expiresAt; self.held = held; self.split = split
-        }
-        /// The split no longer counts: cleared, or past its lease end and not yet cleared.
-        public func lapsed(_ now: Int64) -> Bool { !held || (expiresAt > 0 && expiresAt <= now) }
-        /// The reminder window before the lease end has opened, and the split still counts.
-        public func renewalDue(_ now: Int64) -> Bool { !lapsed(now) && expiresAt > 0 && now >= Handles.satSub(expiresAt, leadSeconds) }
-    }
-
     public struct Inputs: Sendable {
         public var now: Int64
         public var identityLive: Bool
@@ -72,8 +55,9 @@ public enum Reminders {
         public var addressed: [HandleEntry]
         /// This wallet's shielded address ("" unknown): a held handle paying another is pointed out.
         public var ownAddress: String
-        /// This wallet's Groundworks vote's lease (stake, so not tied to a live identity; nil: none).
-        public var groundworks: GroundworksLease?
+        /// When the oldest live vintage holding this wallet's stake retires
+        /// (PrivacyWallet.checkInBy; 0: none). Stake, so not tied to a live identity.
+        public var stakeRetiresAt: Int64
         /// PrivacyWallet.moveSuggestionDue: the suggested move time once it has come (0: none).
         public var moveSuggestedAt: Int64
         /// PrivacyWallet.moveDeadline: when what is to move stops being movable (0: unknown).
@@ -85,11 +69,11 @@ public enum Reminders {
 
         public init(now: Int64, identityLive: Bool, claimOpensAt: Int64?, claimedToday: Bool, caretakerExpiresAt: Int64,
                     handle: String, handleEntry: HandleEntry?, addressed: [HandleEntry] = [], ownAddress: String = "",
-                    groundworks: GroundworksLease? = nil, moveSuggestedAt: Int64 = 0, moveDeadline: Int64 = 0,
+                    stakeRetiresAt: Int64 = 0, moveSuggestedAt: Int64 = 0, moveDeadline: Int64 = 0,
                     registrationEndsAt: Int64 = 0, handleExpiresAt: Int64 = 0) {
             self.now = now; self.identityLive = identityLive; self.claimOpensAt = claimOpensAt; self.claimedToday = claimedToday
             self.caretakerExpiresAt = caretakerExpiresAt; self.handle = handle; self.handleEntry = handleEntry
-            self.addressed = addressed; self.ownAddress = ownAddress; self.groundworks = groundworks
+            self.addressed = addressed; self.ownAddress = ownAddress; self.stakeRetiresAt = stakeRetiresAt
             self.moveSuggestedAt = moveSuggestedAt; self.moveDeadline = moveDeadline
             self.registrationEndsAt = registrationEndsAt; self.handleExpiresAt = handleExpiresAt
         }
@@ -103,7 +87,7 @@ public enum Reminders {
         if i.identityLive, c > 0, i.now >= Handles.satSub(c, leadSeconds), i.now < Handles.satAdd(c, lapsedSeconds) {
             out.append(.caretakerExpiring(expiresAt: c, lapsed: i.now >= c))
         }
-        if let g = i.groundworks, let r = groundworks(g, now: i.now) { out.append(r) }
+        if let r = checkIn(retiresAt: i.stakeRetiresAt, now: i.now) { out.append(r) }
         guard i.identityLive else { return out }
         // Until what is to move stops being movable; past that a move cannot bring it.
         if i.moveSuggestedAt > 0, i.moveSuggestedAt <= i.now, i.moveDeadline <= 0 || i.now < i.moveDeadline {
@@ -136,14 +120,11 @@ public enum Reminders {
         return .renewBeforeLapse(registrationEndsAt: end, handle: h > 0 ? i.handle : "", handleExpiresAt: h, voteExpiresAt: v)
     }
 
-    /// `g`'s reminder, as the caretaker vote's: from `leadSeconds` before the lease end until
-    /// `lapsedSeconds` after it. None while the lease end is unknown.
-    public static func groundworks(_ g: GroundworksLease, now: Int64) -> Reminder? {
-        let e = g.expiresAt
-        guard e > 0 else { return nil }
-        let lapsed = g.lapsed(now)
-        let due = lapsed ? now < Handles.satAdd(e, lapsedSeconds) : g.renewalDue(now)
-        return due ? .groundworksExpiring(expiresAt: e, lapsed: lapsed) : nil
+    /// The check-in reminder: from `Vintage.checkInLeadSeconds` (30 days) before the oldest
+    /// live vintage holding stake retires until it does (then it is withdrawn, not checked in).
+    public static func checkIn(retiresAt r: Int64, now: Int64) -> Reminder? {
+        guard r > 0, now >= Handles.satSub(r, Vintage.checkInLeadSeconds), now < r else { return nil }
+        return .checkIn(retiresAt: r)
     }
 
     /// The reminder's line for a banner.
@@ -154,9 +135,8 @@ public enum Reminders {
         case let .caretakerExpiring(exp, lapsed):
             return lapsed ? "Your caretaker vote has lapsed and no longer counts. Cast it again to keep directing emissions."
                 : "Your caretaker vote expires in \(days(Handles.satSub(exp, now))). Renew it to keep it counted."
-        case let .groundworksExpiring(exp, lapsed):
-            return lapsed ? "Your Groundworks vote has lapsed and no longer counts. Vote again to keep directing emissions."
-                : "Your Groundworks vote expires in \(days(Handles.satSub(exp, now))). Renew it to keep it counted."
+        case let .checkIn(r):
+            return "Some of your stake stops earning in \(days(Handles.satSub(r, now))). Check in to keep it earning."
         case let .handleExpiring(h, exp, until, inRenewal):
             return inRenewal ? "@\(h) has expired and no longer receives payments. Renew it within \(days(Handles.satSub(until, now))) or anyone may claim it."
                 : "@\(h) expires in \(days(Handles.satSub(exp, now))). Renew it to keep it."

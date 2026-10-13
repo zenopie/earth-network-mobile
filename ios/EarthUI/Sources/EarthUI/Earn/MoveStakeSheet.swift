@@ -50,7 +50,7 @@ struct MoveStakeSheet: View {
             .navigationDestination(item: $picking) { side in
                 if side == .from {
                     ValidatorPicker(title: "Move from", options: sources.map { h in
-                        .init(validator: h.validator, detail: "\(Figures.when(model.stakeValuesLoaded, Figures.display(BigInt(model.derthValue(h.free, validator: h.validator))))) ERTH", enabled: true)
+                        .init(validator: h.validator, detail: "\(Figures.when(model.stakeValuesLoaded, Figures.display(BigInt(model.derthValue(h.maxLeave, validator: h.validator))))) ERTH", enabled: true)
                     }, selected: source) { op in
                         if source != op { amount = "" }
                         source = op
@@ -69,11 +69,11 @@ struct MoveStakeSheet: View {
         }
     }
 
-    private var sources: [PrivacyWallet.StakeHolding] { model.stakeHoldings.filter { $0.free > 0 } }
+    private var sources: [PrivacyWallet.StakeHolding] { model.stakeHoldings.filter { $0.maxLeave > 0 } }
 
     private var destinations: [String] { model.stakeTargets.filter { $0 != source } }
 
-    private var available: BigInt { BigInt(sources.first { $0.validator == source }?.free ?? 0) }
+    private var available: BigInt { BigInt(sources.first { $0.validator == source }?.maxLeave ?? 0) }
 
     private var parsed: BigInt? {
         guard source != nil, let value = Token.erth.parse(amount), value > 0, value <= available else { return nil }

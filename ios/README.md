@@ -99,6 +99,13 @@ The ProverGate test proves every dumped witness through Swoirenberg, checks
 each VK against the chain's genesis VK, and writes one proof per circuit for
 `chainverify` (which needs a chain checkout for its `replace`).
 
+Stake vintages (chain v1.3.0: `derth/<valoper>/<YYYYMM>`, the base month
+unsuffixed, `MsgCheckIn`, retired-vintage withdrawals, `vintage` on every
+stake msg) are pinned by their own vectors, iOS only, from the chain's code:
+
+    EarthCore/Scripts/vintagevectors/gen.sh <chain checkout> [ref]
+    # writes Tests/EarthCoreTests/Resources/vintages/vectors.json (VintageTests)
+
 ### The passport
 
 Everything between a chip read and a registration on chain, minus the chip read

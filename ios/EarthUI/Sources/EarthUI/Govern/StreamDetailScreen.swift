@@ -67,8 +67,8 @@ struct StreamDetailScreen: View {
                     // rather than your own.
                     if stream == .groundworks, lens == .preferred, eligibility == nil {
                         // Your stake votes: every stake tx carries the split
-                        // onto the note it makes. With its lease and renewal,
-                        // all of it is your vote, so it lives with your split.
+                        // onto the note it makes, and it counts while the stake
+                        // is checked in: all of it is your vote, so it lives with your split.
                         Spacer().frame(height: theme.space.x24)
                         GroundworksVoteControls(state: state, onChanged: onChanged) { editing = true }
                     } else if lens == .preferred, eligibility == nil {
@@ -95,14 +95,6 @@ struct StreamDetailScreen: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
-            // A Groundworks vote due for renewal opens on Preferred, where Renew
-            // is: the Home reminder lands here for exactly that.
-            .task {
-                let now = Int64(Date().timeIntervalSince1970)
-                if stream == .groundworks, let lease = model.groundworksLease, lease.lapsed(now) || lease.renewalDue(now) {
-                    lens = .preferred
-                }
-            }
             #if targetEnvironment(simulator)
             // `-demoAddOption 1` opens the add sheet, as `-demoStream` opens this screen.
             .task {
@@ -192,8 +184,6 @@ struct GroundworksVoteControls: View {
 
     var body: some View {
         let split = model.groundworksSplit
-        let lease = model.groundworksLease
-        let now = Int64(Date().timeIntervalSince1970)
         VStack(spacing: theme.space.x12) {
             EarthPillButton(title: split.isEmpty ? "Vote" : "Change vote") { edit() }
             if !split.isEmpty, removedOption(split) {
@@ -210,22 +200,6 @@ struct GroundworksVoteControls: View {
                 Text("Moved stake counts from \(Date(timeIntervalSince1970: TimeInterval(until)).formatted(.dateTime.month(.abbreviated).day()))")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
-            }
-            if let lease {
-                if lease.lapsed(now) {
-                    Text("Your vote lapsed")
-                        .font(EarthType.bodySmall).fontWeight(.semibold)
-                        .foregroundStyle(theme.colors.warnInk)
-                } else if lease.expiresAt > 0 {
-                    Text("Counts until \(Date(timeIntervalSince1970: TimeInterval(lease.expiresAt)).formatted(.dateTime.month(.abbreviated).day()))")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textTertiary)
-                }
-                if (lease.lapsed(now) || lease.renewalDue(now)) && !removedOption(lease.split) {
-                    EarthPillButton(title: "Renew", role: .secondary) {
-                        Self.cast(lease.split, rows: rows(lease.split), action: "Renew Groundworks vote", tx: tx, model: model, onChanged: onChanged)
-                    }
-                }
             }
             if !split.isEmpty {
                 Button("Stop voting") {
@@ -274,8 +248,9 @@ struct GroundworksVoteControls: View {
     @MainActor
     static func cast(_ split: [UInt64: UInt64], rows: [(String, String)], action: String = "Vote in Groundworks",
                      tx: TxController, model: AppModel, onChanged: @escaping () -> Void) {
-        let validators = model.privateStake.filter { $0.value > 0 }.count
-        let sends = validators == 1 ? "At least 1 transaction" : "At least \(validators) transactions, one per validator"
+        // One restake per live vintage held (a retired one neither votes nor restakes).
+        let vintages = model.stakeHoldings.reduce(0) { $0 + $1.vintages.filter { $0.derth > 0 }.count }
+        let sends = vintages <= 1 ? "At least 1 transaction" : "At least \(vintages) transactions, one per validator and month"
         tx.requestPrivate(.private(action: action, rows: rows + [("Sends", sends)]), onSuccess: { onChanged() }) { w in
             guard let last = try await w.castGroundworks(split: split).last else {
                 throw PrivacyError("Stake ERTH first: your stake is what votes.")
@@ -559,9 +534,15 @@ struct ProposalDetailScreen: View {
     struct StakeVoting {
         let vote: Gov.Vote
         var items: [PrivacyWallet.StakeVoteItem]
+        /// Items (`key`) the user chose to vote in parts.
         var inParts: Set<String> = []
-        /// The validator whose choice is asked, if any.
+        /// The item (`key`) whose choice is asked, if any.
         var asking: String?
+
+        /// One validator's vintage: what one vote proof names.
+        static func key(_ item: PrivacyWallet.StakeVoteItem) -> String { "\(item.validator)#\(item.vintage)" }
+
+        func item(_ key: String) -> PrivacyWallet.StakeVoteItem? { items.first { Self.key($0) == key } }
     }
 
     var body: some View {
@@ -631,9 +612,9 @@ struct ProposalDetailScreen: View {
         .background(theme.colors.bgPrimary)
         .scrollContentBackground(.hidden)
         .confirmationDialog(
-            partsChoice?.asking.map { v in
-                let n = partsChoice?.items.compactMap { if case let .validator(x, c) = $0, x == v { return c }; return nil }.first ?? 0
-                return "\(n) stake notes at \(name(v))"
+            partsChoice?.asking.flatMap { k in partsChoice?.item(k) }.map { item in
+                if case let .validator(v, n, _) = item { return "\(n) stake notes at \(name(v))" }
+                return ""
             } ?? "",
             isPresented: Binding(get: { partsChoice != nil }, set: { if !$0 { partsChoice = nil } }),
             titleVisibility: .visible
@@ -806,12 +787,10 @@ struct ProposalDetailScreen: View {
     /// Asks about the first validator that needs a choice, else raises the first sheet.
     private func start(_ v: StakeVoting) {
         var v = v
-        for item in v.items {
-            if case let .validator(valoper, _) = item, item.parts > 1, !v.inParts.contains(valoper) {
-                v.asking = valoper
-                partsChoice = v
-                return
-            }
+        for item in v.items where item.parts > 1 && !v.inParts.contains(StakeVoting.key(item)) {
+            v.asking = StakeVoting.key(item)
+            partsChoice = v
+            return
         }
         let tx = self.tx, model = self.model, id = proposal.id, title = proposal.title
         Self.next(v, proposalID: id, title: title, tx: tx, model: model, name: name)
@@ -830,7 +809,7 @@ struct ProposalDetailScreen: View {
             let preview = try? await w.stakeVotePreview(proposalID: proposalID, item: item)
             let whereText: String
             switch item {
-            case let .validator(valoper, _): whereText = "at \(name(valoper))"
+            case let .validator(valoper, _, _): whereText = "at \(name(valoper))"
             }
             var rows: [(String, String)] = [
                 ("Proposal", "#\(proposalID) \(title)"),
@@ -855,8 +834,7 @@ struct ProposalDetailScreen: View {
 
     /// The choice for a validator with more notes than one vote holds.
     private var partsChoiceText: String {
-        guard let v = partsChoice, let valoper = v.asking,
-              let item = v.items.first(where: { if case let .validator(x, _) = $0 { return x == valoper }; return false }) else { return "" }
+        guard let v = partsChoice, let key = v.asking, let item = v.item(key) else { return "" }
         // In parts: a fee each, and the parts can be linked to each other. A
         // merge helps later proposals only: this one counts the notes as they
         // were when voting opened.
@@ -864,22 +842,23 @@ struct ProposalDetailScreen: View {
     }
 
     private func voteInParts() {
-        guard var v = partsChoice, let valoper = v.asking else { return }
+        guard var v = partsChoice, let key = v.asking else { return }
         partsChoice = nil
         v.items = v.items.flatMap { item -> [PrivacyWallet.StakeVoteItem] in
-            if case let .validator(x, _) = item, x == valoper { return Array(repeating: item, count: item.parts) }
-            return [item]
+            StakeVoting.key(item) == key ? Array(repeating: item, count: item.parts) : [item]
         }
-        v.inParts.insert(valoper)
+        v.inParts.insert(key)
         v.asking = nil
         start(v)
     }
 
     private func mergeFirst() {
-        guard let valoper = partsChoice?.asking else { return }
+        guard let key = partsChoice?.asking, let item = partsChoice?.item(key) else { return }
         partsChoice = nil
-        tx.requestPrivate(.private(action: "Merge two stake notes", rows: [("Validator", name(valoper))])) { w in
-            try await w.mergeStake(denom: PrivacyWallet.derthDenom(valoper))
+        // The item's vintage's notes (0: a chain before vintages, the unsuffixed denom).
+        let denom = item.denom(model.vintages)
+        tx.requestPrivate(.private(action: "Merge two stake notes", rows: [("Validator", name(item.validator))])) { w in
+            try await w.mergeStake(denom: denom)
         }
         onVoted()
     }

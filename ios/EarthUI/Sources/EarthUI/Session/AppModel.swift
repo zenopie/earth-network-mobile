@@ -48,14 +48,14 @@ public final class AppModel {
         // This wallet's: dropped on a switch.
         case balances, delegations, unbondings, rewards, lpQueue
         // Its private side: dropped with it.
-        case privacy, groundworks, personal
+        case privacy, groundworks, personal, retired
         // The chain's: kept across a switch.
         case pools, dexParams, bonded, validators
     }
     public private(set) var loaded: Set<Part> = []
     public func has(_ part: Part) -> Bool { loaded.contains(part) }
     private static let walletParts: Set<Part> = [.balances, .delegations, .unbondings, .rewards, .lpQueue]
-    private static let privacyParts: Set<Part> = [.privacy, .groundworks, .personal]
+    private static let privacyParts: Set<Part> = [.privacy, .groundworks, .personal, .retired]
 
     /// Balances by denom, in base units.
     public private(set) var balances: [String: BigInt] = [:]
@@ -84,10 +84,10 @@ public final class AppModel {
     public private(set) var unshieldableErth: UInt64 = 0
     /// This wallet's Groundworks votes (the chain's votes under our notes' tags).
     public private(set) var groundworksVotes: [PrivacyWallet.GroundworksVoteView] = []
-    /// Their lease, for the reminder and the Renew (PrivacyWallet.groundworksLease); nil when no split is chosen.
-    public private(set) var groundworksLease: Reminders.GroundworksLease?
-    /// This wallet's private stake per validator: what may move now, what waits for its window.
+    /// This wallet's private stake per validator: what may move now, what waits for its window, each vintage apart.
     public private(set) var stakeHoldings: [PrivacyWallet.StakeHolding] = []
+    /// Retired stake: what withdrawing each retired vintage pays and when (Query/Vintages; `.retired` once read).
+    public private(set) var retiredStake: [PrivacyWallet.WithdrawQuote] = []
     /// The chain's label window as last read (0: never): how long moved stake stays put.
     public private(set) var labelWindowSeconds: UInt64 = 0
     /// Live rate_v (ERTH per derth) of every validator with a book, from the
@@ -1008,9 +1008,20 @@ public final class AppModel {
     /// Shielded ERTH: what every private action's fee is paid from.
     public var shieldedErth: UInt64 { shielded["uerth"] ?? 0 }
 
-    /// Private stake (derth notes) per validator.
+    /// Private stake (derth notes) per denom, a validator's live vintage
+    /// each: retired stake earns nothing and votes nothing (`retiredStake`).
     public var privateStake: [String: UInt64] {
-        shielded.filter { $0.key.hasPrefix("derth/") }
+        let c = vintages
+        return shielded.filter { $0.key.hasPrefix("derth/") && !PrivacyWallet.isRetired($0.key, c) }
+    }
+
+    /// The stake vintages as the wallet last read them (nil: none known, or a chain before them).
+    public var vintages: VintageCtx? { privacy?.snapshot.vintages }
+
+    /// When a check-in is due: the oldest live vintage holding stake retires within 30 days (0: none due).
+    public func checkInDueBy(now: Int64 = Int64(Date().timeIntervalSince1970)) -> Int64 {
+        let by = PrivacyWallet.checkInBy(stakeHoldings)
+        return by > 0 && now >= by - Vintage.checkInLeadSeconds && now < by ? by : 0
     }
 
     /// Private stake in derth. A count of notes' units, not ERTH: what
@@ -1030,7 +1041,7 @@ public final class AppModel {
     /// Private stake per validator at the live rates. What the Stake tab
     /// shows; the Portfolio's rows add up to it.
     public func stakeLines() -> [StakeRound.Line] {
-        StakeRound.lines(notes: privacy?.stakeNotes ?? [], rate: { [derthRates] in derthRates[$0] ?? 1 })
+        StakeRound.lines(notes: privacy?.stakeNotes ?? [], rate: { [derthRates] in derthRates[$0] ?? 1 }, vintages: vintages)
     }
 
     /// The Groundworks split this wallet votes with (empty: none).
@@ -1081,8 +1092,8 @@ public final class AppModel {
         mergeable = [:]
         unshieldableErth = 0
         groundworksVotes = []
-        groundworksLease = nil
         stakeHoldings = []
+        retiredStake = []
         labelWindowSeconds = 0
         derthRates = [:]
         handle = ""; handleEntry = nil; handleMovedOut = false; handleDirectoryError = nil
@@ -1159,24 +1170,33 @@ public final class AppModel {
         if w === privacy, refreshTask == nil { dataVersion &+= 1 }
     }
 
-    /// This wallet's Groundworks votes and their lease (the chain's whole list, never a query about ours).
+    /// This wallet's Groundworks votes (the chain's whole list, never a query
+    /// about ours). Since v1.3.0 they have no lease: they end with their
+    /// vintage, so the check-in reminder keeps them.
     func refreshGroundworks() async {
         guard let w = privacy else { return }
         let mine = try? await w.groundworksVotes()
         guard w === privacy else { return }
         if let mine { groundworksVotes = mine; loaded.insert(.groundworks) }
-        let lease = await w.groundworksLease(groundworksVotes)
-        guard w === privacy else { return }
-        groundworksLease = lease
     }
 
-    /// This wallet's stake per validator (the chain's debt view is read only when a label is held).
+    /// This wallet's stake per validator and vintage (the chain's debt view
+    /// is read only when a label is held), and what its retired vintages
+    /// withdraw for (every validator's, read only while one is held).
     func refreshStakeHoldings() async {
         guard let w = privacy else { return }
         let holdings = await w.stakeHoldings()
         guard w === privacy else { return }
         stakeHoldings = holdings
         labelWindowSeconds = w.labelWindowSeconds
+        if holdings.allSatisfy({ $0.retired.isEmpty }) {
+            retiredStake = []
+            loaded.insert(.retired)
+            return
+        }
+        let quotes = try? await w.retiredStake()
+        guard w === privacy else { return }
+        if let quotes { retiredStake = quotes ?? []; loaded.insert(.retired) }
     }
 
     /// Re-reads this identity's handle (from the whole directory, never a
@@ -1217,7 +1237,7 @@ public final class AppModel {
             now: Int64(Date().timeIntervalSince1970), identityLive: live, claimOpensAt: w.claimOpensAt(),
             claimedToday: w.claimedToday(), caretakerExpiresAt: caretakerExpiresAt, handle: snap.handle, handleEntry: handleEntry,
             addressed: addressed, ownAddress: w.address.encode(),
-            groundworks: groundworksLease,
+            stakeRetiresAt: PrivacyWallet.checkInBy(stakeHoldings),
             moveSuggestedAt: w.moveSuggestionDue(), moveDeadline: w.moveDeadline(),
             registrationEndsAt: registrationEndsAt, handleExpiresAt: handleExp))
         // The handle and caretaker standing are the store's own, so they hold

@@ -44,7 +44,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var stakeNfValues: [Fr] = []
     var stakeRoots: Set<Fr> = []
     /// Proposal snapshots: note root and size, nullifier tree root and size (sentinel included), block.
-    struct Snap { let proposalID: UInt64, root: Fr, treeSize: UInt64, nfRoot: Fr, nfSize: UInt64, height: UInt64 }
+    struct Snap { let proposalID: UInt64, root: Fr, treeSize: UInt64, nfRoot: Fr, nfSize: UInt64, height: UInt64; var vintage: UInt32 = 0 }
     var snapshots: [UInt64: Snap] = [:]
     /// (proposal, vote nullifier) of every stake vote.
     var voteNullifiers: Set<[Fr]> = []
@@ -84,6 +84,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         var pending: UInt64 = 0
         var pendingKey: Fr = .zero
         var maturesAt: Int64 = 0
+        /// The voting note's vintage (0 before v1.3.0): the vote ends when it retires.
+        var vintage: UInt32 = 0
     }
 
     /// The chain's BeginBlock maturity at `now`: every due pending exposure
@@ -106,7 +108,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     /// The chain's lapse at `now`: every vote whose lease has ended is deleted.
     func lapseSplits() {
-        for (t, v) in gwVotes where v.splitExpiresAt <= now { gwVotes[t] = nil }
+        for (t, v) in gwVotes where v.splitExpiresAt > 0 && v.splitExpiresAt <= now { gwVotes[t] = nil }
     }
     var gwVotes: [Fr: GwVote] = [:]
     var nextVoteID: UInt64 = 1
@@ -225,6 +227,120 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         debtRetained[key] = min(retained, debtRetained[key] ?? .max)
         block()
     }
+    // MARK: stake vintages (v1.3.0)
+
+    /// The base vintage (nil: a chain before v1.3.0, which serves no
+    /// Query/Vintages and refuses a msg naming a vintage as an unknown field).
+    var vintageBase: UInt32?
+    /// The chain's vintages at its last block time.
+    var vintageCtx: VintageCtx? { vintageBase.map { VintageCtx(base: $0, current: Vintage.monthOf(now)) } }
+    /// S_{v,m}: derth per validator per vintage.
+    var vintageSupply: [String: [UInt32: UInt64]] = [:]
+    /// A retired vintage not fully withdrawn: what its notes may still take, and whether its held payout has matured.
+    struct Retired { let validator: String; let vintage: UInt32; var remainingSupply: UInt64; var remainingValue: UInt64; let retiredAt: Int64; var matured: Bool }
+    var retired: [String: Retired] = [:]
+    /// Every Query/Vintages read (validator asked).
+    var vintageAsks: [String] = []
+
+    private func supplyAdd(_ v: String, _ m: UInt32, _ d: UInt64) { vintageSupply[v, default: [:]][m, default: 0] += d }
+    private func supplySub(_ v: String, _ m: UInt32, _ d: UInt64) throws {
+        let have = vintageSupply[v]?[m] ?? 0
+        try need(d <= have, "more derth than the vintage holds (code 1103)")
+        vintageSupply[v]![m] = have - d
+    }
+
+    /// The month boundary's sweep: every vintage due retires, its value
+    /// (supply at the 10/9 rate) held for its notes, its votes dropped.
+    func retireDue() {
+        guard let c = vintageCtx else { return }
+        for (v, ms) in vintageSupply {
+            for (m, sup) in ms where Vintage.retired(m, current: c.current) {
+                vintageSupply[v]![m] = nil
+                guard sup > 0 else { continue }
+                retired[Vintage.denom(v, m, base: c.base)] = Retired(validator: v, vintage: m, remainingSupply: sup, remainingValue: sup * 10 / 9,
+                                                                    retiredAt: now, matured: false)
+            }
+        }
+        for (t, g) in gwVotes where g.vintage != 0 && Vintage.retired(g.vintage, current: c.current) { gwVotes[t] = nil }
+        block()
+    }
+
+    /// Query/Vintages (its chain-wide part).
+    func vintagesRead(_ validator: String) -> VintageCtx? { vintageAsks.append(validator); return vintageCtx }
+
+    /// Every validator's retired vintages (Query/Vintages asked of each).
+    func retiredRead() -> [String: PrivacyReads.RetiredVintage]? {
+        guard vintageBase != nil else { return nil }
+        for v in stakingValidators + validators { vintageAsks.append(v) }
+        return retired.mapValues { r in
+            PrivacyReads.RetiredVintage(validator: r.validator, vintage: r.vintage, denom: Vintage.denom(r.validator, r.vintage, base: vintageBase!),
+                                        remainingSupply: BigUInt(r.remainingSupply), remainingValue: BigUInt(r.remainingValue),
+                                        retiredAt: r.retiredAt, matured: r.matured, completesAt: r.matured ? 0 : r.retiredAt + 21 * 86_400)
+        }
+    }
+
+    func vintageContext() async -> VintageRead? { vintageBase == nil ? .notServed : .ctx(vintageCtx!) }
+
+    /// A stake msg's vintage rules (the msg server's and the ante's): the
+    /// month it names, live (a delegation the current one), or a retired one
+    /// for a withdrawal.
+    private func checkVintages(_ m: any PrivateMsg) throws {
+        guard let c = vintageCtx else {
+            try need(Self.msgVintage(m) == 0 && !(m is MsgCheckIn), "unknown field: a chain before v1.3.0 takes no stake vintage")
+            return
+        }
+        func month(_ x: UInt32) throws -> UInt32 {
+            try need(x == 0 || Vintage.valid(x), "\(x) is not a vintage (code 1122)")
+            let r = c.resolve(x)
+            try need(Vintage.index(r) <= Vintage.index(c.current), "vintage \(r) has not begun (code 1122)")
+            return r
+        }
+        switch m {
+        case let m as MsgShieldedDelegate:
+            try need(try month(m.vintage) == c.current, "a delegation credits the current vintage only (code 1122)")
+        case let m as MsgRestake:
+            try need(c.live(try month(m.vintage)), "a retired vintage (code 1121)")
+        case let m as MsgRedelegate:
+            try need(c.live(try month(m.vintage)), "a retired vintage (code 1121)")
+        case let m as MsgCheckIn:
+            try need(m.fromVintage != 0, "from_vintage names a month (code 1122)")
+            let f = try month(m.fromVintage)
+            try need(c.live(f), "a retired vintage (code 1121)")
+            try need(Vintage.index(f) < Vintage.index(c.current), "a check-in from the current month (code 1122)")
+            try need(m.amount <= vintageSupply[m.validator]?[f] ?? 0, "more derth than the vintage holds (code 1103)")
+        case let m as MsgShieldedUndelegate:
+            let from = try month(m.vintage)
+            if !c.live(from) {
+                try need(m.groundworksSplit.isEmpty && m.stake.voteTag.allSatisfy { $0 == 0 }, "a withdrawal neither votes nor splits (code 1121)")
+                guard let r = retired[Vintage.denom(m.validator, from, base: c.base)], r.remainingSupply > 0 else {
+                    throw Refused(why: "the vintage's retirement is not booked (code 1121)")
+                }
+                try need(m.amount <= r.remainingSupply, "more than the vintage holds (code 1103)")
+            }
+        case let m as MsgStakeVote:
+            let f = try month(m.vintage)
+            try need(c.live(f), "a retired vintage does not vote (code 1121)")
+            if let s = snapshots[m.proposalID], s.vintage != 0 {
+                try need(Vintage.index(f) <= Vintage.index(s.vintage), "a vintage after the snapshot's (code 1122)")
+            }
+        default: break
+        }
+    }
+
+    /// An undelegation naming a retired vintage.
+    func isWithdrawal(_ m: MsgShieldedUndelegate) -> Bool { vintageCtx.map { !$0.live($0.resolve(m.vintage)) } ?? false }
+
+    static func msgVintage(_ m: any PrivateMsg) -> UInt32 {
+        switch m {
+        case let m as MsgShieldedDelegate: return m.vintage
+        case let m as MsgRestake: return m.vintage
+        case let m as MsgShieldedUndelegate: return m.vintage
+        case let m as MsgRedelegate: return m.vintage
+        case let m as MsgStakeVote: return m.vintage
+        default: return 0
+        }
+    }
+
     /// Every Query/DebtTree page asked (start), and every /debt_rows page (from_index).
     var debtAsks: [String] = []
     /// Whether the indexer serves /debt_rows (false: an older indexer; the wallet reads the chain's pages).
@@ -310,7 +426,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         let cm = o.cm(ownerPK: keys.ownerPK)
         let pos = stakeTree.append(cm)
         stakeRows.append(StakeNoteRow(position: pos, height: height, cm: cm, ciphertext: try! NoteCipher.encryptStake(o, ekPub: keys.ekPub, cm: cm)))
-        noteValidator(String(denom.dropFirst(PrivacyWallet.derthPrefix.count)))
+        let p = Vintage.parse(denom)!
+        noteValidator(p.valoper)
+        if let c = vintageCtx { supplyAdd(p.valoper, c.resolve(p.month), amount) }
         block()
         return pos
     }
@@ -369,7 +487,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     @discardableResult
     func openProposal(_ id: UInt64) -> Snap {
         let s = Snap(proposalID: id, root: stakeTree.size == 0 ? .zero : stakeTree.root(), treeSize: stakeTree.size, nfRoot: stakeNfRoot(),
-                     nfSize: stakeNfValues.isEmpty ? 0 : UInt64(stakeNfValues.count) + 1, height: height)
+                     nfSize: stakeNfValues.isEmpty ? 0 : UInt64(stakeNfValues.count) + 1, height: height, vintage: vintageCtx?.current ?? 0)
         snapshots[id] = s
         block()
         return s
@@ -378,7 +496,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     /// Query/Snapshot.
     func snapshotRead(_ id: UInt64) throws -> PrivacyReads.Snapshot {
         guard let s = snapshots[id] else { throw Refused(why: "no snapshot for proposal \(id)") }
-        return PrivacyReads.Snapshot(root: s.root, treeSize: s.treeSize, height: Int64(s.height), nfRoot: s.nfRoot, nfSize: s.nfSize)
+        return PrivacyReads.Snapshot(root: s.root, treeSize: s.treeSize, height: Int64(s.height), nfRoot: s.nfRoot, nfSize: s.nfSize, vintage: s.vintage)
     }
 
     /// Query/StakeNullifierTree.
@@ -479,6 +597,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var gasRatios: [Double] = []
     /// The last committed msg.
     var lastMsg: (any PrivateMsg)?
+    /// Every committed msg, in order.
+    var committed: [any PrivateMsg] = []
 
     /// Broadcasts to refuse (after the wallet proved them): a node down, a tx dropped.
     var rejectNext = 0
@@ -532,6 +652,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         accepted(hash)
         let (m, events) = try check(tx, simulate: false)
         lastMsg = m
+        committed.append(m)
         block()
         let r = TxResult(hash: hash, height: height - 1, time: now, events: events)
         txs[hash] = r
@@ -623,7 +744,17 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         try need(m.totalFee > 0, "no fee")
     }
 
-    private func lanes(_ m: any PrivateMsg) -> ChainLayout.Lanes { ChainLayout.lanes(m) }
+    private func lanes(_ m: any PrivateMsg) -> ChainLayout.Lanes { ChainLayout.lanes(m, vintageCtx) }
+
+    /// The months a msg's two outputs land in (lane A's, the credit's): what their Groundworks votes end with.
+    private func outputVintages(_ m: any PrivateMsg) -> (UInt32, UInt32) {
+        guard let c = vintageCtx else { return (0, 0) }
+        switch m {
+        case let m as MsgCheckIn: return (m.fromVintage, c.current)
+        case let m as MsgRedelegate: return (c.resolve(m.vintage), c.current)
+        default: return (c.resolve(Self.msgVintage(m)), 0)
+        }
+    }
 
     /// The msg's Groundworks split and lane A's and the credit lane's validators.
     private func groundworks(_ m: any PrivateMsg) -> (split: [Msg.AllocationWeight], a: String, credit: String) {
@@ -632,6 +763,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgRestake: return (m.groundworksSplit, m.validator, "")
         case let m as MsgShieldedUndelegate: return (m.groundworksSplit, m.validator, "")
         case let m as MsgRedelegate: return (m.groundworksSplit, m.srcValidator, m.dstValidator)
+        case let m as MsgCheckIn: return (m.groundworksSplit, m.validator, m.validator)
         default: return ([], "", "")
         }
     }
@@ -676,8 +808,11 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         for t in try inputTags(p) { gwVotes[t] = nil }
         let g = groundworks(m)
         let splits = Dictionary(uniqueKeysWithValues: g.split.map { ($0.optionID, $0.percent) })
-        for o in try gwOutputs(m, p) where !o.tag.isZero {
-            var v = GwVote(id: nextVoteID, validator: o.val, derth: o.w, tag: o.tag, splits: splits, splitExpiresAt: now + groundworksLease)
+        let months = outputVintages(m)
+        for (i, o) in try gwOutputs(m, p).enumerated() where !o.tag.isZero {
+            // Since v1.3.0 a stake vote has no lease: it ends with its vintage.
+            var v = GwVote(id: nextVoteID, validator: o.val, derth: o.w, tag: o.tag, splits: splits,
+                           splitExpiresAt: vintageBase == nil ? now + groundworksLease : 0, vintage: i == 0 ? months.0 : months.1)
             if o.pend > 0 {
                 let at = Int64(o.time + labelWindow + 1)
                 if now >= at { v.derth += min(o.pend, debtRetained[o.key] ?? o.pend) }
@@ -692,7 +827,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     /// The chain's shape rule: a note-moving msg spends (or pads) in both slots and creates; a crediting one uses its credit lane; the rest are zero.
     private func stakeShape(_ m: any PrivateMsg, _ p: StakeProof) throws {
-        let credit = m is MsgRedelegate
+        let credit = m is MsgRedelegate || m is MsgCheckIn
         try need(!(try f(p.nullifiers[0])).isZero && !(try f(p.nullifiers[1])).isZero,
                  "the stake proof spends a note (or pads with its own nullifier) in both slots")
         try need(!(try f(p.commitment)).isZero, "the stake proof creates a note (the merged note, the change or a zero note)")
@@ -964,7 +1099,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             if !simulate {
                 guard !prover.votes.isEmpty else { throw Refused(why: "no vote proof") }
                 let w = prover.votes.removeFirst()
-                try need(w.publicInputs() == (try ChainLayout.votePublicInputs(m, noteRoot: snap.root, nfRoot: snap.nfRoot, sighash: sighash)),
+                try need(w.publicInputs() == (try ChainLayout.votePublicInputs(m, noteRoot: snap.root, nfRoot: snap.nfRoot, sighash: sighash, vintageCtx)),
                          "vote proof is for other public inputs")
             }
         }
@@ -995,6 +1130,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                 try need(successions.values.contains { $0.0 == a && $0.1 == b }, "invalid move proof (code 1129): not a succession")
             }
         }
+        try checkVintages(m)
         try precheck(m, rem)
         if simulate { return (m, []) }
         actionCounts.append(bundles.reduce(0) { $0 + $1.actions.count })
@@ -1067,16 +1203,43 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             votes.append((m.proposalID, m.option.rawValue))
         case let m as MsgShieldedDelegate:
             noteValidator(m.validator)
-            events.append((type: "shieldedstaking_delegate", attributes: ["validator": m.validator, "amount": String(m.amount), "derth": String(m.derth)]))
+            if let c = vintageCtx { supplyAdd(m.validator, c.current, m.derth) }
+            events.append((type: "shieldedstaking_delegate", attributes: ["validator": m.validator, "amount": String(m.amount), "derth": String(m.derth),
+                                                                          "vintage": String(vintageCtx?.current ?? 0)]))
         case is MsgRestake: break
+        case let m as MsgCheckIn:
+            let c = vintageCtx!
+            try supplySub(m.validator, m.fromVintage, m.amount)
+            supplyAdd(m.validator, c.current, m.amount)
+            events.append((type: "shieldedstaking_check_in", attributes: ["validator": m.validator, "from_vintage": String(m.fromVintage),
+                                                                          "to_vintage": String(c.current), "derth": String(m.amount)]))
         case let m as MsgRedelegate:
             let key = try f(m.stake.creditNullifier)
             noteValidator(m.srcValidator); noteValidator(m.dstValidator)
             moves[key] = Move(key: key, src: m.srcValidator, dst: m.dstValidator, moveTime: m.moveTime, credited: m.dstDerth)
+            if let c = vintageCtx {
+                try supplySub(m.srcValidator, c.resolve(m.vintage), m.amount)
+                supplyAdd(m.dstValidator, c.current, m.dstDerth)
+            }
             events.append((type: "shieldedstaking_redelegate", attributes: ["src_validator": m.srcValidator, "dst_validator": m.dstValidator,
                                                                              "derth": String(m.amount), "credited": String(m.dstDerth),
                                                                              "move_key": key.hex, "move_time": String(m.moveTime)]))
+        case let m as MsgShieldedUndelegate where isWithdrawal(m):
+            // A retired vintage's withdrawal: its share of the held value, split off as a payout.
+            let c = vintageCtx!
+            let denom = Vintage.denom(m.validator, c.resolve(m.vintage), base: c.base)
+            var r = retired[denom]!
+            let value = m.amount == r.remainingSupply ? r.remainingValue : m.amount * r.remainingValue / r.remainingSupply
+            r.remainingSupply -= m.amount; r.remainingValue -= value
+            retired[denom] = r.remainingSupply == 0 ? nil : r
+            let id = nextPayoutID
+            nextPayoutID += 1
+            unbondPayouts.append(Payout(id: id, validator: m.validator, value: value, pc: try f(m.pc), ct: m.ciphertext))
+            events.append((type: "shieldedstaking_retired_withdrawal", attributes: ["validator": m.validator, "vintage": String(c.resolve(m.vintage)),
+                                                                                    "derth": String(m.amount), "value": String(value), "epoch": String(epoch),
+                                                                                    "payout_id": String(id)]))
         case let m as MsgShieldedUndelegate:
+            if let c = vintageCtx { try supplySub(m.validator, c.resolve(m.vintage), m.amount) }
             // Booked at the live rate and queued: the chain pays it at maturity by itself.
             let id = nextPayoutID
             nextPayoutID += 1
@@ -1353,7 +1516,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             PrivacyReads.GroundworksVote(id: $0.id, validator: $0.validator, derth: $0.derth,
                                          weight: PrivacyWallet.derthValue($0.derth, rate: quoteOf($0.validator).epochRate),
                                          tag: $0.tag, splits: $0.splits, splitExpiresAt: $0.splitExpiresAt,
-                                         pending: $0.pending, maturesAt: $0.maturesAt)
+                                         pending: $0.pending, maturesAt: $0.maturesAt, vintage: $0.vintage)
         }
     }
 
@@ -1453,6 +1616,13 @@ struct FakeReads: PrivacyChainReads, @unchecked Sendable {
     func validators() async throws -> PrivacyReads.ValidatorList { chain.validatorsRead() }
 
     func minDelegation() async throws -> UInt64 { chain.minDelegation }
+
+    func vintageContext() async throws -> VintageCtx? {
+        // One fixed validator: the public list's first.
+        chain.vintagesRead(chain.stakingValidators.sorted().first ?? "")
+    }
+
+    func retiredVintages() async throws -> [String: PrivacyReads.RetiredVintage]? { chain.retiredRead() }
 }
 
 /// The chain's layout of the stake and vote circuits' public inputs
@@ -1470,14 +1640,20 @@ enum ChainLayout {
         var crMoveTime: UInt64 = 0
     }
 
-    static func lanes(_ m: any PrivateMsg) -> Lanes {
+    /// Each msg's StakeLanes under `vc` (types.VintageCtx; nil: a chain before vintages, every denom unsuffixed).
+    static func lanes(_ m: any PrivateMsg, _ vc: VintageCtx? = nil) -> Lanes {
+        func d(_ v: String, _ month: UInt32) -> String { vc.map { $0.denom(v, month) } ?? PrivacyWallet.derthDenom(v) }
+        func current(_ v: String) -> String { vc.map { Vintage.denom(v, $0.current, base: $0.base) } ?? PrivacyWallet.derthDenom(v) }
         switch m {
-        case let m as MsgShieldedDelegate: return Lanes(denom: PrivacyWallet.derthDenom(m.validator), vIn: m.derth, vOut: 0)
-        case let m as MsgRestake: return Lanes(denom: PrivacyWallet.derthDenom(m.validator), vIn: 0, vOut: 0)
-        case let m as MsgShieldedUndelegate: return Lanes(denom: PrivacyWallet.derthDenom(m.validator), vIn: 0, vOut: m.amount)
+        case let m as MsgShieldedDelegate: return Lanes(denom: d(m.validator, m.vintage), vIn: m.derth, vOut: 0)
+        case let m as MsgRestake: return Lanes(denom: d(m.validator, m.vintage), vIn: 0, vOut: 0)
+        case let m as MsgShieldedUndelegate: return Lanes(denom: d(m.validator, m.vintage), vIn: 0, vOut: m.amount)
         case let m as MsgRedelegate:
-            return Lanes(denom: PrivacyWallet.derthDenom(m.srcValidator), vIn: 0, vOut: m.amount, crDenom: PrivacyWallet.derthDenom(m.dstValidator),
+            return Lanes(denom: d(m.srcValidator, m.vintage), vIn: 0, vOut: m.amount, crDenom: current(m.dstValidator),
                          crVIn: m.dstDerth, crMoveTime: m.moveTime)
+        case let m as MsgCheckIn:
+            return Lanes(denom: vc.map { Vintage.denom(m.validator, m.fromVintage, base: $0.base) } ?? PrivacyWallet.derthDenom(m.validator),
+                         vIn: 0, vOut: m.amount, crDenom: current(m.validator), crVIn: m.amount, crMoveTime: 0)
         default: return Lanes(denom: nil, vIn: 0, vOut: 0)
         }
     }
@@ -1492,8 +1668,9 @@ enum ChainLayout {
                 try f(p.pendingKey), PrivacyHash.u64(p.pendingTime), PrivacyHash.u64(p.pendingExposed), sighash]
     }
 
-    static func votePublicInputs(_ m: MsgStakeVote, noteRoot: Fr, nfRoot: Fr, sighash: Fr) throws -> [Fr] {
-        [noteRoot, nfRoot, try Fr(bytes: m.debtRoot), PrivacyHash.assetID(PrivacyWallet.derthDenom(m.validator)), PrivacyHash.u64(m.weight),
+    static func votePublicInputs(_ m: MsgStakeVote, noteRoot: Fr, nfRoot: Fr, sighash: Fr, _ vc: VintageCtx? = nil) throws -> [Fr] {
+        [noteRoot, nfRoot, try Fr(bytes: m.debtRoot), PrivacyHash.assetID(vc.map { $0.denom(m.validator, m.vintage) } ?? PrivacyWallet.derthDenom(m.validator)),
+         PrivacyHash.u64(m.weight),
          PrivacyHash.u64(m.proposalID)] + (try m.voteNullifiers.map { try Fr(bytes: $0) }) + [sighash]
     }
 }

@@ -82,7 +82,8 @@ struct WalletScreen: View {
         case .anmlReady:
             tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")])) { w in try await w.claimAnml() }
         case .caretakerExpiring: model.governLink = .caretaker; model.tab = .govern
-        case .groundworksExpiring: model.governLink = .groundworks; model.tab = .govern
+        // Stake is checked in on Earn, with one button for all of it.
+        case .checkIn: model.tab = .earn
         case .handleExpiring, .handlePaysElsewhere: handleOpen = true
         case .moveSuggested: identityOpen = true
         // The handle first when it is one of them; the caretaker vote is renewed where it is cast.
@@ -452,11 +453,16 @@ struct HomePanel: View {
                             Figures.whole(model.totalStaked) + " ERTH")
             }
             // Private stake: derth notes, worth more ERTH each epoch as rewards
-            // compound into the validator's rate.
-            ForEach(model.privateStake.sorted(by: { $0.key < $1.key }), id: \.key) { denom, amount in
-                let op = String(denom.dropFirst("derth/".count))
-                positionRow("Staked (private)", Figures.balance(BigInt(amount)) + " derth · " + op, "shield.lefthalf.filled",
-                            Figures.balance(BigInt(model.derthValue(amount, validator: op))) + " ERTH")
+            // compound into the validator's rate. One row per validator (every
+            // live vintage at its one rate); a retired vintage earns nothing
+            // and waits to be withdrawn.
+            ForEach(model.stakeLines(), id: \.validator) { line in
+                positionRow("Staked (private)", Figures.balance(BigInt(line.derth)) + " derth · " + model.moniker(of: line.validator),
+                            "shield.lefthalf.filled", Figures.balance(BigInt(line.value)) + " ERTH")
+            }
+            ForEach(model.stakeHoldings.flatMap(\.retired), id: \.denom) { r in
+                positionRow("Retired stake", "Not earning · withdraw on Earn", "pause.circle",
+                            Figures.when(model.retiredStake.first { $0.denom == r.denom }) { Figures.balance(BigInt($0.value)) + " ERTH" })
             }
             // An undelegation waiting for its payout, from this wallet's own
             // record until the chain mints the payout to it.

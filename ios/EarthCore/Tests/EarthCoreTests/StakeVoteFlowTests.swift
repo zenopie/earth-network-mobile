@@ -103,7 +103,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         let (chain, a, n) = (sc.chain, sc.a, sc.n)
         let eligible = [sc.n, sc.p]
         let items0 = try await a.stakeVoteItems(proposalID: 1)
-        XCTAssertEqual([.validator(validator, notes: 2)], items0)
+        XCTAssertEqual([.validator(validator, notes: 2, vintage: 0)], items0)
         let proofsBefore = chain.prover.allStakes.count
         _ = try await a.stakeVote(proposalID: 1, validator: validator, options: yes)
         XCTAssertEqual(Set(eligible.map(\.position)), lastVotePositions(chain))
@@ -133,7 +133,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         let items2 = try await a.stakeVoteItems(proposalID: 2)
         XCTAssertTrue(items1.isEmpty)
         XCTAssertTrue(items2.isEmpty)
-        let none = try await a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2), options: yes)
+        let none = try await a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2, vintage: 0), options: yes)
         XCTAssertNil(none)
 
         // n is still an ordinary note: it undelegates.
@@ -156,7 +156,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         chain.openProposal(1)
         try await a.sync()
         let items = try await a.stakeVoteItems(proposalID: 1)
-        XCTAssertEqual([.validator(validator, notes: 1)], items)
+        XCTAssertEqual([.validator(validator, notes: 1, vintage: 0)], items)
         _ = try await a.stakeVote(proposalID: 1, validator: validator, options: no)
         XCTAssertEqual([merged.position], lastVotePositions(chain))
         dump(chain, "stakeVoteSpentBefore")
@@ -175,7 +175,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         XCTAssertNotNil(note(a, sc.n.position).spentHeight)
         XCTAssertNotNil(note(a, sc.p.position).spentHeight)
         let items = try await a.stakeVoteItems(proposalID: 1)
-        XCTAssertEqual([.validator(validator, notes: 2)], items)
+        XCTAssertEqual([.validator(validator, notes: 2, vintage: 0)], items)
         _ = try await a.stakeVote(proposalID: 1, validator: validator, options: abstain)
         let voted = lastVotePositions(chain)
         XCTAssertEqual([sc.n.position, sc.p.position], voted)
@@ -185,7 +185,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         // A proposal opened after the top-up sees the merged note alone.
         chain.openProposal(3); try await a.sync()
         let items3 = try await a.stakeVoteItems(proposalID: 3)
-        XCTAssertEqual([.validator(validator, notes: 1)], items3)
+        XCTAssertEqual([.validator(validator, notes: 1, vintage: 0)], items3)
         _ = try await a.stakeVote(proposalID: 3, validator: validator, options: yes)
         XCTAssertEqual([merged.position], lastVotePositions(chain))
         dump(chain, "stakeVoteToppedUpAfter")
@@ -204,7 +204,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         try await a.sync()
         let ns = live(a).sorted { $0.amount > $1.amount }
         let items = try await a.stakeVoteItems(proposalID: 1)
-        XCTAssertEqual([.validator(validator, notes: 3)], items)
+        XCTAssertEqual([.validator(validator, notes: 3, vintage: 0)], items)
         XCTAssertEqual(2, items[0].parts)
         let top2 = try PrivacyWallet.voteWeight(ns.prefix(2).reduce(UInt64(0)) { $0 + $1.amount })
         let p1 = try await a.stakeVotePreview(proposalID: 1, item: items[0])
@@ -238,7 +238,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         chain.openProposal(3)
         try await a.sync()
         let items = try await a.stakeVoteItems(proposalID: 3)
-        XCTAssertEqual([.validator(validator, notes: 1), .validator(vC, notes: 1)], items)
+        XCTAssertEqual([.validator(validator, notes: 1, vintage: 0), .validator(vC, notes: 1, vintage: 0)], items)
         for item in items {
             let r = try await a.castStakeVote(proposalID: 3, item: item, options: yes)
             XCTAssertNotNil(r)
@@ -309,7 +309,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         let restored = try wallet(sc.chain)
         try await restored.sync()
         let before = sc.chain.height
-        let r = try await restored.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2), options: no)
+        let r = try await restored.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2, vintage: 0), options: no)
         XCTAssertNil(r)
         XCTAssertEqual(before, sc.chain.height)
         XCTAssertEqual(2, restored.store.state.stakeVotes.filter { $0.confirmed && $0.proposalID == 1 }.count)
@@ -333,7 +333,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         let restored = try wallet(chain)
         try await restored.sync()
         let items = try await restored.stakeVoteItems(proposalID: 1)
-        XCTAssertEqual([.validator(validator, notes: 3)], items)
+        XCTAssertEqual([.validator(validator, notes: 3, vintage: 0)], items)
         let before = chain.height
         let r = try await restored.castStakeVote(proposalID: 1, item: items[0], options: no)
         XCTAssertNotNil(r)
@@ -351,7 +351,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         XCTAssertEqual(2, sc.a.store.state.stakeVotes.filter { !$0.confirmed }.count)
         try await sc.a.sync()
         let items = try await sc.a.stakeVoteItems(proposalID: 1)
-        XCTAssertEqual([.validator(validator, notes: 2)], items)
+        XCTAssertEqual([.validator(validator, notes: 2, vintage: 0)], items)
         _ = try await sc.a.stakeVote(proposalID: 1, validator: validator, options: yes)
         XCTAssertEqual(1, sc.chain.stakeVotes.count)
     }
@@ -480,9 +480,9 @@ final class StakeVoteFlowTests: PrivacyTestCase {
     func testARefusedVoteIsForgotten() async throws {
         let v = try await voting()
         v.chain.rejectNext = 1
-        await assertThrowsAsync({ try await v.a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2), options: self.yes) }) { $0 is UnsignedTx.TxRejected }
+        await assertThrowsAsync({ try await v.a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2, vintage: 0), options: self.yes) }) { $0 is UnsignedTx.TxRejected }
         XCTAssertTrue(v.a.store.state.stakeVotes.isEmpty)
-        let r = try await v.a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2), options: yes)
+        let r = try await v.a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2, vintage: 0), options: yes)
         XCTAssertNotNil(r)
         XCTAssertEqual(2, v.a.store.state.stakeVotes.count)
     }
@@ -490,14 +490,14 @@ final class StakeVoteFlowTests: PrivacyTestCase {
     /// The stake votes cast survive a same-chain reset.
     func testStakeVotesSurviveAReset() async throws {
         let v = try await voting()
-        _ = try await v.a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2), options: yes)
+        _ = try await v.a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2, vintage: 0), options: yes)
         let votes = v.a.store.state.stakeVotes
         // One vote, two notes: each note's vote nullifier is remembered.
         XCTAssertEqual(2, votes.count)
         try v.a.store.reset(chainID: v.chain.chainID)
         XCTAssertEqual(votes, v.a.store.state.stakeVotes)
         _ = try await v.a.sync()
-        let again = try await v.a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2), options: yes)
+        let again = try await v.a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2, vintage: 0), options: yes)
         XCTAssertNil(again)
         XCTAssertEqual(1, v.chain.stakeVotes.count)
     }
@@ -541,8 +541,8 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         let a = try wallet(chain, indexer: forged)
         _ = try await a.sync()
         let items = try await a.stakeVoteItems(proposalID: 1)
-        XCTAssertTrue(items.contains(.validator(validator, notes: 2)))
-        let r = try await a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2), options: yes)
+        XCTAssertTrue(items.contains(.validator(validator, notes: 2, vintage: 0)))
+        let r = try await a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2, vintage: 0), options: yes)
         XCTAssertNotNil(r)
         XCTAssertEqual(1, chain.stakeVotes.count)
     }
@@ -559,7 +559,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         _ = try await a.sync()
         chain.indexerNfTree = false
         let sims = chain.simulated
-        await assertThrowsAsync({ try await a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2), options: self.yes) }) {
+        await assertThrowsAsync({ try await a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2, vintage: 0), options: self.yes) }) {
             "\($0.localizedDescription)".contains("sync saw no spend")
         }
         XCTAssertEqual(sims, chain.simulated)
@@ -572,10 +572,10 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         let i = v.a.store.state.stakeNotes.firstIndex { $0.position == v.k.position }!
         v.a.store.mutate { $0.stakeNotes[i].spentHeight = UInt64(snap.height) }
         var items = try await v.a.stakeVoteItems(proposalID: 1)
-        XCTAssertEqual([.validator(validator, notes: 1)], items)
+        XCTAssertEqual([.validator(validator, notes: 1, vintage: 0)], items)
         v.a.store.mutate { $0.stakeNotes[i].spentHeight = UInt64(snap.height) + 1 }
         items = try await v.a.stakeVoteItems(proposalID: 1)
-        XCTAssertEqual([.validator(validator, notes: 2)], items)
+        XCTAssertEqual([.validator(validator, notes: 2, vintage: 0)], items)
     }
 
     /// nf_size is the LCD's: an indexer's larger count is never fetched; one aligned page.
@@ -589,7 +589,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         }
         let a = try wallet(v.chain, indexer: idx)
         _ = try await a.sync()
-        let r = try await a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2), options: yes)
+        let r = try await a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2, vintage: 0), options: yes)
         XCTAssertNotNil(r)
         XCTAssertEqual(1, idx.nfLeafAsks.count)
         XCTAssertEqual(0, idx.nfLeafAsks[0].0)
@@ -599,7 +599,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
 
     func testAVotesRequestsFollowThePagingRule() async throws {
         let v = try await voting()
-        let r = try await v.a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2), options: yes)
+        let r = try await v.a.castStakeVote(proposalID: 1, item: .validator(validator, notes: 2, vintage: 0), options: yes)
         XCTAssertNotNil(r)
         XCTAssertTrue(v.chain.misaligned.isEmpty, "\(v.chain.misaligned)")
     }

@@ -159,6 +159,8 @@ public struct ActivityEntry: Identifiable, Equatable, Sendable {
         case .unstake: "Unstaked"
         case .redelegate: "Moved stake"
         case .restake: "Merged stake"
+        case .checkIn: "Checked in"
+        case .withdrawStake: "Withdrew stake"
         case .vote, .caretaker: "Voted"
         case .position: counterparty.hasPrefix("unlocked") ? "Unlocked Groundworks" : "Groundworks"
         case .claimAnml: "Claimed ANML"
@@ -191,6 +193,8 @@ public struct ActivityEntry: Identifiable, Equatable, Sendable {
         case .unstake: "Unstake"
         case .redelegate: "Redelegation"
         case .restake: "Stake merge"
+        case .checkIn: "Stake check-in"
+        case .withdrawStake: "Retired stake withdrawal"
         case .vote: "Vote"
         case .caretaker: "Caretaker vote"
         case .position: "Groundworks position"
@@ -211,7 +215,7 @@ public struct ActivityEntry: Identifiable, Equatable, Sendable {
         switch k {
         case .send, .unshield, .move, .shield: .send
         case .swap, .addLiquidity, .removeLiquidity, .lpPayout: .swap
-        case .stake, .unstake, .redelegate, .restake, .position, .unbondingPayout: .stake
+        case .stake, .unstake, .redelegate, .restake, .checkIn, .withdrawStake, .position, .unbondingPayout: .stake
         case .register, .switchIdentity: .register
         case .vote, .caretaker: .vote
         case .handle: .handle
@@ -347,7 +351,7 @@ public struct ActivityEntry: Identifiable, Equatable, Sendable {
         let label: String
         switch kind {
         case .send, .unshield, .move: label = "To"
-        case .stake, .unstake, .restake: label = "Validator"
+        case .stake, .unstake, .restake, .checkIn, .withdrawStake: label = "Validator"
         case .redelegate: label = "Validators"
         case .vote, .caretaker: label = "Vote"
         case .addLiquidity, .removeLiquidity: label = "Pool"

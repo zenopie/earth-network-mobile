@@ -77,8 +77,8 @@ struct StakeSheet: View {
     /// (moved-in stake whose window is open stays where it is).
     private var options: [ValidatorPicker.Option] {
         if unstaking {
-            return model.stakeHoldings.filter { $0.free > 0 }.map { h in
-                .init(validator: h.validator, detail: "\(Figures.when(model.stakeValuesLoaded, Figures.display(BigInt(model.derthValue(h.free, validator: h.validator))))) ERTH", enabled: true)
+            return model.stakeHoldings.filter { $0.maxLeave > 0 }.map { h in
+                .init(validator: h.validator, detail: "\(Figures.when(model.stakeValuesLoaded, Figures.display(BigInt(model.derthValue(h.maxLeave, validator: h.validator))))) ERTH", enabled: true)
             }
         }
         let all = list?.validators ?? []
@@ -103,7 +103,7 @@ struct StakeSheet: View {
     private var available: BigInt {
         if unstaking {
             guard let validator else { return 0 }
-            return BigInt(model.stakeHoldings.first { $0.validator == validator }?.free ?? 0)
+            return BigInt(model.stakeHoldings.first { $0.validator == validator }?.maxLeave ?? 0)
         }
         // Leave a reserve, not one fee: staking everything-but-the-fee leaves
         // no shielded ERTH to pay for unstaking.
@@ -148,7 +148,7 @@ struct StakeSheet: View {
                         // A stake proof spends two notes (at most one holding
                         // moved-in stake): spread over more, it is refused
                         // with "merge them first".
-                        try await w.undelegate(validator: validator, amount: amount, maxHaircut: cut)
+                        try await w.undelegate(validator: validator, amount: amount, maxHaircut: cut, denom: q.denom)
                     }
                 } else {
                     // The quote: the derth the chain credits at the live rate, less a margin.

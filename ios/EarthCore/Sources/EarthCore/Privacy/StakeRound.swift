@@ -14,12 +14,13 @@ public enum StakeRound {
         public let value: UInt64
     }
 
-    /// A line per validator where the wallet holds stake, in validator order.
-    /// `rate` is rate_v (1 until read).
-    public static func lines(notes: [OwnedStakeNote], rate: (String) -> Decimal) -> [Line] {
+    /// A line per validator where the wallet holds stake, in validator order:
+    /// every live vintage at its one rate. `rate` is rate_v (1 until read);
+    /// `vintages` the context that says which have retired (nil: none have).
+    public static func lines(notes: [OwnedStakeNote], rate: (String) -> Decimal, vintages: VintageCtx? = nil) -> [Line] {
         var held: [String: UInt64] = [:]
-        for n in notes where n.spendable && n.denom.hasPrefix(PrivacyWallet.derthPrefix) {
-            let v = String(n.denom.dropFirst(PrivacyWallet.derthPrefix.count))
+        for n in notes where n.spendable && !PrivacyWallet.isRetired(n.denom, vintages) {
+            guard let v = Vintage.parse(n.denom)?.valoper else { continue }
             held[v] = sat(held[v] ?? 0, n.amount)
         }
         return held.keys.sorted().map { v in

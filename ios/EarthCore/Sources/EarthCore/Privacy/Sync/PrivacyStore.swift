@@ -385,6 +385,11 @@ public struct PrivacyState: Codable, Sendable {
     /// read: when a moved stake's exposure may leave its note, for display
     /// between reads (0: never read).
     public var labelWindowSeconds: UInt64 = 0
+    /// The chain's base stake vintage (v1.3.0): the month the unsuffixed
+    /// derth/<valoper> names (0: not read, or a chain before vintages), and
+    /// the current vintage as last read.
+    public var vintageBase: UInt32 = 0
+    public var vintageCurrent: UInt32 = 0
     /// Every denom seen in a public amount: resolves the asset ids ciphertexts carry.
     public var denoms: Set<String> = []
     /// A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it.
@@ -491,7 +496,7 @@ public struct PrivacyState: Codable, Sendable {
              regRecords, rootsVerified, rootsError, claimedDays,
              pendingUnbonds, groundworksSplit, groundworksChosen, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, groundworksExpiresAt,
              syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
-             voidRecordHeights, labelWindowSeconds, carriedMarks, registrationKeepUntil,
+             voidRecordHeights, labelWindowSeconds, vintageBase, vintageCurrent, carriedMarks, registrationKeepUntil,
              generation, generationFloor, identities, unmatchedRecordFrom, unmatchedRecordWindow, activity
     }
 
@@ -513,6 +518,7 @@ public struct PrivacyState: Codable, Sendable {
         try c.encode(stakeVotes, forKey: .stakeVotes); try c.encode(identityHeights, forKey: .identityHeights)
         try c.encode(identityRowsSeen, forKey: .identityRowsSeen); try c.encode(voidRecordHeights, forKey: .voidRecordHeights)
         try c.encode(labelWindowSeconds, forKey: .labelWindowSeconds); try c.encode(carriedMarks, forKey: .carriedMarks)
+        try c.encode(vintageBase, forKey: .vintageBase); try c.encode(vintageCurrent, forKey: .vintageCurrent)
         try c.encode(registrationKeepUntil, forKey: .registrationKeepUntil)
         try c.encode(generation, forKey: .generation); try c.encode(generationFloor, forKey: .generationFloor)
         try c.encodeIfPresent(unmatchedRecordFrom, forKey: .unmatchedRecordFrom); try c.encode(unmatchedRecordWindow, forKey: .unmatchedRecordWindow)
@@ -551,6 +557,7 @@ public struct PrivacyState: Codable, Sendable {
         identityHeights = try v(.identityHeights, []); identityRowsSeen = try v(.identityRowsSeen, 0)
         voidRecordHeights = try v(.voidRecordHeights, [])
         labelWindowSeconds = try v(.labelWindowSeconds, 0)
+        vintageBase = try v(.vintageBase, 0); vintageCurrent = try v(.vintageCurrent, 0)
         carriedMarks = try v(.carriedMarks, [:])
         registrationKeepUntil = try v(.registrationKeepUntil, 0)
         unmatchedRecordFrom = try c.decodeIfPresent(UInt64.self, forKey: .unmatchedRecordFrom)
@@ -799,6 +806,7 @@ public final class PrivacyStore {
             s.stakeVotes = old.stakeVotes
             s.groundworksExpiresAt = old.groundworksExpiresAt
             s.labelWindowSeconds = old.labelWindowSeconds
+            s.vintageBase = old.vintageBase; s.vintageCurrent = old.vintageCurrent
             s.claimedDays = old.claimedDays
             // What it sent and expects: the resync finds the notes again and folds them in.
             s.activity = old.activity

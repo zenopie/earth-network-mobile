@@ -41,7 +41,9 @@ let package = Package(
                 .product(name: "secp256k1", package: "swift-secp256k1"),
                 .product(name: "BigInt", package: "BigInt"),
             ],
-            resources: [.copy("Resources/privacy")]
+            // privacy: tools/privacyvectors (shared with Android); vintages:
+            // Scripts/vintagevectors (chain v1.3.0's stake vintages, iOS only).
+            resources: [.copy("Resources/privacy"), .copy("Resources/vintages")]
         ),
     ]
 )

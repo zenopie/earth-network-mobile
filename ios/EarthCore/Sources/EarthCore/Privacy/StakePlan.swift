@@ -43,9 +43,10 @@ public struct StakePlan: Sendable {
         public static let none = Clear(clearBefore: 0, debtRoot: .zero)
     }
 
-    /// The credit lane (a redelegation): the wallet's unlabelled note of
-    /// `denom` merged with `vIn` (`spend`, or a padding input when there is
-    /// none), labelled with the move made at `moveTime`.
+    /// The credit lane: the wallet's unlabelled note of `denom` merged with
+    /// `vIn` (`spend`, or a padding input when there is none). A
+    /// redelegation's credit is labelled with the move made at `moveTime`; a
+    /// check-in's (`moveTime` 0) is not.
     public struct Credit: Sendable {
         public let denom: String
         public let spend: OwnedStakeNote?
@@ -55,9 +56,8 @@ public struct StakePlan: Sendable {
         public let padRho: Fr
         public let padRcm: Fr
         public let out: Out
-
-        /// The credit nullifier: the move's key.
-        public var nullifier: Fr { out.label!.moveKey }
+        /// The lane's nullifier (the spend's, or the padding input's): a move's key.
+        public let nullifier: Fr
     }
 
     private let nk: Fr
@@ -145,6 +145,7 @@ public struct StakePlan: Sendable {
         try require(!w.commitment.isZero, "lane A creates a note (the merged note, the change or a zero note)")
         // The credit's label (in its ciphertext) names the nullifier the proof publishes.
         try require(credit == nil || credit!.nullifier == w.crNF, "the credit's move key is not its nullifier")
+        try require(credit?.out.label == nil || credit!.out.label!.moveKey == w.crNF, "the credit's move key is not its nullifier")
         return StakeProof(proof: proof, anchor: anchor.bytes, nullifiers: w.nullifiers.map(\.bytes),
                           commitment: w.commitment.bytes, ciphertext: out.ciphertext,
                           creditNullifier: w.crNF.bytes, creditCommitment: w.crCM.bytes, creditCiphertext: credit?.out.ciphertext ?? Data(),
@@ -167,15 +168,27 @@ public struct StakePlan: Sendable {
     /// unlabelled note there) or a fresh padding input, merged with `vIn` and
     /// labelled (move key = the lane's own nullifier, `moveTime`, exposed = vIn).
     public static func credit(_ keys: PrivacyKeys, denom: String, spend: OwnedStakeNote?, path: [Fr]?, vIn: UInt64, moveTime: UInt64) throws -> Credit {
-        try require(vIn > 0 && moveTime > 0, "a credit names its amount and move time")
-        try require(spend == nil || (spend!.label == nil && path != nil), "the credit lane merges only into an unlabelled note")
+        try require(moveTime > 0, "a move's credit names its move time")
+        return try lane(keys, denom: denom, spend: spend, path: path, vIn: vIn, moveTime: moveTime)
+    }
+
+    /// A check-in's credit lane (MsgCheckIn): `vIn` of the current vintage's
+    /// `denom` merged into `spend` (our unlabelled note there) or a padding
+    /// input, unlabelled (cr_move_time 0).
+    public static func checkInCredit(_ keys: PrivacyKeys, denom: String, spend: OwnedStakeNote?, path: [Fr]?, vIn: UInt64) throws -> Credit {
+        try lane(keys, denom: denom, spend: spend, path: path, vIn: vIn, moveTime: 0)
+    }
+
+    private static func lane(_ keys: PrivacyKeys, denom: String, spend: OwnedStakeNote?, path: [Fr]?, vIn: UInt64, moveTime: UInt64) throws -> Credit {
+        try require(vIn > 0, "a credit names its amount")
+        try require(spend == nil || (spend!.label == nil && path != nil && spend!.denom == denom), "the credit lane merges only into an unlabelled note")
         let padRho = NotePlaintext.randomField()
         let padRcm = NotePlaintext.randomField()
         let nf = spend?.nf ?? PrivacyHash.stakeNF(nk: keys.nk, rho: padRho, position: 0)
-        let label = StakeLabel(moveKey: nf, moveTime: moveTime, exposed: vIn)
+        let label = moveTime == 0 ? nil : StakeLabel(moveKey: nf, moveTime: moveTime, exposed: vIn)
         let (sum, o) = (spend?.amount ?? 0).addingReportingOverflow(vIn)
         try require(!o, "the credit overflows the note")
         return Credit(denom: denom, spend: spend, path: path, vIn: vIn, moveTime: moveTime, padRho: padRho, padRcm: padRcm,
-                      out: try out(keys, denom: denom, amount: sum, label: label))
+                      out: try out(keys, denom: denom, amount: sum, label: label), nullifier: nf)
     }
 }

@@ -1,3 +1,4 @@
+import BigInt
 import EarthCore
 import SwiftUI
 
@@ -77,6 +78,9 @@ struct EarnScreen: View {
                 }, merge: { op in
                     afterDismiss = { merge(op) }
                     staking = nil
+                }, withdraw: { denom in
+                    afterDismiss = { withdraw(denom) }
+                    staking = nil
                 })
                 .earthThemed()
             }
@@ -84,7 +88,70 @@ struct EarnScreen: View {
     }
 
     private var stakeContent: some View {
-        StakeOverview(round: round, open: { staking = $0 })
+        StakeOverview(round: round, open: { staking = $0 }, checkIn: checkIn, withdraw: withdraw)
+    }
+
+    private var feeRow: (String, String) {
+        ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH each, shielded")
+    }
+
+    /// Every check-in due, on one confirmation: one tx per validator and
+    /// month, sent in turn. The stake moves into this month's vintage and
+    /// earns (and votes) for another year; nothing is unbonded.
+    private func checkIn() {
+        guard let w = model.privacy else { return }
+        Task { @MainActor in
+            do {
+                let items = try await w.checkInItems()
+                guard !items.isEmpty else { throw PrivacyError("Nothing can be checked in right now.") }
+                let validators = Set(items.map(\.validator))
+                let derth = items.reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.derth) }
+                let until = model.vintages.map { Vintage.retiresAt($0.current) }
+                var rows: [(String, String)] = [
+                    ("Stake", "\(Figures.balance(BigInt(derth))) derth" + (validators.count == 1 ? " with \(moniker(items[0].validator))" : " with \(validators.count) validators")),
+                ]
+                if let until { rows.append(("Earns until", StakeOverview.date(until))) }
+                rows.append(("Sends", items.count == 1 ? "1 transaction" : "\(items.count) transactions, one per validator and month"))
+                rows.append(feeRow)
+                tx.requestPrivate(.private(action: "Check in stake", rows: rows)) { w in
+                    guard let last = try await w.checkInAll().last else { throw PrivacyError("Nothing can be checked in right now.") }
+                    return last
+                }
+            } catch {
+                tx.showFailure("Check in stake", error, model: model)
+            }
+        }
+    }
+
+    /// A retired vintage's withdrawal: what it pays (its share of the value
+    /// held when it retired) and when (the held payout's maturity, or now).
+    private func withdraw(_ denom: String) {
+        guard let w = model.privacy else { return }
+        Task { @MainActor in
+            do {
+                let q = try await w.quoteWithdraw(denom: denom)
+                let paid: String
+                switch q.paidAt {
+                case 0: paid = "Now"
+                case let t where t > 0: paid = StakeRoundModel.day(t)
+                default: paid = "When the unbonding period ends"
+                }
+                tx.requestPrivate(.private(
+                    action: "Withdraw retired stake",
+                    rows: [
+                        ("Amount", "\(Figures.balance(BigInt(q.derth))) derth (\(Figures.balance(BigInt(q.value))) ERTH)"),
+                        ("From validator", moniker(q.validator)),
+                        ("Paid", paid),
+                        ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
+                    ],
+                    notes: ["This stake stopped earning on \(StakeOverview.date(Vintage.retiresAt(q.month))). Withdrawing pays out its share as private ERTH."]
+                )) { w in
+                    try await w.withdrawRetired(q)
+                }
+            } catch {
+                tx.showFailure("Withdraw retired stake", error, model: model)
+            }
+        }
     }
 
     private func moniker(_ operatorAddress: String) -> String {
