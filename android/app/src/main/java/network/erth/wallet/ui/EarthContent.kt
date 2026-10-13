@@ -1482,17 +1482,17 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState?, person
             // Falling back to the empty state made this assert a fact about
             // whichever wallet had just been switched to, before anything had
             // been read about it.
+            // The handle with it: it is managed from Identity, and only a
+            // verified human holds one.
             subtitle = state?.let {
-                if (it.registered) "Verified human" else "Not registered"
+                when {
+                    !it.registered -> "Not registered"
+                    personal?.handle.isNullOrEmpty() -> "Verified human"
+                    else -> "Verified human · @${personal?.handle}"
+                }
             },
             icon = R.drawable.ic_shield_check,
             onClick = { nav.push(EarthRoute.Personhood) },
-        ),
-        SettingsItem(
-            title = "Handle",
-            subtitle = personal?.let { p -> if (p.handle.isNotEmpty()) "@${p.handle}" else "Claim a name others can pay" },
-            icon = R.drawable.ic_shield_check,
-            onClick = { nav.push(EarthRoute.Handle) },
         ),
         SettingsItem(
             title = "Merge notes",

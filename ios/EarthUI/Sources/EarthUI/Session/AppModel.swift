@@ -1116,6 +1116,7 @@ public final class AppModel {
         // A registered wallet still may register in this launch if it can
         // switch to another wallet, which may not be.
         PrivacyProving.registrationMayFollow = snap.identityStatus != .live || wallets.count > 1
+        applyDemoIdentity()
         mergeActivity()
     }
 
@@ -1222,6 +1223,23 @@ public final class AppModel {
         // The handle and caretaker standing are the store's own, so they hold
         // once the store does; the directory's failure is shown on its own.
         if has(.privacy) { loaded.insert(.personal) }
+        applyDemoIdentity()
+    }
+
+    /// `-demoIdentity <handle>` shows a verified identity holding that handle,
+    /// for screenshots: a simulator cannot read a passport, so the verified
+    /// screens are otherwise out of reach. Simulator-only, compiled out of
+    /// every device build; it changes only what is shown, never the store.
+    private func applyDemoIdentity() {
+        #if targetEnvironment(simulator)
+        guard let h = UserDefaults.standard.string(forKey: "demoIdentity"), !h.isEmpty else { return }
+        let now = Int64(Date().timeIntervalSince1970)
+        identityStatus = .live
+        handle = h
+        handleEntry = HandleEntry(handle: h, address: shieldedAddress, status: HandleEntry.live,
+                                  expiresAt: now + 300 * 86_400, renewalUntil: now + 330 * 86_400)
+        loaded.formUnion([.privacy, .personal])
+        #endif
     }
 
     /// What the identity this wallet's registration succeeded (another wallet

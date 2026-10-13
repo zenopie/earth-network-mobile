@@ -14,7 +14,7 @@ struct SettingsSheet: View {
     @State private var route: Route?
 
     enum Route: String, Identifiable {
-        case identity, handle, notes, wallets, security, notifications, network, explorer, about
+        case identity, notes, wallets, security, notifications, network, explorer, about
         var id: String { rawValue }
     }
 
@@ -28,10 +28,8 @@ struct SettingsSheet: View {
                             // still loading: falling back to the empty state
                             // asserts a fact about a wallet nothing has been
                             // read about yet.
-                            subtitle: Figures.when(model.has(.privacy), model.isRegistered ? "Verified human" : "Not registered"),
+                            subtitle: Figures.when(model.has(.privacy), identityLine),
                             route: .identity)
-                        divider
-                        row("Handle", "at", subtitle: Figures.when(model.has(.privacy), model.handle.isEmpty ? "Claim a name others can pay" : "@\(model.handle)"), route: .handle)
                         divider
                         row("Merge notes", "square.stack.3d.down.right", subtitle: "Combine small private notes", route: .notes)
                         divider
@@ -70,7 +68,6 @@ struct SettingsSheet: View {
             .sheet(item: $route) { destination in
                 switch destination {
                 case .identity: IdentityScreen().earthThemed()
-                case .handle: HandleScreen().earthThemed()
                 case .notes: NotesScreen().earthThemed()
                 case .wallets: WalletsScreen().earthThemed()
                 case .security: SecurityScreen().earthThemed()
@@ -81,6 +78,13 @@ struct SettingsSheet: View {
                 }
             }
         }
+    }
+
+    /// The identity and its handle: the handle is managed from Identity,
+    /// and only a verified human holds one.
+    private var identityLine: String {
+        guard model.isRegistered else { return "Not registered" }
+        return model.handle.isEmpty ? "Verified human" : "Verified human · @\(model.handle)"
     }
 
     private var methodName: String {
