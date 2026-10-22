@@ -430,7 +430,8 @@ final class VintageFlowTests: PrivacyTestCase {
 
     /// A wallet restored from its words names every vintage's notes: the
     /// unsuffixed one by the validator list, a suffixed one by trying each
-    /// month from the base on.
+    /// month in the wallet's own range (never the node's vintage context);
+    /// the base is learned by the holdings read that follows every sync.
     func testARestoredWalletNamesItsVintages() async throws {
         let chain = chain()
         let a = try await funded(chain)
@@ -441,6 +442,7 @@ final class VintageFlowTests: PrivacyTestCase {
         try await fresh.sync()
         XCTAssertEqual(Set(a.stakeNotes.filter(\.spendable).map(\.denom)), Set(fresh.stakeNotes.filter(\.spendable).map(\.denom)))
         XCTAssertEqual(Set([PrivacyWallet.derthDenom(vA), "derth/\(vA)/202702"]), Set(fresh.stakeNotes.filter(\.spendable).map(\.denom)))
+        _ = await fresh.stakeHoldings()
         XCTAssertEqual(base, fresh.localVintages?.base)
     }
 

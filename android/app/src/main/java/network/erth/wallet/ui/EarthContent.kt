@@ -373,6 +373,7 @@ internal fun EarthContent(
             // The wallet's stake notes per validator (StakeRound.lines).
             privateStake = privacyState?.let { ps -> network.erth.wallet.privacy.StakeRound.lines(
                 notes = ps.stakeNotes,
+                leaving = ps.leaving,
                 rate = { v -> earnState?.derthRates?.get(v) ?: java.math.BigDecimal.ONE },
             ).map { line ->
                 val h = privacyState?.stake?.firstOrNull { it.denom == line.denom }

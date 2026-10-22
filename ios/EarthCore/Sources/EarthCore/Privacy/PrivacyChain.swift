@@ -899,10 +899,6 @@ public struct LCDChainRoots: ChainRoots {
         return list.map { Array($0.validators.map(\.validator).prefix(Denoms.max)) }
     }
 
-    public func vintageContext() async -> VintageRead? {
-        do { return try await PrivacyQueries(rest: rest).vintageContext().map { .ctx($0) } ?? .notServed } catch { return nil }
-    }
-
     /// A tx this wallet broadcast, by hash: 404 missing, a non-zero code failed.
     public func txStatus(_ hash: String) async -> TxStatus? {
         do {

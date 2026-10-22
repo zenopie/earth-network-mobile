@@ -31,6 +31,8 @@ data class PrivacyActionsState(
     val labelWindowSeconds: Long = 0,
     /** Every stake note, spent ones included: what the Stake screen's lines are summed from (StakeRound.lines). */
     val stakeNotes: List<network.erth.wallet.privacy.note.OwnedStakeNote> = emptyList(),
+    /** The txs of unstakes not yet paid out, lowercase: their notes are shown as unbonding, not as stake (StakeRound.lines). */
+    val leaving: Set<String> = emptySet(),
 )
 
 /**
@@ -92,6 +94,7 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                 stake = w?.let { runCatching { it.stakeHoldings() }.getOrNull() }.orEmpty(),
                 labelWindowSeconds = w?.labelWindowSeconds ?: 0L,
                 stakeNotes = w?.stakeNotes.orEmpty(),
+                leaving = w?.pendingUnbonds.orEmpty().map { it.txHash.lowercase() }.toSet(),
             )
         }
         _personal.value = withContext(Dispatchers.IO) { personalOf(ctx) }

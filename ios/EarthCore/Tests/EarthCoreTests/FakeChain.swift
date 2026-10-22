@@ -305,7 +305,6 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         return out
     }
 
-    func vintageContext() async -> VintageRead? { vintageBase == nil ? .notServed : .ctx(vintageCtx!) }
 
     /// A credit's month (credit_vintage: 0 names the current one) and the chain's CheckCredit.
     private func creditMonth(_ m: UInt32) -> UInt32 { m == 0 ? Vintage.monthOf(now) : m }

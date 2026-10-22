@@ -459,3 +459,30 @@ the same block as an inferred spend is netted into that row; notes synced
 before this version have no origin and read "Received privately". Android
 `PrivateActivityTest`, `ActivityMergeTest`; iOS `PrivateActivityTests`.
 iOS build 24.
+
+## Weekly audit M-1 and stake shown after a tx (2026-10-15)
+
+- **M-1 (iOS): a node could make sync skip one of this wallet's stake
+  notes.** Sync named a suffixed vintage denom (`derth/<valoper>/<YYYYMM>`)
+  by trying the months from the node's `Query/VintageInfo` base to its
+  current month. A node that misreported either (or said vintages were not
+  served) left a note of ours unnamed, and the cursor passed it: gone until
+  a wipe and restore. Now as Android: every month from `vintageFloor`
+  (202609, the relaunch month; the stored base if earlier) through next
+  month by the device clock (the tip's time only ahead of it, by a month at
+  most), both denom forms, never the node's vintage context. The sync no
+  longer reads `VintageInfo` (`ChainRoots.vintageContext` and `VintageRead`
+  removed); the base is still learned by `stakeHoldings()` after every sync.
+  Android was not affected. Residual on both platforms, as before: a
+  validator the node leaves out of its validator list names none of its
+  notes (the chain-dropped-book case under "Privacy notes for the chain").
+- **Stake read 0 after a delegation until the next refresh** (both
+  platforms). A delegation merges the vintage's notes into its output, and
+  `StakeRound.lines` counted only spendable notes: the merged notes left at
+  the send, the output came with the next sync. Lines now count unspent
+  notes, pending spends included, except an unstake's (its tx hash is a
+  pending unbond's: it shows as unbonding from the send). The figure moves
+  once, in the sync that sees the tx. Spending still selects spendable
+  notes only. iOS also republishes as soon as the post-tx catch-up has
+  synced the tx's block, before the public reads. iOS
+  `StakeShownAfterTxTests`. iOS build 43.

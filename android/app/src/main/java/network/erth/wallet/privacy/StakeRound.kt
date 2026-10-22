@@ -12,7 +12,7 @@ object StakeRound {
     /** One validator's private stake of one vintage: what the Stake screen's row and total show. */
     data class Line(
         val validator: String,
-        /** derth in spendable stake notes. */
+        /** derth in unspent stake notes (pending spends included: see [lines]). */
         val derth: Long,
         /** At the live rate, in uerth (floor(derth x rate), as the chain converts it). */
         val value: Long,
@@ -20,10 +20,19 @@ object StakeRound {
         val denom: String = PrivacyWallet.derthDenom(validator),
     )
 
-    /** A line per validator and vintage where the wallet holds stake, in denom order. [rate] is rate_v (1 until read): one per validator, every vintage alike. */
-    fun lines(notes: List<OwnedStakeNote>, rate: (String) -> java.math.BigDecimal): List<Line> {
+    /**
+     * A line per validator and vintage where the wallet holds stake, in denom order. [rate] is rate_v (1 until read): one per validator, every vintage alike.
+     *
+     * A note a tx in flight spends still counts: the merged note it becomes
+     * arrives in the same sync that sees it spent, so the figure moves once,
+     * never through zero. Not one an unstake spends ([leaving], its tx hashes,
+     * lowercase): that is shown as unbonding from the send. What can be spent
+     * is `spendable`, elsewhere.
+     */
+    fun lines(notes: List<OwnedStakeNote>, leaving: Set<String> = emptySet(), rate: (String) -> java.math.BigDecimal): List<Line> {
         val held = java.util.TreeMap<String, Long>()
-        for (n in notes) if (n.spendable && Vintages.parse(n.denom) != null) {
+        for (n in notes) if (n.unspent && n.amount > 0 && Vintages.parse(n.denom) != null &&
+            !(n.pendingAt != null && n.pendingTx?.lowercase() in leaving)) {
             held[n.denom] = Amounts.satAdd(held[n.denom] ?: 0L, n.amount)
         }
         return held.map { (denom, d) ->

@@ -8,7 +8,7 @@ public enum StakeRound {
     /// One validator's private stake: what the Stake screen's card and total show.
     public struct Line: Equatable, Sendable {
         public let validator: String
-        /// derth in spendable stake notes.
+        /// derth in unspent stake notes (pending spends included: see `lines`).
         public let derth: UInt64
         /// At the live rate, in uerth (floor(derth x rate), as the chain converts it).
         public let value: UInt64
@@ -17,9 +17,17 @@ public enum StakeRound {
     /// A line per validator where the wallet holds stake, in validator order:
     /// every live vintage at its one rate. `rate` is rate_v (1 until read);
     /// `vintages` the context that says which have retired (nil: none have).
-    public static func lines(notes: [OwnedStakeNote], rate: (String) -> Decimal, vintages: VintageCtx? = nil) -> [Line] {
+    ///
+    /// A note a tx in flight spends still counts: the merged note it becomes
+    /// arrives in the same sync that sees it spent, so the figure moves once,
+    /// never through zero. Not one an unstake spends (`leaving`, its tx
+    /// hashes): that is shown as unbonding from the send. What can be spent
+    /// is `spendable`, elsewhere.
+    public static func lines(notes: [OwnedStakeNote], rate: (String) -> Decimal, vintages: VintageCtx? = nil,
+                             leaving: Set<String> = []) -> [Line] {
         var held: [String: UInt64] = [:]
-        for n in notes where n.spendable && !PrivacyWallet.isRetired(n.denom, vintages) {
+        for n in notes where n.unspent && n.amount > 0 && !PrivacyWallet.isRetired(n.denom, vintages) {
+            if n.pendingAt != nil, let tx = n.pendingTx, leaving.contains(tx.lowercased()) { continue }
             guard let v = Vintage.parse(n.denom)?.valoper else { continue }
             held[v] = sat(held[v] ?? 0, n.amount)
         }

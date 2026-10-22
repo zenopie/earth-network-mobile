@@ -857,6 +857,8 @@ public final class AppModel {
         if h == nil, let hash, !hash.isEmpty { h = await txHeight(hash) }
         if let h, gen == generation, let w = privacy {
             await w.catchUp(height: h)
+            // What the tx minted shows now, not after the public reads below.
+            if gen == generation, w === privacy { publishPrivacy() }
         }
         guard gen == generation else { return }
         // A handle tx changes the directory the cache holds for ten minutes.
@@ -1041,7 +1043,8 @@ public final class AppModel {
     /// Private stake per validator at the live rates. What the Stake tab
     /// shows; the Portfolio's rows add up to it.
     public func stakeLines() -> [StakeRound.Line] {
-        StakeRound.lines(notes: privacy?.stakeNotes ?? [], rate: { [derthRates] in derthRates[$0] ?? 1 }, vintages: vintages)
+        StakeRound.lines(notes: privacy?.stakeNotes ?? [], rate: { [derthRates] in derthRates[$0] ?? 1 }, vintages: vintages,
+                         leaving: Set(pendingUnbonds.map { $0.txHash.lowercased() }))
     }
 
     /// The Groundworks split this wallet votes with (empty: none).

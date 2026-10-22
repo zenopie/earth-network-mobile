@@ -419,14 +419,14 @@ final class VintageTests: XCTestCase {
         XCTAssertEqual("Oct 2026", Vintage.monthText(202610))
     }
 
-    /// Sync names a suffixed note by trying each month after the base, newest first.
+    /// Sync names a suffixed note by trying each month in its own range, newest first.
     func testSyncNamesVintagedDenoms() {
         let ops = [validator, validator2]
         let want = ["derth/\(validator2)/202612", "derth/\(validator)/202611"]
         let ids = Set(want.map(PrivacyHash.assetID) + [PrivacyHash.assetID("uerth")])
-        XCTAssertEqual(Set(want), Set(WalletSync.vintageDenoms(operators: ops, base: 202610, through: 202701, matching: ids)))
-        // The base month's denom is the unsuffixed one: never tried as a suffix.
-        XCTAssertTrue(WalletSync.vintageDenoms(operators: ops, base: 202610, through: 202701,
-                                               matching: [PrivacyHash.assetID("derth/\(validator)/202610")]).isEmpty)
+        XCTAssertEqual(Set(want), Set(WalletSync.vintageDenoms(operators: ops, from: WalletSync.vintageFloor, through: 202701, matching: ids)))
+        // The range's ends are included.
+        XCTAssertEqual(["derth/\(validator)/202609"], WalletSync.vintageDenoms(operators: ops, from: 202609, through: 202609,
+                                                                              matching: [PrivacyHash.assetID("derth/\(validator)/202609")]))
     }
 }
