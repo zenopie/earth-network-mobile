@@ -936,7 +936,9 @@ public final class AppModel {
         if let b = read.bonded { self.totalBonded = BigInt(b) ?? 0; loaded.insert(.bonded) }
         self.publicActivity = read.transactions.compactMap { ActivityEntry(tx: $0, self: address) }
         mergeActivity()
-        if let h = read.height, h > 0 { chainHeight = max(chainHeight, UInt64(h)) }
+        // The node's tip as read, not a running maximum: after a relaunch the
+        // old chain's heights are not this one's.
+        if let h = read.height, h > 0 { chainHeight = UInt64(h) }
         lastError = read.reachable
         dataVersion &+= 1
         await EarthNotifications.notifyNewProposals(proposalList)
@@ -1117,6 +1119,8 @@ public final class AppModel {
         pendingUnbonds = snap.pendingUnbonds
         identityStatus = snap.identityStatus
         claimOpensAt = w.claimOpensAt()
+        // A store reset onto a new chain starts lower: drop the old chain's height with it.
+        if snap.syncedHeight < syncedHeight { chainHeight = snap.syncedHeight }
         syncedHeight = snap.syncedHeight
         // A sync that lands after the tip was read has seen a later block.
         chainHeight = max(chainHeight, snap.syncedHeight)
