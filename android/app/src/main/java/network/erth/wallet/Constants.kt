@@ -37,12 +37,13 @@ object Constants {
     // passport circuits.
     const val EARTH_API_URL = "https://api.erth.network"
 
-    const val EARTH_CHAIN_ID = "earth-1"
+    // The chain id: this app's one copy. Everything else reads it from here.
+    const val EARTH_CHAIN_ID = "earth-2"
 
     // ======================== SET AT THE GENESIS CEREMONY ========================
-    // sha256 of the live earth-1's genesis as a CometBFT node serves it: the
+    // sha256 of the live chain's genesis as a CometBFT node serves it: the
     // base64 chunks of the RPC's /genesis_chunked, decoded and concatenated.
-    // earth-1 has been relaunched under the same chain id, so the chain id
+    // A chain can be relaunched under the same chain id, so the chain id
     // alone does not tell the live chain from an old genesis or a fork:
     // Settings -> Network refuses a node whose genesis is not this one
     // (NodeConfig.probe). The genesis is what every node keeps, state-synced
@@ -55,7 +56,7 @@ object Constants {
     // node started on it. The value below is for the chain repo's genesis at
     // v1.1.0 (file sha256 26b396b4...), the launch genesis. Must equal
     // iOS Constants.genesisSHA256.
-    const val EARTH_GENESIS_SHA256 = "33766415170fcd011963c481f4442e4b09aef29cd3bee229b66ac9cb2243882c"
+    const val EARTH_GENESIS_SHA256 = "db7be87319dae33606afdc7c3d4595a51480c8b1c998f3b8caafea195f4840ac"
     // =============================================================================
     const val EARTH_PREFIX = "earth"
     const val UERTH_DENOM = "uerth"

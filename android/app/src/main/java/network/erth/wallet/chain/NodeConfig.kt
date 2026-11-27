@@ -444,8 +444,8 @@ object NodeConfig {
     private const val RPC_REQUIRED = "RPC: required. The wallet checks the node's genesis, which only the RPC serves."
     private const val NOT_RPC = "That does not look like a CometBFT RPC."
     private const val NO_GENESIS = "The RPC did not serve its genesis (/genesis_chunked), so the wallet cannot tell " +
-        "which earth-1 it follows. Check that the URL is the node's CometBFT RPC (port 26657)."
-    private const val OTHER_GENESIS = "That node follows another earth-1: its genesis is not the live chain's " +
+        "which ${Constants.EARTH_CHAIN_ID} it follows. Check that the URL is the node's CometBFT RPC (port 26657)."
+    private const val OTHER_GENESIS = "That node follows another ${Constants.EARTH_CHAIN_ID}: its genesis is not the live chain's " +
         "(an earlier launch, or another network under the same name). Point it at the live chain."
     private const val SPLIT_NODES = "The LCD and the RPC disagree about a recent block: they are not following " +
         "the same chain. Use the LCD and RPC of one node."

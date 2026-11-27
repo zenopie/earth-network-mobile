@@ -15,12 +15,13 @@ public enum Constants {
     /// LCD cannot do: a *range* of blocks in one request.
     public static let rpcURL = URL(string: "https://rpc.erth.network")!
 
-    public static let chainID = "earth-1"
+    /// The chain id: this app's one copy. Everything else reads it from here.
+    public static let chainID = "earth-2"
 
     // ======================== SET AT THE GENESIS CEREMONY ========================
-    /// sha256 of the live earth-1's genesis as a CometBFT node serves it: the
+    /// sha256 of the live chain's genesis as a CometBFT node serves it: the
     /// base64 chunks of the RPC's /genesis_chunked, decoded and concatenated.
-    /// earth-1 has been relaunched under the same chain id, so the chain id
+    /// A chain can be relaunched under the same chain id, so the chain id
     /// alone does not tell the live chain from an old genesis or a fork:
     /// Settings → Network refuses a node whose genesis is not this one
     /// (`NodeSettings.probe`). The genesis is what every node keeps,
@@ -33,7 +34,7 @@ public enum Constants {
     /// from any node started on it. The value below is for the chain repo's
     /// genesis at v1.1.0 (file sha256 26b396b4...), the launch genesis.
     /// Must equal Android's EARTH_GENESIS_SHA256.
-    public static let genesisSHA256 = "33766415170fcd011963c481f4442e4b09aef29cd3bee229b66ac9cb2243882c"
+    public static let genesisSHA256 = "db7be87319dae33606afdc7c3d4595a51480c8b1c998f3b8caafea195f4840ac"
     // =============================================================================
     public static let bech32Prefix = "earth"
     /// Cosmos default. Not a custom coin type — do not "fix" this to 529.

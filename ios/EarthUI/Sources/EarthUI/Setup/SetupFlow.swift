@@ -24,7 +24,7 @@ struct SetupFlow: View {
                 Text("Earth Wallet")
                     .font(EarthType.display)
                     .foregroundStyle(theme.colors.textPrimary)
-                Text("A self-custody wallet for earth-1. Your recovery phrase never leaves this device.")
+                Text("A self-custody wallet for \(Constants.chainID). Your recovery phrase never leaves this device.")
                     .font(EarthType.body)
                     .foregroundStyle(theme.colors.textTertiary)
                 Spacer()
