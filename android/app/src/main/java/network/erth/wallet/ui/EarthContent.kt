@@ -377,11 +377,13 @@ internal fun EarthContent(
                 rate = { v -> earnState?.derthRates?.get(v) ?: java.math.BigDecimal.ONE },
             ).map { line ->
                 val h = privacyState?.stake?.firstOrNull { it.denom == line.denom }
+                val q = earnState?.all?.firstOrNull { it.validator == line.validator }
                 PrivateStakeRow(
                     validator = line.validator,
                     moniker = monikerOf(line.validator),
                     derth = line.derth,
                     valueUerth = line.value,
+                    earningUerth = network.erth.wallet.chain.math.StakingApr.earningPart(line.derth, q?.supply, q?.delegation),
                     free = h?.free ?: 0L,
                     locked = h?.locked ?: 0L,
                     lockedUerth = derthValue(h?.locked ?: 0L, line.validator),

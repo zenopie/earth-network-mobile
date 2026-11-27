@@ -212,6 +212,8 @@ data class PrivateStakeRow(
     val derth: Long,
     /** Its ERTH value at the live rate. */
     val valueUerth: Long,
+    /** The part of it bonded in x/staking, in uerth: what earns (StakingApr.earningPart). */
+    val earningUerth: Double = valueUerth.toDouble(),
     /** derth that may leave now. */
     val free: Long,
     val locked: Long,
@@ -256,14 +258,14 @@ private class StakeView(val state: EarnUiState?, val now: Long, val visible: Boo
         if (p.retired || p.standing?.earns == false) null else state?.let { StakingApr.forValidator(it.totalBondedUerth, p.commission) }
 
     /**
-     * What the whole stake earns, weighted by value: idle stake counts at
-     * zero, so a jailed validator pulls the figure down as it does the
-     * daily one. Null without earning stake.
+     * What the whole stake earns over its value: idle stake counts at zero,
+     * so a jailed validator pulls the figure down as it does the daily one,
+     * and only the bonded part earns. Null without earning stake.
      */
     fun blendedApr(rows: List<PrivateStakeRow>): Double? {
         val total = rows.sumOf { it.valueUerth.toDouble() }
         if (total <= 0) return null
-        val earned = rows.sumOf { it.valueUerth.toDouble() * (apr(it) ?: 0.0) }
+        val earned = rows.sumOf { it.earningUerth * (apr(it) ?: 0.0) }
         return if (earned > 0) earned / total else null
     }
 }
@@ -322,7 +324,8 @@ private fun heroLine(view: StakeView, rows: List<PrivateStakeRow>, total: Long, 
             ?: return "Earn by staking ERTH" to EarthColors.Text.textTertiary
         return "Earn up to ${base.asPercent()} APR" to EarthAccent.ink
     }
-    val daily = rows.sumOf { it.valueUerth.toDouble() * (view.apr(it) ?: 0.0) / 365 }
+    // On the bonded part only: the rewards in the value earn nothing.
+    val daily = rows.sumOf { it.earningUerth * (view.apr(it) ?: 0.0) / 365 }
     val apr = view.blendedApr(rows)
     if (daily <= 0 || apr == null) return "Not earning" to EarthColors.Text.textTertiary
     val rate = "${apr.asPercent()} APR"

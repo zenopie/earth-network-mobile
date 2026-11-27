@@ -162,5 +162,17 @@ object StakingApr {
     /** What a delegator to this validator actually earns, after their cut. */
     fun forValidator(bondedUerth: Long, commission: Double): Double? =
         base(bondedUerth)?.times(1.0 - commission.coerceIn(0.0, 1.0))
+
+    /**
+     * The uerth of [derth] the validator's book has delegated in x/staking:
+     * what the emission is paid on. The book's unbonded rewards and pending
+     * delegations raise the derth rate (the stake's value) but earn nothing,
+     * so a rate times the value overstates what it earns. Face value when
+     * the book is unknown (null, or no supply).
+     */
+    fun earningPart(derth: Long, supply: java.math.BigInteger?, delegation: java.math.BigInteger?): Double {
+        if (supply == null || delegation == null || supply.signum() <= 0) return derth.toDouble()
+        return derth.toDouble() * delegation.toDouble() / supply.toDouble()
+    }
 }
 

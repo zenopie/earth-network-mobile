@@ -133,4 +133,14 @@ public enum StakingApr {
     public static func forValidator(bondedUerth: Int64, commission: Double) -> Double? {
         base(bondedUerth: bondedUerth).map { $0 * (1 - min(max(commission, 0), 1)) }
     }
+
+    /// The uerth of `derth` the validator's book has delegated in x/staking:
+    /// what the emission is paid on. The book's unbonded rewards and
+    /// pending delegations raise the derth rate (the stake's value) but earn
+    /// nothing, so a rate times the value overstates what it earns. Face
+    /// value when the book is unknown (nil, or no supply).
+    public static func earningPart(derth: UInt64, supply: BigUInt?, delegation: BigUInt?) -> Double {
+        guard let supply, let delegation, supply > 0 else { return Double(derth) }
+        return Double(derth) * Double(delegation) / Double(supply)
+    }
 }

@@ -29,6 +29,8 @@ struct StakeCard {
     let holding: PrivacyWallet.StakeHolding?
     /// The stake here, at the live rate.
     let value: UInt64
+    /// The part of it bonded in x/staking, in uerth: what earns (StakingApr.earningPart).
+    let earning: Double
     let standing: StakeRound.Standing?
 
     enum Status { case earning, idle }
@@ -45,8 +47,10 @@ struct StakeCard {
         // Read so the rows redraw when a sync changes the notes.
         _ = model.privateStake
         return model.stakeLines().map { line in
-            StakeCard(validator: line.validator, holding: model.stakeHoldings.first { $0.validator == line.validator },
-                      value: line.value, standing: list?[line.validator].map(StakeRound.Standing.init))
+            let q = list?[line.validator]
+            return StakeCard(validator: line.validator, holding: model.stakeHoldings.first { $0.validator == line.validator },
+                             value: line.value, earning: StakingApr.earningPart(derth: line.derth, supply: q?.supply, delegation: q?.delegation),
+                             standing: q.map(StakeRound.Standing.init))
         }
     }
 }
@@ -144,13 +148,14 @@ struct StakeOverview: View {
     private var bonded: Int64 { Int64(model.totalBonded.description) ?? 0 }
 
     /// About what the stake adds in a day at the network rate, after each
-    /// validator's commission.
+    /// validator's commission: on the part its book has bonded, not on the
+    /// rewards already in its value.
     private func perDay(_ cards: [StakeCard]) -> Double {
         cards.reduce(0) { acc, c in
             guard c.standing?.earns ?? true,
                   let r = StakingApr.forValidator(bondedUerth: bonded, commission: model.commission(of: c.validator) ?? 0)
             else { return acc }
-            return acc + Double(c.value) * r / 365
+            return acc + c.earning * r / 365
         }
     }
 
