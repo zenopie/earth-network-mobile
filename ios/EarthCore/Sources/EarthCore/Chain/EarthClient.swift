@@ -1,6 +1,6 @@
 import Foundation
 
-/// Everything the app does against `earth-1`.
+/// Everything the app does against the chain (`Constants.chainID`).
 ///
 /// One value rather than the Kotlin side's set of global objects, so a test or
 /// a local node can be pointed at by constructing a different client instead of

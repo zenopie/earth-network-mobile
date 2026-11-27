@@ -222,10 +222,9 @@ class WalletSync(
     companion object {
         /**
          * The earliest suffixed vintage a stake note is looked for in before
-         * the base vintage is known: earth-1's relaunch month (v1.3.0, which
-         * suffixes every vintage after its own, came later).
+         * the base vintage is known: earth-2's genesis month.
          */
-        const val VINTAGE_FLOOR = 202609
+        const val VINTAGE_FLOOR = 202611
 
         /** Pending marks made before txs carried a timeout_height are released after this long (wall clock). */
         const val PENDING_TIMEOUT_S = 15 * 60L
@@ -280,9 +279,9 @@ class WalletSync(
         const val TIME_SLACK = 3_600L
 
         /**
-         * No block time before this (2025-01-01 UTC) is one of earth-1's: an
+         * No block time before this (2025-01-01 UTC) is the chain's: an
          * indexer row time, a record's candidate activated_at below it is
-         * refused (earth-1's genesis is later still).
+         * refused (its genesis is later still).
          */
         const val MIN_BLOCK_TIME = 1_735_689_600L
 

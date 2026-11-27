@@ -2,7 +2,7 @@
 
 Verifies a locally generated proof with **the chain's own verifier** — the
 vendored `barretenberg-go` pinned to `aztec_tag: v5.0.0`, the same build
-`earth-1` runs. Proving on a new platform only means something if this accepts
+the chain runs. Proving on a new platform only means something if this accepts
 the result, so this is the last step of every iOS proving check rather than an
 optional extra.
 

@@ -2,7 +2,7 @@
 import PackageDescription
 
 // The prover gate: proves that Barretenberg on Apple platforms produces proofs
-// the earth-1 chain accepts, and wraps the circuits the app proves with.
+// the chain accepts, and wraps the circuits the app proves with.
 //
 // VERSION LOCKSTEP (see android/app/build.gradle for the Android half):
 // Swoir 1.0.0-beta.22-2 -> Swoirenberg 1.0.0-beta.22-2 -> noir_rs tag

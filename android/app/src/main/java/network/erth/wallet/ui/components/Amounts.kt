@@ -4,7 +4,7 @@ import java.math.BigDecimal
 import java.math.BigInteger
 import java.math.RoundingMode
 
-// Amounts as people read and type them. Every denom on earth-1 has six
+// Amounts as people read and type them. Every denom on the chain has six
 // decimals, so these convert between base units and that one scale.
 
 /** Base units to a decimal with thousands separators, trailing zeros trimmed. */

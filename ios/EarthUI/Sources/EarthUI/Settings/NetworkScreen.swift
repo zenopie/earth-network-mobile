@@ -4,7 +4,7 @@ import SwiftUI
 /// Which node the wallet uses: Earth's, or the user's own. Mirrors Android's
 /// `ui/settings/NetworkScreen.kt`.
 ///
-/// A node is saved only after it answers as earth-1, so a typo cannot leave
+/// A node is saved only after it answers as the live chain, so a typo cannot leave
 /// the wallet pointed at nothing (or at another chain).
 struct NetworkScreen: View {
     @Environment(\.earth) private var theme

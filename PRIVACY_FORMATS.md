@@ -1507,8 +1507,7 @@ check-in):
     asset                    = AssetID(VintageDenom(…))
 
 - **Base vintage.** One month a chain keeps the unsuffixed denom: the
-  v1.3.0 upgrade month on earth-1 (a new chain's genesis month). Every
-  note from before v1.3.0 carries it and stays valid. The suffixed
+  chain's genesis month. The suffixed
   spelling of the base month is another asset the chain never supplies.
   A denom parses in both forms (`ParseDerthDenom`: the unsuffixed form is
   month 0, read as the base vintage); a suffix is exactly six digits of a
@@ -1995,7 +1994,7 @@ the request pattern: Earth's node keeps no request logs, and Settings →
 Network points an install at the user's own node (`NodeConfig.kt` /
 `NodeSettings.swift`), through which every chain query and broadcast then
 goes. Such a node needs both its LCD and its CometBFT RPC, and is saved only
-when its chain id is earth-1; the sha256 of the genesis its RPC serves
+when its chain id is the live one; the sha256 of the genesis its RPC serves
 (`/genesis_chunked`, the base64 chunks decoded and concatenated) is the live
 chain's (`EARTH_GENESIS_SHA256` / `Constants.genesisSHA256`, set at the
 genesis ceremony); its LCD and RPC hold the same block at the lower of

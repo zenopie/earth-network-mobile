@@ -1,6 +1,6 @@
 # Earth Wallet: Android architecture
 
-A native Android wallet for **earth-1**, a Cosmos SDK chain with native bank
+A native Android wallet for **earth-2**, a Cosmos SDK chain with native bank
 denoms, native staking, and custom modules:
 
 - `x/dex`: hub-and-spoke AMM. Every pool pairs ERTH with one token.
@@ -50,7 +50,7 @@ javalite.
 | File | Responsibility |
 |------|----------------|
 | `EarthRest.kt` | `get` / `postJson` over the LCD, `getRpc` for CometBFT RPC, to the node `NodeConfig` names. |
-| `NodeConfig.kt` | The node in use: Earth's, or the user's own (Settings → Network), checked to be the live earth-1 (chain id, the sha256 of the genesis its RPC serves, its LCD and RPC on one chain, a recent tip) before it is saved, again at every launch, every 6 hours while the app runs, and when the Network screen's light probe fails; the RPC is required. A pass is kept per node (its URLs and the genesis pin). A saved node without a pass from this build, or whose last pass is 6 hours old or more, waits on Earth's node until the launch recheck passes it; one that fails a recheck (anything but an LCD that does not answer at all) is set aside for Earth's node with a notice until the user checks a node again. https only, except the user's own node at a local address. |
+| `NodeConfig.kt` | The node in use: Earth's, or the user's own (Settings → Network), checked to be the live chain (chain id, the sha256 of the genesis its RPC serves, its LCD and RPC on one chain, a recent tip) before it is saved, again at every launch, every 6 hours while the app runs, and when the Network screen's light probe fails; the RPC is required. A pass is kept per node (its URLs and the genesis pin). A saved node without a pass from this build, or whose last pass is 6 hours old or more, waits on Earth's node until the launch recheck passes it; one that fails a recheck (anything but an LCD that does not answer at all) is set aside for Earth's node with a notice until the user checks a node again. https only, except the user's own node at a local address. |
 | `EarthTx.kt` | Account lookup → `TxBody` / `AuthInfo` / `SignDoc` → sign → broadcast `TxRaw`. |
 | `Fees.kt` | Gas price and fee for a gas limit. |
 | `Bank.kt` | Balances, supply, `msgSend`. |

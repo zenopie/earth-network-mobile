@@ -4,7 +4,7 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 
 ## What this is
 
-Earth Wallet: a self-custody wallet for **earth-1**, a sovereign Cosmos SDK
+Earth Wallet: a self-custody wallet for **earth-2**, a sovereign Cosmos SDK
 chain built on proof-of-personhood. A user proves they are a unique human by
 reading their ePassport's NFC chip and generating a zero-knowledge proof
 **on device**, which the chain verifies. No custodian, no server sees the
@@ -66,7 +66,7 @@ For iOS commands see `ios/README.md`. The short version:
 
 ## Chain facts
 
-    chain id     earth-1
+    chain id     earth-2 (Constants.EARTH_CHAIN_ID / Constants.chainID)
     LCD          https://lcd.erth.network
     RPC          https://rpc.erth.network
     backend      https://api.erth.network

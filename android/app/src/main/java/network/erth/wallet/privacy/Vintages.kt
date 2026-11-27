@@ -10,9 +10,8 @@ package network.erth.wallet.privacy
  *
  *     derth/<valoper>/<YYYYMM>
  *
- * except the base vintage (the month of the v1.3.0 upgrade on earth-1; a new
- * chain's genesis month), whose denom is the unsuffixed derth/<valoper> every
- * note from before v1.3.0 carries in its commitment. One denom per
+ * except the base vintage (the chain's genesis month), whose denom is the
+ * unsuffixed derth/<valoper>. One denom per
  * (validator, vintage): the suffixed spelling of the base month is another
  * asset the chain never supplies.
  *

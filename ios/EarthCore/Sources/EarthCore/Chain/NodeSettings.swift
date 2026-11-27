@@ -322,7 +322,7 @@ public enum NodeSettings {
 
     /// Asks `node` which chain it follows and how far it is. Refused: a node
     /// that is not `Constants.chainID`; one whose genesis is not the live
-    /// chain's (an earlier earth-1 genesis, or another chain under the same
+    /// chain's (an earlier genesis, or another chain under the same
     /// id): the sha256 of what its RPC's /genesis_chunked serves must be
     /// `Constants.genesisSHA256`; an LCD that does not hold the RPC's block
     /// at their common height (so both are one node, or nodes of one chain);
@@ -377,7 +377,7 @@ public enum NodeSettings {
         return Probe(chainID: chainID, height: height)
     }
 
-    /// The LCD's latest block: chain id earth-1, its height, at most `maxLagSeconds` old.
+    /// The LCD's latest block: the live chain id, its height, at most `maxLagSeconds` old.
     private static func lcdLatest(_ rest: EarthRest) async throws -> (String, UInt64) {
         let j: JSON
         let path = "/cosmos/base/tendermint/v1beta1/blocks/latest"

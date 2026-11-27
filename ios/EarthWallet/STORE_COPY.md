@@ -13,7 +13,7 @@ next submission starts from what was actually filed rather than from memory.
 
 ## Promotional text (170 char max)
 
-    A self-custody wallet for earth-1. Prove you are a unique human by reading
+    A self-custody wallet for earth-2. Prove you are a unique human by reading
     your passport's chip — the proof is made on your device and nothing about
     the passport leaves it.
 
@@ -21,7 +21,7 @@ next submission starts from what was actually filed rather than from memory.
 
 ## Description
 
-    Earth Wallet is a self-custody wallet for earth-1, a network where one
+    Earth Wallet is a self-custody wallet for earth-2, a network where one
     person means one vote and one daily share.
 
     PROVE YOU ARE HUMAN, WITHOUT GIVING UP YOUR PASSPORT
@@ -103,7 +103,7 @@ hold value — anyone in the world can spend from it.
 
     Everything else works on the demo wallet above: balances, send and receive,
     swap, liquidity, staking, governance, and transaction history all read live
-    from the earth-1 network.
+    from the earth-2 network.
 
     The demo wallet is not registered, so the daily ANML claim will show as
     unavailable. That is the correct state for an unregistered account rather

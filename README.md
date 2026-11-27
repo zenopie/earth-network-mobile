@@ -1,6 +1,6 @@
 # Earth Wallet
 
-Self-custody wallet for **earth-1**, a Cosmos SDK chain built on
+Self-custody wallet for **earth-2**, a Cosmos SDK chain built on
 proof-of-personhood. The app reads an ePassport's NFC chip, proves on the
 device in zero knowledge that its holder is a unique human, and registers that
 proof on-chain. No server sees the passport. Balances, stake and votes are

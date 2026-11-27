@@ -231,7 +231,7 @@ data class PrivateActivityRow(
  * from the notes sync already found.
  */
 object PrivateActivity {
-    /** A block every this many seconds, for a height before or past every clock pair (earth-1's target). */
+    /** A block every this many seconds, for a height before or past every clock pair (the chain's target). */
     const val DEFAULT_BLOCK_SECONDS = 6L
 
     const val FAILED_IN_BLOCK = "failed in its block"

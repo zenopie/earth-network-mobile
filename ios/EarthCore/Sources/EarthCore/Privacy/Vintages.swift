@@ -6,8 +6,8 @@ import Foundation
 ///
 ///     derth/<valoper>/<YYYYMM>
 ///
-/// except the base vintage (the v1.3.0 upgrade month on earth-1), whose denom
-/// is the unsuffixed derth/<valoper> every note made before v1.3.0 carries.
+/// except the base vintage (the chain's genesis month), whose denom is the
+/// unsuffixed derth/<valoper>.
 /// One denom per (validator, vintage). A vintage is live in its own month and
 /// the 12 after it and retires at 00:00 UTC on the 1st of its month + 13: from
 /// then on every msg on it is refused. Until the next epoch end books its

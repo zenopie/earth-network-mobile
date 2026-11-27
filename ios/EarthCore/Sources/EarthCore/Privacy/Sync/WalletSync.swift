@@ -180,7 +180,7 @@ public final class WalletSync {
     public static let tipSlack: UInt64 = 10
     /// Seconds an indexer row's block time may run past the tip's time (or the wallet's clock).
     public static let timeSlack: UInt64 = 3_600
-    /// No block time before this (2025-01-01 UTC) is one of earth-1's.
+    /// No block time before this (2025-01-01 UTC) is the chain's.
     public static let minBlockTime: UInt64 = 1_735_689_600
     /// Identity row heights kept (a uniform sample) to draw a record's LCD cover set from.
     public static let identityHeightSample = 256
@@ -1244,9 +1244,8 @@ public final class WalletSync {
     }
 
     /// The earliest suffixed vintage a stake note is looked for in before the
-    /// base vintage is known: earth-1's relaunch month (v1.3.0, which
-    /// suffixes every vintage after its own, came later). As Android's VINTAGE_FLOOR.
-    static let vintageFloor: UInt32 = 202609
+    /// base vintage is known: earth-2's genesis month. As Android's VINTAGE_FLOOR.
+    static let vintageFloor: UInt32 = 202611
 
     /// The suffixed stake denoms whose asset ids are among `ids`: every
     /// validator's, each month from `from` through `through` (the base

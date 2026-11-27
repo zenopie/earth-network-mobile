@@ -211,7 +211,7 @@ public struct PrivateActivityRow: Equatable, Sendable, Identifiable {
 /// when it sent them; received notes and a restored wallet's spends are read
 /// from the notes sync already found. Ports `PrivateActivity.kt`.
 public enum PrivateActivity {
-    /// A block every this many seconds, for a height before or past every clock pair (earth-1's target).
+    /// A block every this many seconds, for a height before or past every clock pair (the chain's target).
     public static let defaultBlockSeconds: Int64 = 6
 
     public static let failedInBlock = "failed in its block"

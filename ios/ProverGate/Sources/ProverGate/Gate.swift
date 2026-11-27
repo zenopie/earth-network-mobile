@@ -20,7 +20,7 @@ public struct GateReport {
 
 /// The passport gate: does Barretenberg on Apple platforms prove every
 /// register-circuit variant, from the witness its shared fixture holds, into
-/// a proof the earth-1 chain will accept?
+/// a proof the chain will accept?
 ///
 /// Lives in the library rather than in a test case so it can run from a plain
 /// executable. The gate must be runnable with only the Command Line Tools

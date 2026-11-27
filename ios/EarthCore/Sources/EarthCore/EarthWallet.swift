@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import secp256k1
 
-/// A key pair and the address it owns, derived the way `earth-1` expects.
+/// A key pair and the address it owns, derived the way the chain expects.
 ///
 /// Mirrors `WalletCrypto.kt` / `EarthWallet.kt`: BIP-39 seed, BIP-44 at coin
 /// type 118, and a Cosmos address of RIPEMD160(SHA256(compressed pubkey))

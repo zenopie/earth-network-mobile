@@ -177,7 +177,7 @@ identically — and is recorded here because this is where it surfaced.
 ## ProverGate: the passport gate
 
 Everything the app proves assumes Barretenberg on Apple platforms produces
-proofs `earth-1` accepts. The gate asserts that for **every** register-circuit
+proofs the chain accepts. The gate asserts that for **every** register-circuit
 variant (33; `circuits/variants.json`), largest first (bb sizes its SRS once
 per process).
 

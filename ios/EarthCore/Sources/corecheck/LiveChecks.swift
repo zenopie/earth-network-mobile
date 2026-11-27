@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Off by default — the rest of `corecheck` must pass on a plane. What this
 /// adds is the one thing offline vectors cannot: whether the response shapes
-/// this code reads are the shapes `earth-1` actually serves. A field renamed
+/// this code reads are the shapes the live chain actually serves. A field renamed
 /// on the chain shows up here as an empty result, not as a build failure.
 func checkLive() async {
     let client = EarthClient()
