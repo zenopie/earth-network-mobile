@@ -278,6 +278,7 @@ struct HandleScreen: View {
 struct SwitchIdentityScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
+    @Environment(TxController.self) private var tx
     @Environment(\.dismiss) private var dismiss
     /// Step two's wallet, once chosen; nil on step one.
     @State private var target: Target?
@@ -315,6 +316,7 @@ struct SwitchIdentityScreen: View {
             .background(theme.colors.bgPrimary)
             .task {
                 model.loadWallets(); await model.refreshPersonal()
+                await model.refreshClaimOutlook()
                 if let o = await model.moveOffer(), o.anything {
                     let what = [o.handle.isEmpty ? nil : "@\(o.handle)", o.voteLive ? "your caretaker vote" : nil].compactMap { $0 }.joined(separator: " and ")
                     let held = what.isEmpty ? "a move in flight" : what
@@ -337,6 +339,14 @@ struct SwitchIdentityScreen: View {
     private var whereTo: some View {
         Hero(title: "Where to?", line: ("This wallet stops counting as you", theme.colors.textTertiary))
         VStack(alignment: .leading, spacing: theme.space.x12) {
+            // Owed ANML stays with this identity: the one a switch moves to
+            // first claims the day after next, so these days are claimed first.
+            if model.canClaimAnml, let days = model.claimOutlook?.days, days > 0 {
+                Caption("\(days) ANML unclaimed · claim before moving", error: true)
+                Button("Claim first") { requestAnmlClaim(model, tx) }
+                    .font(EarthType.body).fontWeight(.semibold)
+                    .foregroundStyle(theme.colors.accentInk)
+            }
             if let renewFirst {
                 Caption(renewFirst, error: true)
                 Button("Renew first") {

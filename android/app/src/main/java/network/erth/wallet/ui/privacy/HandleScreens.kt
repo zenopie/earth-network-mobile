@@ -246,6 +246,13 @@ fun MoveToWalletScreen(
      */
     renewFirst: String? = null,
     onRenewFirst: () -> Unit = {},
+    /**
+     * Days of ANML this identity has not claimed, or null: the identity a
+     * switch moves to cannot claim them (it first claims the day after
+     * next), so they are claimed first. [onClaimFirst] starts the claim.
+     */
+    claimFirst: Int? = null,
+    onClaimFirst: () -> Unit = {},
 ) {
     val dimens = EarthTheme.dimens
     val red = EarthColors.Utility.ErrorRed.utilityError700
@@ -261,6 +268,16 @@ fun MoveToWalletScreen(
                 HeroLine("This wallet stops counting as you")
             }
             Spacer(Modifier.height(dimens.space24))
+            if (claimFirst != null && claimFirst > 0) {
+                Text("$claimFirst ANML unclaimed · claim before moving", style = EarthTypography.textSm, color = red)
+                Text(
+                    "Claim first",
+                    style = EarthTypography.textSm,
+                    fontWeight = FontWeight.SemiBold,
+                    color = EarthAccent.ink,
+                    modifier = Modifier.clickable(onClick = onClaimFirst).padding(vertical = dimens.space8),
+                )
+            }
             if (renewFirst != null) {
                 Text("Expiring soon · renew before moving", style = EarthTypography.textSm, color = red)
                 Text(

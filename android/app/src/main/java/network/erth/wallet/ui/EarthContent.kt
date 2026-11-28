@@ -782,6 +782,9 @@ internal fun EarthContent(
                 targetWarning = targetWarning.takeIf { moveTarget != null },
                 unmoved = unmoved,
                 renewFirst = renewFirst,
+                // Owed ANML stays with this identity: the next cannot claim those days.
+                claimFirst = state?.anmlClaim?.days?.takeIf { state.anmlClaimableAt == 0L && it > 0 },
+                onClaimFirst = onClaimAnml,
                 onRenewFirst = {
                     val p = personal
                     val handleSoon = p != null && p.handle.isNotEmpty() &&
