@@ -113,6 +113,7 @@ object PrivacyQueries {
             caretakerLeaseSeconds = i64("caretaker_lease_seconds"),
             caretakerCastBound = i64("caretaker_cast_bound"),
             caretakerLeaseHoldUntil = i64("caretaker_lease_hold_until"),
+            claimEarliestDay = i64("claim_earliest_day"),
         )
     }
 

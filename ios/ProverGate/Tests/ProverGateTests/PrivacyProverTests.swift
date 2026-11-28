@@ -59,7 +59,7 @@ final class PrivacyProverTests: XCTestCase {
     /// The key in force: an upgrade that replaced a circuit's launch key
     /// installs its own (app/upgrades/<name>/<kind>.vk.b64), else genesis's.
     static func genesisVK(_ root: URL, _ kind: PrivacyCircuitProver.Kind) -> Data? {
-        let upgraded: [PrivacyCircuitProver.Kind: String] = [.stake: "app/upgrades/v1_2_1/stake.vk.b64"]
+        let upgraded: [PrivacyCircuitProver.Kind: String] = [.claim: "app/upgrades/v1_4_0/claim.vk.b64"]
         for name in ["chain-orch", "chain-orchard", "chain-privacy", "earth-network-chain"] {
             if let path = upgraded[kind],
                let b64 = try? String(contentsOf: root.deletingLastPathComponent().appendingPathComponent("\(name)/\(path)"), encoding: .utf8) {
@@ -105,6 +105,9 @@ final class PrivacyProverTests: XCTestCase {
     /// no move fixture tool; HandlesTest.theNewIdentityBringsTheHandle... wrote
     /// it): proved, verified, and its VK the genesis move key.
     func testMove() throws { try check(.move, fixture: "fixture_move") }
+    /// A seven-day claim run (the wallet's own witness, ClaimDaysTest's last
+    /// claim): proved, verified, and its VK the v1.4.0 upgrade's claim key.
+    func testClaim() throws { try check(.claim, fixture: "fixture_claim") }
     func testAction() throws {
         for i in 0 ..< 3 { try check(.action, fixture: "fixture_action/action_\(i)") }
     }
@@ -127,10 +130,11 @@ final class PrivacyProverTests: XCTestCase {
                      "p_key", "p_time", "p_ex", "sighash"],
             .membership: ["root", "scope", "nullifier", "signal", "excluded_dsc", "excluded_country", "max_activation", "max_predecessor"],
             .move: ["root", "scope", "old_nullifier", "new_nullifier", "signal"],
+            .claim: ["root", "scopes", "nullifiers", "signal", "max_activation"],  // scopes, nullifiers: seven slots each
             .vote: ["note_root", "nf_root", "debt_root", "asset", "weight", "proposal_id", "vnf", "sighash"],  // vnf: two slots
         ]
         var proved = 0
-        for kind in [PrivacyCircuitProver.Kind.stake, .action, .membership, .move, .vote] {
+        for kind in [PrivacyCircuitProver.Kind.stake, .action, .membership, .move, .claim, .vote] {
             let kdir = URL(fileURLWithPath: dir).appendingPathComponent(kind.rawValue)
             let cases = ((try? FileManager.default.contentsOfDirectory(atPath: kdir.path)) ?? []).sorted().prefix(limit)
             for c in cases {

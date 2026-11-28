@@ -45,7 +45,7 @@ ADDRESS = int.from_bytes(b"earth-fixture-wallet", "big")
 # The identity secret every fixture proof registers (its idc is a public
 # output): the bytes "earth-fixture-id" as one field element.
 ID_SECRET = int.from_bytes(b"earth-fixture-id", "big")
-NON_VARIANT_MEMBERS = ["poa_core", "privacy_core", "membership", "move", "action", "stake", "vote"]
+NON_VARIANT_MEMBERS = ["poa_core", "privacy_core", "membership", "move", "claim", "action", "stake", "vote"]
 PINS = {
     "rsa": 'rsa = { tag = "v0.12.0", git = "https://github.com/zkpassport/noir_rsa" }',
     "ecdsa": 'ecdsa = { tag = "v0.5.0", git = "https://github.com/zkpassport/noir-ecdsa" }',

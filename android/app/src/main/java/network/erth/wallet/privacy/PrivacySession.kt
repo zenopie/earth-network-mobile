@@ -406,6 +406,7 @@ object PrivacySession {
         override fun proveStake(w: StakeWitness): ByteArray = PrivacyProver.proveStake(context, w)
         override fun proveMembership(w: MembershipWitness): ByteArray = PrivacyProver.proveMembership(context, w)
         override fun proveMove(w: network.erth.wallet.privacy.prove.MoveWitness): ByteArray = PrivacyProver.proveMove(context, w)
+        override fun proveClaim(w: network.erth.wallet.privacy.prove.ClaimWitness): ByteArray = PrivacyProver.proveClaim(context, w)
         override fun proveVote(w: network.erth.wallet.privacy.prove.VoteWitness): ByteArray = PrivacyProver.proveVote(context, w)
     }
 

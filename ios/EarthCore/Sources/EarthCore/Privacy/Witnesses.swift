@@ -428,6 +428,80 @@ public struct MembershipWitness: Sendable {
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
 }
 
+/// circuits/claim: the identity behind `idSecret`, live at `leafIndex` under
+/// `root`, with its nullifier in each of `scopes` (the claim scopes of a run
+/// of days, at most `slots`; the slots after them are 0) and activated by
+/// `maxActivation`. Public inputs: root, scopes[7], nullifiers[7], signal,
+/// max_activation (personhood ClaimPublicInputs).
+public struct ClaimWitness: Sendable {
+    /// circuits/claim SLOTS: personhood ClaimWindowDays.
+    public static let slots = 7
+
+    public let idSecret: Fr
+    public let dscKey: Fr
+    public let country: Fr
+    public let activatedAt: UInt64
+    public let predecessorAt: UInt64
+    public let leafIndex: UInt64
+    public let siblings: [Fr]
+    public let root: Fr
+    public let scopes: [Fr]
+    public let signal: Fr
+    public let maxActivation: UInt64
+    public let nullifiers: [Fr]
+
+    public init(idSecret: Fr, dscKey: Fr, country: Fr, activatedAt: UInt64, predecessorAt: UInt64, leafIndex: UInt64, siblings: [Fr], root: Fr,
+                scopes: [Fr], signal: Fr, maxActivation: UInt64) throws {
+        try require(siblings.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
+        try require((1...Self.slots).contains(scopes.count), "a claim proves 1 to \(Self.slots) scopes")
+        try require(leafIndex <= 0xffff_ffff, "leaf index is a u32")
+        try require([activatedAt, predecessorAt, maxActivation].allSatisfy { $0 <= PrivacyHash.noBound }, "a bound is a u64 below 2^63")
+        self.idSecret = idSecret; self.dscKey = dscKey; self.country = country; self.activatedAt = activatedAt
+        self.predecessorAt = predecessorAt; self.leafIndex = leafIndex; self.siblings = siblings; self.root = root
+        self.scopes = scopes; self.signal = signal; self.maxActivation = maxActivation
+        nullifiers = scopes.map { PrivacyHash.scopeNullifier(idSecret: idSecret, scope: $0) }
+    }
+
+    public var leaf: Fr {
+        PrivacyHash.identityLeaf(idc: PrivacyHash.idc(idSecret), dscKey: dscKey, country: country, activatedAt: activatedAt, predecessorAt: predecessorAt)
+    }
+
+    private func padded(_ xs: [Fr]) -> [Fr] { xs + Array(repeating: .zero, count: Self.slots - xs.count) }
+
+    /// What the circuit will assert, checked before spending seconds on a proof that cannot verify.
+    public func check() throws {
+        try require(Merkle.rootFromPath(leaf: leaf, index: leafIndex, siblings: siblings) == root, "identity leaf is not in the tree at this root")
+        try require(!dscKey.isZero, "this registration has no document signer")
+        try require(activatedAt <= maxActivation, "this identity was activated too recently for this action")
+    }
+
+    public func publicInputs() -> [Fr] {
+        [root] + padded(scopes) + padded(nullifiers) + [signal, PrivacyHash.u64(maxActivation)]
+    }
+
+    public func noirInputs() -> [String: Any] {
+        [
+            "id_secret": idSecret.noir,
+            "dsc_key": dscKey.noir,
+            "country": country.noir,
+            "activated_at": noirHex(activatedAt),
+            "predecessor_at": noirHex(predecessorAt),
+            "leaf_index": noirHex(leafIndex),
+            "siblings": siblings.map(\.noir),
+            "root": root.noir,
+            "scopes": padded(scopes).map(\.noir),
+            "nullifiers": padded(nullifiers).map(\.noir),
+            "signal": signal.noir,
+            "max_activation": noirHex(maxActivation),
+        ]
+    }
+
+    static let inputOrder = ["id_secret", "dsc_key", "country", "activated_at", "predecessor_at", "leaf_index", "siblings", "root", "scopes",
+                             "nullifiers", "signal", "max_activation"]
+
+    public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
+}
+
 /// circuits/move: a handle or caretaker split passes from the identity behind
 /// `oldSecret` to the one behind `newSecret`, which succeeded it under the
 /// same passport. The succession leaf H(TAG_SUCC, idc_old, idc_new) is at

@@ -152,12 +152,26 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     /// Query/Root's expires_at per root (nil: not said).
     var rootExpiresAt: ((Fr) -> Int64?)?
 
+    /// Whether the chain has MsgClaimAnmlDays (v1.4.0), and its claim floor.
+    var claimDays = false
+    var claimFloor: UInt64 = 0
+    /// (day, nullifier) of every ANML claim, by either msg.
+    var claimNullifiers: Set<String> = []
+    static let claimWindowDays: UInt64 = 7
+    private func claimKey(_ day: UInt64, _ nf: Fr) -> String { "\(day)/\(nf.hex)" }
+    /// x/personhood ClaimEarliestDay.
+    var claimEarliestDay: UInt64 {
+        let today = UInt64(now) / 86_400
+        return max(today >= Self.claimWindowDays - 1 ? today - (Self.claimWindowDays - 1) : 0, claimFloor)
+    }
+
     /// Query/LeaseBounds at the chain's last block time.
     func leaseBounds() -> PrivacyReads.LeaseBounds {
         leaseBoundsReads += 1
         return PrivacyReads.LeaseBounds(blockTime: now, activationMarginSeconds: 86_400, handleLeaseSeconds: effectiveHandleLease,
                                         handleClaimBound: now - effectiveHandleLease - 86_400, caretakerLeaseSeconds: effectiveCaretakerLease,
-                                        caretakerCastBound: now - effectiveCaretakerLease - 86_400)
+                                        caretakerCastBound: now - effectiveCaretakerLease - 86_400,
+                                        claimEarliestDay: claimDays ? Int64(claimEarliestDay) : 0)
     }
     /// Set to make the backend's handle stream lie about an address (the chain check must catch it).
     var forgeHandleAddress: String?
@@ -643,6 +657,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var unconfirmedNext = 0
     /// Broadcasts accepted (CheckTx) that then fail in their block (DeliverTx code 5): nothing changes.
     var failInBlockNext = 0
+    /// What a failInBlockNext tx fails with.
+    var failInBlockCode = 5
+    var failInBlockLog = "failed in block (test)"
     /// Every tx by hash, as Query/GetTx answers.
     var txs: [String: TxResult] = [:]
 
@@ -659,13 +676,13 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         if let u = usedOnBroadcast { usedIdcs.insert(u); usedOnBroadcast = nil }
         // CheckTx answers with the code and codespace (a simulate with the text alone).
         do { _ = try check(tx, simulate: true) } catch let e as Refused where e.why.hasSuffix("(code 1130)") {
-            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll()
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll(); prover.claims.removeAll()
             throw UnsignedTx.TxRejected(code: 1130, log: e.why, codespace: "personhood", lcd: answeringLcd)
         } catch {}
         if rejectNext > 0 {
             // The proofs made for it never reach the chain.
             rejectNext -= 1
-            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll()
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll(); prover.claims.removeAll()
             throw UnsignedTx.TxRejected(code: 19, log: "broadcast refused (test)")
         }
         let hash = UnsignedTx.hash(tx)
@@ -674,17 +691,17 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             dropNext -= 1
             _ = try check(tx, simulate: true)
             accepted(hash)
-            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll()
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll(); prover.claims.removeAll()
             throw URLError(.timedOut)
         }
         if failInBlockNext > 0 {
             failInBlockNext -= 1
             _ = try check(tx, simulate: true)
             accepted(hash)
-            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll()
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll(); prover.moves.removeAll(); prover.claims.removeAll()
             block()
-            txs[hash] = TxResult(hash: hash, height: height - 1, time: now, events: [], code: 5, log: "failed in block (test)")
-            throw Refused(why: "tx failed (code 5)")
+            txs[hash] = TxResult(hash: hash, height: height - 1, time: now, events: [], code: failInBlockCode, log: failInBlockLog)
+            throw Refused(why: "tx failed (code \(failInBlockCode)): \(failInBlockLog)")
         }
         _ = try check(tx, simulate: true)
         accepted(hash)
@@ -777,6 +794,13 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgClaimAnmlPrivate:
             try only(nil)
             try need(m.ciphertext.count == NoteCipher.blindCiphertextBytes, "claim ciphertext")
+        case let m as MsgClaimAnmlDays:
+            try only(nil)
+            try need(m.ciphertext.count == NoteCipher.blindCiphertextBytes, "claim ciphertext")
+            try need(m.firstDay <= m.day && m.day - m.firstDay < Self.claimWindowDays, "first_day \(m.firstDay) to day \(m.day) is not a run of 1 to 7 days")
+            try need(UInt64(m.claim.nullifiers.count) == m.day - m.firstDay + 1, "\(m.claim.nullifiers.count) nullifiers for the run")
+            try need(m.claim.proof.count == PrivateTxEngine.proofBytes, "a claim proof is exactly \(PrivateTxEngine.proofBytes) bytes")
+            try need(Set(m.claim.nullifiers).count == m.claim.nullifiers.count, "claim nullifiers repeat")
         default: try only(nil)
         }
         try need(m.totalFee > 0, "no fee")
@@ -1154,6 +1178,32 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                 try need(w.publicInputs() == expect, "membership proof is for other public inputs")
             }
         }
+        if let m = m as? MsgClaimAnmlDays {
+            // x/personhood checkClaimDays, then the claim proof.
+            try need(claimDays, "fake chain does not know \(MsgClaimAnmlDays.typeURL)")
+            let today = UInt64(now) / 86_400
+            try need(m.day == today, "claim through day \(m.day), today is \(today): claim is not for today")
+            try need(m.firstDay >= claimEarliestDay, "claim from day \(m.firstDay), claims reach back to day \(claimEarliestDay): claim is not for today")
+            // The chain names the last claimed day of the run.
+            for (i, nf) in m.claim.nullifiers.enumerated().reversed() {
+                let day = m.firstDay + UInt64(i)
+                try need(!claimNullifiers.contains(claimKey(day, try f(nf))), "day \(day): a day in this claim has already been claimed")
+            }
+            try need(identityRoots.contains(try f(m.claim.root)), "unknown identity anchor")
+            if !simulate {
+                guard !prover.claims.isEmpty else { throw Refused(why: "no claim proof") }
+                let w = prover.claims.removeFirst()
+                let scopes = (m.firstDay ... m.day).map { PrivacyHash.claimScope(day: $0) }
+                let pad = [Fr](repeating: .zero, count: ClaimWitness.slots - scopes.count)
+                let expect = [try f(m.claim.root)] + scopes + pad + (try m.claim.nullifiers.map(f)) + pad + [sighash, PrivacyHash.u64((m.firstDay - 1) * 86_400)]
+                try need(w.publicInputs() == expect, "invalid membership proof (code 1118): the claim proof is for other public inputs")
+            }
+        }
+        if let m = m as? MsgClaimAnmlPrivate {
+            // v1.4.0 retired it (ErrClaimRetired, before any check or fee).
+            try need(!claimDays, "MsgClaimAnml is retired: claim with MsgClaimAnmlDays")
+            try need(!claimNullifiers.contains(claimKey(m.day, try f(m.membership.nullifier))), "already claimed today; the next claim opens at 00:00 UTC")
+        }
         if let mm = m as? any MoveMsg {
             let mv = mm.move
             try need(identityRoots.contains(try f(mv.root)), "unknown identity anchor")
@@ -1236,7 +1286,14 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             }
             events.append((type: "register", attributes: ["leaf_index": String(idx), "switched": String(switched)]))
         case let m as MsgClaimAnmlPrivate:
+            claimNullifiers.insert(claimKey(m.day, try f(m.membership.nullifier)))
             mint("uanml", 1_000_000, try f(m.pc), m.ciphertext)
+        case let m as MsgClaimAnmlDays:
+            for (i, nf) in m.claim.nullifiers.enumerated() {
+                claimNullifiers.insert(claimKey(m.firstDay + UInt64(i), try f(nf)))
+                events.append((type: "claim_anml", attributes: ["day": String(m.firstDay + UInt64(i)), "nullifier": try f(nf).hex]))
+            }
+            mint("uanml", 1_000_000 * UInt64(m.claim.nullifiers.count), try f(m.pc), m.ciphertext)
         case let m as MsgVoteProposalPrivate:
             votes.append((m.proposalID, m.option.rawValue))
         case let m as MsgShieldedDelegate:
@@ -1577,6 +1634,14 @@ final class CheckingProver: PrivacyProver, @unchecked Sendable {
     var allMemberships: [MembershipWitness] = []
     var moves: [MoveWitness] = []
     var allMoves: [MoveWitness] = []
+    var claims: [ClaimWitness] = []
+    var allClaims: [ClaimWitness] = []
+
+    func proveClaim(_ w: ClaimWitness) async throws -> Data {
+        try w.check()
+        claims.append(w); allClaims.append(w)
+        return Data(repeating: 6, count: PrivateTxEngine.proofBytes)
+    }
 
     func proveAction(_ w: ActionWitness) async throws -> Data {
         try w.check()

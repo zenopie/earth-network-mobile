@@ -124,6 +124,6 @@ class IdentityTest : WalletTest() {
         val chain = FakeChain()
         val a = wallet(chain)
         register(chain, a)
-        assertThrows(IllegalArgumentException::class.java) { a.claimAnml(0) }
+        assertThrows(IllegalArgumentException::class.java) { a.claimAnmlDay(0) }
     }
 }

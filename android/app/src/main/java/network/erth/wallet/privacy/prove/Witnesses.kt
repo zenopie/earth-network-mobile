@@ -377,6 +377,71 @@ data class MembershipWitness(
 }
 
 /**
+ * circuits/claim: the identity behind [idSecret], live at [leafIndex] under
+ * [root], with its nullifier in each of [scopes] (the claim scopes of a run
+ * of days, at most [SLOTS]; the slots after them are 0) and activated by
+ * [maxActivation]. Public inputs: root, scopes[SLOTS], nullifiers[SLOTS],
+ * signal, max_activation (personhood ClaimPublicInputs).
+ */
+data class ClaimWitness(
+    val idSecret: Fr,
+    val dscKey: Fr,
+    val country: Fr,
+    val activatedAt: Long,
+    val predecessorAt: Long,
+    val leafIndex: Long,
+    val siblings: List<Fr>,
+    val root: Fr,
+    val scopes: List<Fr>,
+    val signal: Fr,
+    val maxActivation: Long,
+) {
+    init {
+        require(siblings.size == Merkle.DEPTH)
+        require(scopes.size in 1..SLOTS) { "a claim proves 1 to $SLOTS scopes" }
+        require(activatedAt >= 0 && predecessorAt >= 0 && maxActivation >= 0) { "a bound is a u64 below 2^63" }
+        require(leafIndex in 0..0xffffffffL)
+    }
+
+    val nullifiers: List<Fr> by lazy { scopes.map { Privacy.scopeNullifier(idSecret, it) } }
+
+    val leaf: Fr get() = Privacy.identityLeaf(Privacy.idc(idSecret), dscKey, country, activatedAt, predecessorAt)
+
+    private fun padded(xs: List<Fr>): List<Fr> = xs + List(SLOTS - xs.size) { Fr.ZERO }
+
+    /** What the circuit will assert, checked before spending seconds on a proof that cannot verify. */
+    fun check() {
+        require(Merkle.rootFromPath(leaf, leafIndex, siblings) == root) { "identity leaf is not in the tree at this root" }
+        require(!dscKey.isZero) { "this registration has no document signer" }
+        require(activatedAt <= maxActivation) { "this identity was activated too recently for this action" }
+    }
+
+    fun publicInputs(): List<Fr> = listOf(root) + padded(scopes) + padded(nullifiers) + listOf(signal, Privacy.u64(maxActivation))
+
+    fun noirInputs(): Map<String, Any> = mapOf(
+        "id_secret" to idSecret.toNoir(),
+        "dsc_key" to dscKey.toNoir(),
+        "country" to country.toNoir(),
+        "activated_at" to hex(activatedAt),
+        "predecessor_at" to hex(predecessorAt),
+        "leaf_index" to hex(leafIndex),
+        "siblings" to siblings.map { it.toNoir() },
+        "root" to root.toNoir(),
+        "scopes" to padded(scopes).map { it.toNoir() },
+        "nullifiers" to padded(nullifiers).map { it.toNoir() },
+        "signal" to signal.toNoir(),
+        "max_activation" to hex(maxActivation),
+    )
+
+    fun proverToml(): String = toml(noirInputs())
+
+    companion object {
+        /** circuits/claim SLOTS: personhood ClaimWindowDays. */
+        const val SLOTS = 7
+    }
+}
+
+/**
  * circuits/move: a handle or caretaker split passes from the identity behind
  * [oldSecret] to the one behind [newSecret], which succeeded it under the
  * same passport. The succession leaf H(TAG_SUCC, idc_old, idc_new) is at

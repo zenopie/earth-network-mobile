@@ -21,7 +21,7 @@ privacy core, checked against the same vectors.
     android/    the shipping app — Kotlin + Jetpack Compose
     ios/        the port — see ios/README.md
     circuits/   Noir circuits (nargo workspace): the passport register-circuit
-                variants and the privacy circuits (action, stake, vote, membership, move)
+                variants and the privacy circuits (action, stake, vote, membership, move, claim)
     tools/      chainverify (proof checking), keycheck + txcheck + certcheck
                 (Go ground truth for the iOS port), privacyvectors (golden
                 vectors from the chain's own code)
@@ -128,7 +128,7 @@ Changing a crypto or passport dependency usually means re-doing that work.
 
 **Compiled circuits are checked in** at `app/src/main/assets/circuits/*.json`
 (the 16 passport register-circuit variants of the 2^18 tier, ~16MB, stripped
-to bytecode and ABI, plus action, stake, vote, membership and move; the other 17
+to bytecode and ABI, plus action, stake, vote, membership, move and claim; the other 17
 variants are fetched on demand from the backend, pinned by sha256 in
 `passport_variants.json`). The passport variants are generated:
 `circuits/tools/variants.py gen` writes their Noir mains and shared fixtures

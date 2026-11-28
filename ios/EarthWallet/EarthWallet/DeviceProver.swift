@@ -197,6 +197,13 @@ struct PrivacyDeviceProver: PrivacyProver {
         }.value
     }
 
+    func proveClaim(_ w: ClaimWitness) async throws -> Data {
+        try w.check()
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.prover.prove(.claim, inputs: w.noirInputs(), expected: w.publicInputs().map(\.hex))
+        }.value
+    }
+
     func proveVote(_ w: VoteWitness) async throws -> Data {
         try w.check()
         return try await Task.detached(priority: .userInitiated) {

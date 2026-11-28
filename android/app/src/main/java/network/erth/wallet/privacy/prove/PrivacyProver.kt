@@ -7,7 +7,7 @@ import network.erth.wallet.privacy.zk.Fr
 
 /**
  * On-device proofs of the privacy circuits (circuits/membership,
- * circuits/move, circuits/action, circuits/stake, circuits/vote), through the same noir_android build as
+ * circuits/move, circuits/claim, circuits/action, circuits/stake, circuits/vote), through the same noir_android build as
  * [network.erth.wallet.passport.PassportProver] — bb v5.0.0, in lockstep
  * with the chain's verifier; never float that pin.
  *
@@ -33,6 +33,8 @@ object PrivacyProver {
         MEMBERSHIP("membership", SRS_SIZE, 8),
         // root, scope, old_nullifier, new_nullifier, signal.
         MOVE("move", SRS_SIZE, 5),
+        // root, scopes[7], nullifiers[7], signal, max_activation (claim 6,109 gates: 2^14).
+        CLAIM("claim", SRS_SIZE, 17),
         ACTION("action", SRS_SIZE, 6),
         // anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before,
         // debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, gw_0, gw_1,
@@ -116,6 +118,11 @@ object PrivacyProver {
     fun proveMove(context: Context, w: MoveWitness): ByteArray {
         w.check()
         return prove(context, Kind.MOVE, w.noirInputs(), w.publicInputs())
+    }
+
+    fun proveClaim(context: Context, w: ClaimWitness): ByteArray {
+        w.check()
+        return prove(context, Kind.CLAIM, w.noirInputs(), w.publicInputs())
     }
 
     fun proveVote(context: Context, w: VoteWitness): ByteArray {

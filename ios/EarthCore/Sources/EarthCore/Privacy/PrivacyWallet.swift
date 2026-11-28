@@ -1049,8 +1049,186 @@ public final class PrivacyWallet: @unchecked Sendable {
         return u.utf8.count == 2 && u.utf8.allSatisfy({ (0x41 ... 0x5a).contains($0) }) ? u : ""
     }
 
-    /// Today's ANML. Opens once the identity was activated before yesterday began.
-    public func claimAnml(day: UInt64? = nil) async throws -> TxResult {
+    /// Every ANML owed: the unclaimed days from the one after the last
+    /// claimed through today, up to a week, in one MsgClaimAnmlDays with one
+    /// claim proof. A chain before v1.4.0 (LeaseBounds without
+    /// claim_earliest_day) takes today's alone, as `claimAnmlDay`. Today is
+    /// the chain's (LeaseBounds' block time), the day the run must end on.
+    ///
+    /// Claims are always a run ending today, so the last claimed day is all
+    /// the wallet needs. A day this wallet does not know was claimed (a
+    /// restored wallet, a claim by an older app) is refused before the tx
+    /// reaches any mempool (1131 at simulate or CheckTx, naming the day); the
+    /// run is laid out again after it, within this one confirmed action. Only
+    /// then: a tx the node took has spent its fee, and its outcome is final.
+    /// The named day is not recorded (the node's word alone); the run that
+    /// lands records what it claimed. Ports PrivacyWallet.kt.
+    public func claimAnml() async throws -> TxResult {
+        let lb = try await leaseBounds()
+        if lb.claimEarliestDay <= 0 { return try await claimAnmlDay() }
+        guard lb.blockTime >= 0 else { throw PrivacyError("the node's block time is negative") }
+        let day = UInt64(lb.blockTime) / UInt64(Self.secondsPerDay)
+        let earliest = UInt64(lb.claimEarliestDay)
+        let mx = await maxActions()
+        var after: UInt64?
+        // A run is at most claimWindowDays days, so a pass more than that has
+        // always found the run's start or that today is claimed.
+        for _ in 0 ... Self.claimWindowDays {
+            let attempt = Attempt()
+            do {
+                return try await locked {
+                    guard let first = try claimRunStart(earliest: earliest, day: day, after: after) else {
+                        throw PrivacyError("today's ANML is already claimed")
+                    }
+                    attempt.first = first
+                    return try await claimAnmlDaysLocked(first: first, day: day, mx: mx, attempt: attempt)
+                }
+            } catch {
+                guard !attempt.submitted, let first = attempt.first, let named = Self.claimedDay(in: error), named >= first, named <= day else { throw error }
+                after = named
+                if named == day { chainClaimedDay.value = day }
+            }
+        }
+        throw PrivacyError("the chain keeps naming claimed days; sync, then try again")
+    }
+
+    /// One claim attempt: its run's first day, and whether the node took its
+    /// tx into a mempool (its fee is spent from then on).
+    final class Attempt: @unchecked Sendable {
+        var first: UInt64?
+        var submitted = false
+    }
+
+    /// The first day of the run a claim through `day` takes, or nil when
+    /// there is none: after the last day claimed (and `after`, a day the chain
+    /// named), no earlier than `earliest`, six days before `day` or the first
+    /// day this identity may claim.
+    /// A day the chain named as claimed when this wallet's run reached it
+    /// (ErrDayClaimed at simulate), kept in memory only: the button and
+    /// reminder stop offering a claim the chain refuses, and a node's word is
+    /// never written to the store.
+    private let chainClaimedDay = ChainClaimedDay()
+    final class ChainClaimedDay: @unchecked Sendable {
+        private let l = NSLock()
+        private var d: UInt64?
+        var value: UInt64? {
+            get { l.lock(); defer { l.unlock() }; return d }
+            set { l.lock(); d = newValue; l.unlock() }
+        }
+    }
+
+    private func claimRunStart(earliest: UInt64, day: UInt64, after: UInt64? = nil) throws -> UInt64? {
+        let after = [after, chainClaimedDay.value].compactMap { $0 }.max()
+        return try Self.claimRunStart(earliest: earliest, day: day, after: after, activatedAt: try identity().activatedAt,
+                               claimed: store.state.claimedDays, now: now())
+    }
+
+    /// claimRunStart over a given identity and claimed days (the store's,
+    /// under the lock, or a snapshot's). Throws NotYet when the identity's
+    /// first claim is still ahead.
+    static func claimRunStart(earliest: UInt64, day: UInt64, after: UInt64?, activatedAt: UInt64, claimed: Set<UInt64>, now: Int64) throws -> UInt64? {
+        guard let eligible = claimEligibleDay(activatedAt: activatedAt) else { return nil }
+        if eligible > day {
+            throw NotYet(waitSeconds: max(0, Int64(clamping: eligible) &* secondsPerDay &- now))
+        }
+        let window = day >= UInt64(claimWindowDays - 1) ? day - UInt64(claimWindowDays - 1) : 0
+        let last = [claimed.max(), after].compactMap { $0 }.max()
+        let first = max(earliest, window, eligible, last.map { $0 + 1 } ?? 0)
+        return first <= day ? first : nil
+    }
+
+    private func claimAnmlDaysLocked(first: UInt64, day: UInt64, mx: Int, attempt: Attempt) async throws -> TxResult {
+        try require(first >= 1 && first <= day && day - first < UInt64(Self.claimWindowDays), "a claim takes 1 to \(Self.claimWindowDays) days")
+        // Chain-minted: a v2 ciphertext, opened against the mint's public amount (one ANML a day).
+        let anml = try mint("uanml")
+        // One bound for the run: its first day's, which bounds each later day too.
+        let maxActivation = (first - 1) * UInt64(Self.secondsPerDay)
+        let id = try identity()
+        if id.activatedAt > maxActivation { throw NotYet(waitSeconds: Int64(clamping: id.activatedAt - maxActivation)) }
+        let tree = store.identityTree
+        let path = tree.path(id.leafIndex)
+        let root = tree.root()
+        let idSecret = keys.idSecret(store.state.generation)
+        let scopes = (first ... day).map { PrivacyHash.claimScope(day: $0) }
+        let spec = try ClaimWitnessSpec { signal in
+            try ClaimWitness(idSecret: idSecret, dscKey: id.dscKey, country: id.country, activatedAt: id.activatedAt, predecessorAt: id.predecessorAt,
+                             leafIndex: id.leafIndex, siblings: path, root: root, scopes: scopes, signal: signal, maxActivation: maxActivation)
+        }
+        // accepted runs as the notes are marked, before the broadcast;
+        // rejected undoes it when CheckTx refused the tx (no mempool, no fee).
+        let r = try await run(Act(kind: .claimAnml, receives: [anml]), accepted: { _, _ in attempt.submitted = true },
+                              rejected: { _ in attempt.submitted = false }) { fee in
+            Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], claim: spec) { bs, _, _ in
+                MsgClaimAnmlDays(fee: bs[0], claim: ClaimProof(proof: Data(), root: Data(), nullifiers: []), firstDay: first, day: day,
+                                 pc: anml.pc.bytes, ciphertext: anml.ciphertext)
+            }
+        }
+        store.mutate { s in for d in first ... day { s.claimedDays.insert(d) } }
+        try store.save()
+        return r
+    }
+
+    /// What a claim now would take: `days` (0 when nothing is owed yet), as
+    /// `run` (MsgClaimAnmlDays) or today's MsgClaimAnml.
+    public struct ClaimOutlook: Sendable, Equatable {
+        public let days: Int
+        public let run: Bool
+    }
+
+    /// What `claimAnml` would take now, or nil without a live registration.
+    /// Asks the chain (LeaseBounds) only when a claim is open.
+    public func claimOutlook(bounds: PrivacyReads.LeaseBounds? = nil) async throws -> ClaimOutlook? {
+        guard let opens = claimOpensAt() else { return nil }
+        if opens != 0 { return ClaimOutlook(days: 0, run: false) }
+        let lb: PrivacyReads.LeaseBounds
+        if let bounds { lb = bounds } else { lb = try await leaseBounds() }
+        if lb.claimEarliestDay <= 0 { return ClaimOutlook(days: 1, run: false) }
+        guard lb.blockTime >= 0 else { return nil }
+        let day = UInt64(lb.blockTime) / UInt64(Self.secondsPerDay)
+        // From the snapshot: no wait behind a sync or a tx in flight.
+        let snap = snapshot
+        guard let id = snap.identity else { return nil }
+        let first = try? Self.claimRunStart(earliest: UInt64(lb.claimEarliestDay), day: day, after: chainClaimedDay.value, activatedAt: id.activatedAt,
+                                            claimed: snap.claimedDays, now: now())
+        guard let first = first ?? nil else { return ClaimOutlook(days: 0, run: true) }
+        return ClaimOutlook(days: Int(day - first + 1), run: true)
+    }
+
+    /// x/personhood ClaimWindowDays: the most days one claim takes (circuits/claim's slots).
+    public static let claimWindowDays = 7
+
+    /// The first day an identity activated at `activatedAt` may claim: a
+    /// claim for day d needs activated_at <= (d - 1) * 86400, so a fresh
+    /// registration first claims on the day after next. nil past any day.
+    public static func claimEligibleDay(activatedAt: UInt64) -> UInt64? {
+        let d = UInt64(secondsPerDay)
+        let (r, o) = (activatedAt / d).addingReportingOverflow(1 + (activatedAt % d == 0 ? 0 : 1))
+        return o ? nil : r
+    }
+
+    /// The day a refusal of a claim run names as claimed already
+    /// (x/personhood ErrDayClaimed, 1131: "day <N>: a day in this claim has
+    /// already been claimed"). Simulate answers with the error's text, not its code.
+    public static func claimedDay(in e: Swift.Error) -> UInt64? {
+        var text = "\(e) \(e.localizedDescription)"
+        if let r = e as? UnsignedTx.TxRejected {
+            // A CheckTx refusal carries its code: only ErrDayClaimed's names a claimed day.
+            guard r.code == dayClaimed, r.codespace == identityUsedCodespace else { return nil }
+            text += " " + r.log
+        }
+        let ns = text as NSString
+        guard let m = claimedDayPattern.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
+        return UInt64(ns.substring(with: m.range(at: 1)))
+    }
+
+    /// x/personhood ErrDayClaimed.
+    public static let dayClaimed = 1131
+
+    private static let claimedDayPattern = try! NSRegularExpression(pattern: "day (\\d+): a day in this claim has already been claimed")
+
+    /// Today's ANML, as MsgClaimAnml: only on a chain before v1.4.0, which
+    /// retired it. Opens once the identity was activated before yesterday began.
+    public func claimAnmlDay(day: UInt64? = nil) async throws -> TxResult {
         let mx = await maxActions()
         return try await locked {
             let day = day ?? today()
@@ -1073,7 +1251,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    public func claimedToday() -> Bool { snapshot.claimedDays.contains(today()) }
+    public func claimedToday() -> Bool { snapshot.claimedDays.contains(today()) || chainClaimedDay.value == today() }
 
     /// When ANML can next be claimed: 0 for now, nil without a live
     /// registration. A claim for day d needs activated_at <= (d - 1) * 86400,
@@ -1083,13 +1261,12 @@ public final class PrivacyWallet: @unchecked Sendable {
         guard snap.identityStatus == .live, let id = snap.identity else { return nil }
         // Checked throughout: an activated_at no block can have
         // (sync bounds them; an old store may hold one) has no answer, never a trap.
-        guard id.activatedAt <= UInt64(Int64.max) else { return nil }
-        let a = Int64(id.activatedAt)
-        let (firstDay, o1) = (a / Self.secondsPerDay).addingReportingOverflow(1 + (a % Self.secondsPerDay == 0 ? 0 : 1))
+        guard let eligible = Self.claimEligibleDay(activatedAt: id.activatedAt), eligible <= UInt64(Int64.max) else { return nil }
+        let firstDay = Int64(eligible)
         let t = Int64(today())
-        let day = max(t + (snap.claimedDays.contains(UInt64(t)) ? 1 : 0), firstDay)
-        let (at, o2) = day.multipliedReportingOverflow(by: Self.secondsPerDay)
-        if o1 || o2 { return nil }
+        let day = max(t + (claimedToday() ? 1 : 0), firstDay)
+        let (at, overflow) = day.multipliedReportingOverflow(by: Self.secondsPerDay)
+        if overflow { return nil }
         return day == t ? 0 : at
     }
 

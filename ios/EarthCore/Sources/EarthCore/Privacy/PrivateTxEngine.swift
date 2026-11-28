@@ -7,6 +7,7 @@ public protocol PrivacyProver: Sendable {
     func proveStake(_ w: StakeWitness) async throws -> Data
     func proveMembership(_ w: MembershipWitness) async throws -> Data
     func proveMove(_ w: MoveWitness) async throws -> Data
+    func proveClaim(_ w: ClaimWitness) async throws -> Data
     func proveVote(_ w: VoteWitness) async throws -> Data
 }
 
@@ -82,6 +83,25 @@ public struct MoveWitnessSpec: Sendable {
     }
 }
 
+/// A claim proof's statement, waiting for the sighash (its signal). The root
+/// and the nullifiers are fixed before it: the chain checks every day's
+/// nullifier before any proof.
+public struct ClaimWitnessSpec: Sendable {
+    public let root: Fr
+    public let nullifiers: [Fr]
+    let make: @Sendable (Fr) throws -> ClaimWitness
+    public init(_ make: @escaping @Sendable (Fr) throws -> ClaimWitness) throws {
+        let probe = try make(.zero)
+        self.root = probe.root; self.nullifiers = probe.nullifiers
+        self.make = make
+    }
+    public func witness(signal: Fr) throws -> ClaimWitness {
+        let w = try make(signal)
+        guard w.root == root, w.nullifiers == nullifiers else { throw PrivacyError("the claim witness is for another statement") }
+        return w
+    }
+}
+
 /// A vote proof's statement, waiting for the sighash; `vnfs` (both slots:
 /// the notes' and the padding's, in the layout's order) are known before:
 /// the sighash binds them.
@@ -114,6 +134,9 @@ public struct Assembled {
     /// A move proof's statement (MsgMoveHandle, MsgMoveCaretaker): the engine
     /// sets the msg's MoveProof (root, nullifiers, proof) on the built msg.
     public let move: MoveWitnessSpec?
+    /// A claim proof's statement (MsgClaimAnmlDays): the engine sets the
+    /// msg's ClaimProof on the built msg.
+    public let claim: ClaimWitnessSpec?
     /// Gas declared beyond the simulation and its headroom: what the chain
     /// may charge by the tx's block that it did not when simulated (a move's
     /// pair reaching its entry cap: PrivacyWallet.redelegateHeadroom).
@@ -123,8 +146,10 @@ public struct Assembled {
     public internal(set) var fee: UInt64 = 0
 
     public init(bundles: [BundlePlan], stake: StakePlan? = nil, membership: MembershipWitnessSpec? = nil, vote: VoteWitnessSpec? = nil,
-                move: MoveWitnessSpec? = nil, extraGas: UInt64 = 0, build: @escaping ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg) {
-        self.bundles = bundles; self.stake = stake; self.membership = membership; self.vote = vote; self.move = move; self.extraGas = extraGas
+                move: MoveWitnessSpec? = nil, claim: ClaimWitnessSpec? = nil, extraGas: UInt64 = 0,
+                build: @escaping ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg) {
+        self.bundles = bundles; self.stake = stake; self.membership = membership; self.vote = vote; self.move = move; self.claim = claim
+        self.extraGas = extraGas
         self.build = build
     }
 
@@ -272,6 +297,8 @@ public struct PrivateTxEngine: Sendable {
             if !p.creditNullifier.allSatisfy({ $0 == 0 }) { g = g &+ creditGas &+ redelegateRecordGas }
         }
         if a.membership != nil { g = g &+ membershipGas }
+        // A claim proof costs what a membership proof does: the note and a nullifier per day.
+        if let c = a.claim { g = g &+ membershipGas &+ UInt64(c.nullifiers.count) &* noteGas }
         if a.move != nil { g = g &+ membershipGas &+ (msg is MsgMoveCaretaker ? moveCaretakerExtraGas : moveHandleExtraGas) }
         if let v = a.vote { g = g &+ voteGas &+ (1 &+ UInt64(v.vnfs.count)) &* noteGas }
         if msg is MsgRegisterPrivate { g = g &+ registerGas }
@@ -361,6 +388,11 @@ public struct PrivateTxEngine: Sendable {
             let w = try mv.witness(signal: sighash)
             try w.check()
             msg = try Self.withMove(msg, proof: try Self.proofSized(try await prover.proveMove(w)), root: w.root, old: w.oldNullifier, new: w.newNullifier)
+        }
+        if let c = a.claim {
+            let w = try c.witness(signal: sighash)
+            try w.check()
+            msg = try Self.withClaim(msg, proof: try Self.proofSized(try await prover.proveClaim(w)), root: w.root, nullifiers: w.nullifiers)
         }
         guard try msg.sighash(chainID: chainID, tx: tx) == sighash else { throw PrivacyError("the proven msg binds another sighash") }
         guard msg.totalFee == q.fee else { throw PrivacyError("the msg must pay exactly the quoted fee") }
@@ -494,6 +526,15 @@ public struct PrivateTxEngine: Sendable {
             // could never simulate. The tx reveals them anyway.
             msg = try Self.withMove(msg, proof: Self.placeholder, root: mv.root, old: mv.oldNullifier, new: mv.newNullifier)
         }
+        if let c = a.claim {
+            // A quote's nullifiers are random, as a membership's: the node
+            // cannot tell whose claim it is before the user confirms (first_day
+            // and day, so how many days are owed, it sees either way). The
+            // send's are real, and its simulate names a day already claimed
+            // (1131) before any fee.
+            let nfs = placeholders ? c.nullifiers.map { _ in NotePlaintext.randomField() } : c.nullifiers
+            msg = try Self.withClaim(msg, proof: Self.placeholder, root: c.root, nullifiers: nfs)
+        }
         // A quote's vote nullifiers are random too: the node learns nothing
         // of the notes before the user confirms.
         guard let v = a.vote else { return msg }
@@ -518,6 +559,15 @@ public struct PrivateTxEngine: Sendable {
     static func withMove(_ msg: any PrivateMsg, proof: Data, root: Fr, old: Fr, new: Fr) throws -> any PrivateMsg {
         guard var m = msg as? any MoveMsg else { throw PrivacyError("not a move") }
         m.move = MoveProof(proof: proof, root: root.bytes, oldNullifier: old.bytes, newNullifier: new.bytes)
+        return m
+    }
+
+    /// A MsgClaimAnmlDays with its claim proof's body, root and nullifiers
+    /// (one per day, in day order) set; the sighash binds none of them.
+    static func withClaim(_ msg: any PrivateMsg, proof: Data, root: Fr, nullifiers: [Fr]) throws -> any PrivateMsg {
+        guard var m = msg as? MsgClaimAnmlDays else { throw PrivacyError("not a claim run") }
+        guard UInt64(nullifiers.count) == m.day &- m.firstDay &+ 1 else { throw PrivacyError("a claim carries one nullifier per day") }
+        m.claim = ClaimProof(proof: proof, root: root.bytes, nullifiers: nullifiers.map(\.bytes))
         return m
     }
 

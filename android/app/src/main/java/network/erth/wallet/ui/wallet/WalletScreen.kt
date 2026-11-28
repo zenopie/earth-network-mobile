@@ -23,6 +23,8 @@ data class WalletUiState(
      * stays right without the state being refreshed every second.
      */
     val anmlClaimableAt: Long? = null,
+    /** What a claim now takes (its days, up to a week, and which msg); null when unknown. */
+    val anmlClaim: network.erth.wallet.privacy.PrivacyWallet.ClaimOutlook? = null,
     /** Shielded ERTH: what private fees are paid from. */
     val shieldedErthUerth: Long = 0,
     /** Shielded holdings per denom (uerth, uanml, derth/<valoper>, ...). */

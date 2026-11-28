@@ -139,6 +139,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                 // Null without a live registration; otherwise now, or
                 // the next UTC midnight the chain will take a claim.
                 anmlClaimableAt = privacy?.let { runCatching { it.claimOpensAt() }.getOrNull() },
+                anmlClaim = privacy?.let { runCatching { it.claimOutlook() }.getOrNull() },
                 shieldedErthUerth = shielded["uerth"] ?: 0L,
                 shielded = shielded,
                 unstaking = privacy?.pendingUnbonds.orEmpty(),

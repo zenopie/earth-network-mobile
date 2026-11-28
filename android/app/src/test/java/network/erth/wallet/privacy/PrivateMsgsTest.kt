@@ -21,6 +21,8 @@ import network.erth.earth.proto.personhood.MsgMoveCaretaker
 import network.erth.earth.proto.personhood.MsgMoveHandle
 import network.erth.earth.proto.personhood.MoveProof
 import network.erth.earth.proto.personhood.MsgClaimAnml
+import network.erth.earth.proto.personhood.MsgClaimAnmlDays
+import network.erth.earth.proto.personhood.ClaimProof
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.MsgShield
@@ -113,6 +115,11 @@ class PrivateMsgsTest {
         .setProof(ByteString.copyFrom(byteArrayOf(0xbe.toByte(), 0xef.toByte(), seed.toByte())))
         .setRoot(fb(seed + 100)).setNullifier(fb(seed + 101)).build()
 
+    /** main.go claimProof. */
+    private fun claimProof(seed: Long, days: Int): ClaimProof = ClaimProof.newBuilder()
+        .setProof(ByteString.copyFrom(byteArrayOf(0xc1.toByte(), 0xa1.toByte(), seed.toByte())))
+        .setRoot(fb(seed + 100)).addAllNullifiers((0 until days).map { fb(seed + 101 + it) }).build()
+
     /** main.go moveProof. */
     private fun moveProof(seed: Long): MoveProof = MoveProof.newBuilder()
         .setProof(ByteString.copyFrom(byteArrayOf(0x30, 0x7e, seed.toByte())))
@@ -150,6 +157,8 @@ class PrivateMsgsTest {
             "register_no_affiliate" to register(""),
             "claim_anml" to MsgClaimAnml.newBuilder().setFee(fee(50, 2000)).setMembership(membership(50))
                 .setDay(20360).setPc(fb(51)).setCiphertext(bct(51)).build(),
+            "claim_anml_days" to MsgClaimAnmlDays.newBuilder().setFee(fee(52, 2000)).setClaim(claimProof(52, 4))
+                .setFirstDay(20357).setDay(20360).setPc(fb(53)).setCiphertext(bct(53)).build(),
             "set_caretaker" to MsgSetCaretaker.newBuilder().setFee(fee(60, 2000)).setMembership(membership(60))
                 .addAllPercentages(listOf(w(1, 60), w(7, 40))).setMaxPredecessor(1_750_000_000).build(),
             "set_caretaker_no_bound" to MsgSetCaretaker.newBuilder().setFee(fee(61, 2000)).setMembership(membership(61))

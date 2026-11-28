@@ -947,6 +947,7 @@ proof it carries. `StakeFields` (every stake-proof msg, first):
 | `/earth.shielded.v1.MsgSend` | Bytes(receiver address bytes, nothing for none), U64(fee) |
 | `/earth.personhood.v1.MsgRegister` | idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate, Bytes(signature_algorithm), each public signal as a field |
 | `/earth.personhood.v1.MsgClaimAnml` | U64(day), pc, Bytes(ct) |
+| `/earth.personhood.v1.MsgClaimAnmlDays` | U64(first_day), U64(day), pc, Bytes(ct) (the claim proof binds the sighash; its nullifiers are public inputs) |
 | `/earth.personhood.v1.MsgSetCaretaker` | per entry U64(option_id), U64(percent) (max_predecessor is not a sighash field) |
 | `/earth.personhood.v1.MsgMoveCaretaker` | (none) |
 | `/earth.personhood.v1.MsgBindHandle` | Bytes(handle), owner_pk, Bytes(ek_pub) of the address (release: Bytes(""), 0, Bytes("")) |
@@ -997,6 +998,8 @@ reserved numbers are never written):
                              pc_anml 7, ciphertext_anml 8, pc_erth 9, ciphertext_erth 10, affiliate_handle 15;
                              reserved 11-14
     MsgClaimAnml             fee 1, membership 2, day 3, pc 4, ciphertext 5
+    ClaimProof               proof 1, root 2, nullifiers 3 (one per day, in day order)
+    MsgClaimAnmlDays         fee 1, claim 2, first_day 3, day 4, pc 5, ciphertext 6   (chain v1.4.0)
     MsgSetCaretaker          fee 1, membership 2, percentages 3, max_predecessor 5; reserved 4
     MsgMoveCaretaker         fee 1, move 2
     MoveProof                proof 1, root 2, old_nullifier 3, new_nullifier 4

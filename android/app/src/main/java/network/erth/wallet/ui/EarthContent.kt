@@ -304,6 +304,7 @@ internal fun EarthContent(
             onClaimAnml = onClaimAnml,
             onRegister = onRegister,
             anmlClaimableAt = state?.anmlClaimableAt,
+            anmlClaimableDays = state?.anmlClaim?.days,
             registered = state?.registered,
             stakedUerth = state?.stakedUerth ?: 0L,
             rewardsUerth = state?.rewardsUerth ?: 0L,

@@ -85,12 +85,14 @@ public enum PrivacyReads {
         public var caretakerLeaseSeconds: Int64
         public var caretakerCastBound: Int64
         public var caretakerLeaseHoldUntil: Int64
+        /// The earliest day a MsgClaimAnmlDays run may start now; 0 on a chain without the msg (before v1.4.0).
+        public var claimEarliestDay: Int64
         public init(blockTime: Int64, activationMarginSeconds: Int64, handleLeaseSeconds: Int64, handleClaimBound: Int64,
-                    caretakerLeaseSeconds: Int64, caretakerCastBound: Int64, caretakerLeaseHoldUntil: Int64 = 0) {
+                    caretakerLeaseSeconds: Int64, caretakerCastBound: Int64, caretakerLeaseHoldUntil: Int64 = 0, claimEarliestDay: Int64 = 0) {
             self.blockTime = blockTime; self.activationMarginSeconds = activationMarginSeconds
             self.handleLeaseSeconds = handleLeaseSeconds; self.handleClaimBound = handleClaimBound
             self.caretakerLeaseSeconds = caretakerLeaseSeconds; self.caretakerCastBound = caretakerCastBound
-            self.caretakerLeaseHoldUntil = caretakerLeaseHoldUntil
+            self.caretakerLeaseHoldUntil = caretakerLeaseHoldUntil; self.claimEarliestDay = claimEarliestDay
         }
     }
 
@@ -459,7 +461,8 @@ public struct PrivacyQueries: PrivacyChainReads {
             handleLeaseSeconds: try i64(j.handle_lease_seconds, "handle_lease_seconds"), handleClaimBound: try i64(j.handle_claim_bound, "handle_claim_bound"),
             caretakerLeaseSeconds: try i64(j.caretaker_lease_seconds, "caretaker_lease_seconds"),
             caretakerCastBound: try i64(j.caretaker_cast_bound, "caretaker_cast_bound"),
-            caretakerLeaseHoldUntil: try i64(j.caretaker_lease_hold_until, "caretaker_lease_hold_until"))
+            caretakerLeaseHoldUntil: try i64(j.caretaker_lease_hold_until, "caretaker_lease_hold_until"),
+            claimEarliestDay: try i64(j.claim_earliest_day, "claim_earliest_day"))
     }
 
     public func ballotInputs(proposalID: UInt64, optionID: UInt64) async throws -> PrivacyReads.BallotInputs {

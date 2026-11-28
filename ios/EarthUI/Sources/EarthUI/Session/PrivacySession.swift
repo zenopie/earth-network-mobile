@@ -29,6 +29,7 @@ public enum PrivacyProving {
         func proveStake(_ w: StakeWitness) async throws -> Data { throw Failure() }
         func proveMembership(_ w: MembershipWitness) async throws -> Data { throw Failure() }
         func proveMove(_ w: MoveWitness) async throws -> Data { throw Failure() }
+        func proveClaim(_ w: ClaimWitness) async throws -> Data { throw Failure() }
         func proveVote(_ w: VoteWitness) async throws -> Data { throw Failure() }
     }
 }

@@ -79,8 +79,7 @@ struct WalletScreen: View {
 
     private func open(_ r: Reminders.Reminder) {
         switch r {
-        case .anmlReady:
-            tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")])) { w in try await w.claimAnml() }
+        case .anmlReady: requestAnmlClaim(model, tx)
         case .caretakerExpiring: model.governLink = .caretaker; model.tab = .govern
         // Stake is checked in on Earn, with one button for all of it.
         case .checkIn: model.tab = .earn
@@ -276,6 +275,8 @@ struct HomeActions: View {
                     model.publishPrivacy()
                 }
             }
+            // Open: the label's day count is the one a claim now takes.
+            if !Task.isCancelled, model.canClaimAnml { await model.refreshClaimOutlook() }
         }
     }
 
@@ -289,6 +290,8 @@ struct HomeActions: View {
     private var claimLabel: String {
         if !model.has(.privacy) { return Figures.loading }
         if notRegistered { return "Verify" }
+        // Days saved up: the button says how many ANML it collects.
+        if model.canClaimAnml, let d = model.claimOutlook?.days, d > 1 { return "Claim \(d)" }
         if model.canClaimAnml { return "Claim" }
         let opens = model.claimOpensAt ?? Personhood.nextClaimOpensAt()
         let seconds = opens - Int64(now.timeIntervalSince1970)
@@ -305,12 +308,27 @@ struct HomeActions: View {
         return "\(seconds)s"
     }
 
-    /// Private: a membership proof in the day's claim scope, its fee paid
-    /// from a shielded ERTH note, the ANML minted as a note. Nothing links it
-    /// to the registration or to any other claim. Nothing claims on its own:
-    /// a reminder says when the day's claim is open.
-    private func claim() {
-        tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")])) { w in
+    private func claim() { requestAnmlClaim(model, tx) }
+}
+
+@MainActor private var claimRequestPending = false
+
+/// Private: one claim proof for every unclaimed day up to a week (a
+/// membership proof for today alone on a chain before v1.4.0), its fee paid
+/// from a shielded ERTH note, the ANML minted as one note. Nothing links it
+/// to the registration. Nothing claims on its own: a reminder says when the
+/// day's claim is open. The amount shown is what the claim takes as of the
+/// tap (the chain's day and this wallet's claims), not a cached count.
+@MainActor
+func requestAnmlClaim(_ model: AppModel, _ tx: TxController) {
+    // One tap, one sheet: a second tap while the outlook is read does nothing.
+    guard !claimRequestPending else { return }
+    claimRequestPending = true
+    Task { @MainActor in
+        defer { claimRequestPending = false }
+        // Unknown (the read failed): the sheet says what the claim does, not a guess.
+        let amount = (await model.refreshClaimOutlook()?.days).map { "\(max($0, 1)) ANML" } ?? "every unclaimed day"
+        tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", amount), ("Paid as", "a private note")])) { w in
             try await w.claimAnml()
         }
     }

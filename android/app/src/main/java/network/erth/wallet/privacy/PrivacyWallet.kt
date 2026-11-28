@@ -12,6 +12,7 @@ import network.erth.earth.proto.dex.MsgNoteSwap
 import network.erth.earth.proto.dex.MsgRemoveLiquidityShielded
 import network.erth.earth.proto.personhood.MsgBindHandle
 import network.erth.earth.proto.personhood.MsgClaimAnml
+import network.erth.earth.proto.personhood.MsgClaimAnmlDays
 import network.erth.earth.proto.personhood.MsgMoveCaretaker
 import network.erth.earth.proto.personhood.MsgMoveHandle
 import network.erth.earth.proto.personhood.MsgRegister
@@ -49,6 +50,8 @@ import network.erth.wallet.privacy.tx.Assembled
 import network.erth.wallet.privacy.tx.BundleBuilder
 import network.erth.wallet.privacy.tx.BundlePlan
 import network.erth.wallet.privacy.tx.MembershipWitnessSpec
+import network.erth.wallet.privacy.tx.ClaimWitnessSpec
+import network.erth.wallet.privacy.prove.ClaimWitness
 import network.erth.wallet.privacy.tx.NoteOut
 import network.erth.wallet.privacy.tx.NoteSelection
 import network.erth.wallet.privacy.tx.PrivateChain
@@ -238,6 +241,8 @@ interface PrivacyChainReads {
         val caretakerLeaseSeconds: Long,
         val caretakerCastBound: Long,
         val caretakerLeaseHoldUntil: Long = 0,
+        /** The earliest day a MsgClaimAnmlDays run may start now; 0 on a chain without the msg (before v1.4.0). */
+        val claimEarliestDay: Long = 0,
     )
 
     /**
@@ -1063,8 +1068,115 @@ class PrivacyWallet(
         runCatching { sync() }
     }
 
-    /** Today's ANML. Opens once the identity was activated before yesterday began. */
-    fun claimAnml(day: Long = today()): TxResult {
+    /**
+     * Every ANML owed: the unclaimed days from the one after the last
+     * claimed through today, up to a week, in one MsgClaimAnmlDays with one
+     * claim proof. A chain before v1.4.0 (LeaseBounds without
+     * claim_earliest_day) takes today's alone, as [claimAnmlDay]. Today is
+     * the chain's (LeaseBounds' block time), the day the run must end on.
+     *
+     * Claims are always a run ending today, so the last claimed day is all
+     * the wallet needs. A day this wallet does not know was claimed (a
+     * restored wallet, a claim by an older app) is refused before the tx
+     * reaches any mempool (1131 at simulate or CheckTx, naming the day); the
+     * run is laid out again after it, within this one confirmed action. Only
+     * then: a tx the node took has spent its fee, and its outcome is final.
+     * The named day is not recorded (the node's word alone); the run that
+     * lands records what it claimed.
+     */
+    fun claimAnml(): TxResult {
+        val lb = leaseBounds()
+        if (lb.claimEarliestDay <= 0L) return claimAnmlDay(today())
+        val day = lb.blockTime / SECONDS_PER_DAY
+        var after = -1L
+        // A run is at most CLAIM_WINDOW_DAYS days, so a pass more than that
+        // has always found the run's start or that today is claimed.
+        repeat(CLAIM_WINDOW_DAYS + 1) {
+            val first = claimRunStart(lb.claimEarliestDay, day, after) ?: throw IllegalStateException("today's ANML is already claimed")
+            var submitted = false
+            try {
+                return claimAnmlDays(first, day) { submitted = it }
+            } catch (e: Exception) {
+                val named = if (submitted) null else claimedDayIn(e)
+                if (named == null || named < first || named > day) throw e
+                after = named
+                if (named == day) chainClaimedDay = day
+            }
+        }
+        throw IllegalStateException("the chain keeps naming claimed days; sync, then try again")
+    }
+
+    /**
+     * The first day of the run a claim through [day] takes, or null when
+     * there is none: after the last day claimed (and [after], a day the chain
+     * named), no earlier than [earliest], six days before [day] or the first
+     * day this identity may claim.
+     */
+    private fun claimRunStart(earliest: Long, day: Long, after: Long = -1L): Long? {
+        val id = identity()
+        val eligible = claimEligibleDay(id.activatedAt)
+        // Not claimed: not open yet for this identity (its first claim's delay).
+        if (eligible > day) throw NotYet(eligible * SECONDS_PER_DAY - now())
+        val last = maxOf(synchronized(store) { store.state.claimedDays.maxOrNull() } ?: -1L, chainClaimedDay)
+        val first = maxOf(maxOf(earliest, day - (CLAIM_WINDOW_DAYS - 1)), eligible, maxOf(last, after) + 1)
+        return first.takeIf { it <= day }
+    }
+
+    private fun claimAnmlDays(first: Long, day: Long, submitted: (Boolean) -> Unit): TxResult {
+        require(day - first + 1 in 1..CLAIM_WINDOW_DAYS.toLong()) { "a claim takes 1 to $CLAIM_WINDOW_DAYS days" }
+        // Chain-minted: a v2 ciphertext, opened against the mint's public amount (one ANML a day).
+        val anml = mint("uanml")
+        // One bound for the run: its first day's, which bounds each later day too.
+        val maxActivation = (first - 1) * SECONDS_PER_DAY
+        val id = identity()
+        if (id.activatedAt > maxActivation) throw NotYet(id.activatedAt - maxActivation)
+        val tree = store.identityTree
+        val path = tree.path(id.leafIndex)
+        val root = tree.root()
+        val scopes = (first..day).map { Privacy.claimScope(it) }
+        val spec = ClaimWitnessSpec { signal ->
+            ClaimWitness(
+                idSecret = keys.idSecret(generation), dscKey = id.dscKey, country = id.country, activatedAt = id.activatedAt,
+                predecessorAt = id.predecessorAt, leafIndex = id.leafIndex, siblings = path, root = root, scopes = scopes,
+                signal = signal, maxActivation = maxActivation,
+            )
+        }
+        // accepted runs as the notes are marked, before the broadcast;
+        // rejected undoes it when CheckTx refused the tx (no mempool, no fee).
+        val r = run(Act(PrivateActivityKind.CLAIM_ANML, receives = listOf(anml)),
+            accepted = { _, _ -> submitted(true) }, rejected = { submitted(false) }) { fee ->
+            Assembled(listOf(feeBundle(fee)), claim = spec) { bs, _, _ ->
+                MsgClaimAnmlDays.newBuilder().setFee(bs[0]).setFirstDay(first).setDay(day)
+                    .setPc(ByteString.copyFrom(anml.pc.toBytes())).setCiphertext(ByteString.copyFrom(anml.ciphertext)).build()
+            }
+        }
+        synchronized(store) { store.state.claimedDays.addAll(first..day); store.save() }
+        return r
+    }
+
+    /** What a claim now would take: [days] (0 when nothing is owed yet), as [run] (MsgClaimAnmlDays) or today's MsgClaimAnml. */
+    data class ClaimOutlook(val days: Int, val run: Boolean)
+
+    /**
+     * What [claimAnml] would take now, or null without a live registration.
+     * Asks the chain (LeaseBounds) only when a claim is open.
+     */
+    fun claimOutlook(): ClaimOutlook? {
+        val opens = claimOpensAt() ?: return null
+        if (opens != 0L) return ClaimOutlook(0, false)
+        val lb = leaseBounds()
+        if (lb.claimEarliestDay <= 0L) return ClaimOutlook(1, false)
+        val day = lb.blockTime / SECONDS_PER_DAY
+        val first = try {
+            claimRunStart(lb.claimEarliestDay, day)
+        } catch (e: NotYet) {
+            null
+        } ?: return ClaimOutlook(0, true)
+        return ClaimOutlook((day - first + 1).toInt(), true)
+    }
+
+    /** Today's ANML, as MsgClaimAnml: only on a chain before v1.4.0, which retired it. Opens once the identity was activated before yesterday began. */
+    fun claimAnmlDay(day: Long = today()): TxResult {
         require(day >= 1) { "no claim day before day 1" }
         // Chain-minted: a v2 ciphertext, opened against the mint's public amount.
         val anml = mint("uanml")
@@ -1076,11 +1188,19 @@ class PrivacyWallet(
                     .setPc(ByteString.copyFrom(anml.pc.toBytes())).setCiphertext(ByteString.copyFrom(anml.ciphertext)).build()
             }
         }
-        store.state.claimedDays.add(day); store.save()
+        synchronized(store) { store.state.claimedDays.add(day); store.save() }
         return r
     }
 
-    fun claimedToday(): Boolean = today() in store.state.claimedDays
+    fun claimedToday(): Boolean = today() in synchronized(store) { store.state.claimedDays.toSet() } || chainClaimedDay == today()
+
+    /**
+     * A day the chain named as claimed when this wallet's run reached it
+     * (ErrDayClaimed at simulate), kept in memory only: the button and
+     * reminder stop offering a claim the chain refuses, and a node's word is
+     * never written to the store.
+     */
+    @Volatile private var chainClaimedDay = -1L
 
     /**
      * When ANML can next be claimed: 0 for now, null without a live
@@ -1094,7 +1214,7 @@ class PrivacyWallet(
         // have (sync bounds them; an old store may hold one) has no answer.
         if (id.activatedAt < 0) return null
         return try {
-            val firstDay = Math.addExact(id.activatedAt / SECONDS_PER_DAY + 1, if (id.activatedAt % SECONDS_PER_DAY == 0L) 0L else 1L)
+            val firstDay = claimEligibleDay(id.activatedAt)
             val day = maxOf(today() + if (claimedToday()) 1 else 0, firstDay)
             if (day == today()) 0L else Math.multiplyExact(day, SECONDS_PER_DAY)
         } catch (e: ArithmeticException) {
@@ -3624,6 +3744,37 @@ class PrivacyWallet(
 
         /** x/shieldedstaking ErrVoteNullifierUsed. */
         const val VOTE_NULLIFIER_USED = 1119
+
+        /** x/personhood ClaimWindowDays: the most days one claim takes (circuits/claim's slots). */
+        const val CLAIM_WINDOW_DAYS = 7
+
+        /**
+         * The first day an identity activated at [activatedAt] may claim: a
+         * claim for day d needs activated_at <= (d - 1) * 86400, so a fresh
+         * registration first claims on the day after next.
+         */
+        fun claimEligibleDay(activatedAt: Long): Long =
+            Math.addExact(activatedAt / SECONDS_PER_DAY + 1, if (activatedAt % SECONDS_PER_DAY == 0L) 0L else 1L)
+
+        /**
+         * The day a refusal of a claim run names as claimed already
+         * (x/personhood ErrDayClaimed, 1131: "day <N>: a day in this claim has
+         * already been claimed"), if [e] or a cause is one. Simulate answers
+         * with the error's text, not its code.
+         */
+        fun claimedDayIn(e: Throwable): Long? {
+            val chainOf = generateSequence(e) { it.cause }.toList()
+            // A CheckTx refusal carries its code: only ErrDayClaimed's names a claimed day.
+            chainOf.filterIsInstance<network.erth.wallet.privacy.tx.UnsignedTx.TxRejected>().firstOrNull()?.let { r ->
+                if (r.code != DAY_CLAIMED || r.codespace != IDENTITY_USED_CODESPACE) return null
+            }
+            return chainOf.mapNotNull { it.message }.firstNotNullOfOrNull { CLAIMED_DAY.find(it)?.groupValues?.get(1)?.toLongOrNull() }
+        }
+
+        /** x/personhood ErrDayClaimed (codespace IDENTITY_USED_CODESPACE, personhood's). */
+        const val DAY_CLAIMED = 1131
+
+        private val CLAIMED_DAY = Regex("day (\\d+): a day in this claim has already been claimed")
 
         /** The codespace [VOTE_NULLIFIER_USED] is registered in: the code alone could be any module's. */
         const val VOTE_CODESPACE = "shieldedstaking"

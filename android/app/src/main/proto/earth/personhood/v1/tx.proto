@@ -59,6 +59,25 @@ message MsgClaimAnml {
   bytes ciphertext = 5;
 }
 
+// One identity's nullifiers in the claim scopes of the consecutive days
+// first_day..day (circuits/claim): one per day, in day order.
+message ClaimProof {
+  bytes proof = 1;
+  bytes root = 2;
+  repeated bytes nullifiers = 3;
+}
+
+// The run first_day..day (day = today, at most 7 days), one ANML per day in
+// one note. sighash fields: first_day, day, pc, Bytes(ciphertext).
+message MsgClaimAnmlDays {
+  earth.shielded.v1.Bundle fee = 1;
+  ClaimProof claim = 2;
+  uint64 first_day = 3;
+  uint64 day = 4;
+  bytes pc = 5;
+  bytes ciphertext = 6;
+}
+
 // sighash fields: per entry, option_id then percent.
 message MsgSetCaretaker {
   earth.shielded.v1.Bundle fee = 1;

@@ -75,7 +75,7 @@ public struct ActivityEntry: Identifiable, Equatable, Sendable {
         case "MsgWithdrawDelegatorReward": (title, glyph, party) = ("Claimed rewards", .receive, m["validator_address"] as? String ?? "")
         case "MsgRegister": (title, glyph) = ("Registered", .register)
         // Distinct from registration: you register once and claim every day.
-        case "MsgClaimAnml": (title, glyph) = ("Claimed ANML", .receive)
+        case "MsgClaimAnml", "MsgClaimAnmlDays": (title, glyph) = ("Claimed ANML", .receive)
         case "MsgSwap": (title, glyph) = ("Swapped", .swap)
         case "MsgSetAllocations", "MsgSetAllocation": (title, glyph) = ("Allocated", .vote)
         case "MsgVote":

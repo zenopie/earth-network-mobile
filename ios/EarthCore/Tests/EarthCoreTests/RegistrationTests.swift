@@ -179,7 +179,7 @@ final class RegistrationTests: PrivacyTestCase {
         let chain = FakeChain()
         let a = try wallet(chain)
         try await registered(chain, a)
-        await assertThrowsAsync({ try await a.claimAnml(day: 0) }) { $0 is PrivacyError }
+        await assertThrowsAsync({ try await a.claimAnmlDay(day: 0) }) { $0 is PrivacyError }
     }
 
     /// claimOpensAt never traps: an activated_at at the end of time has no answer.

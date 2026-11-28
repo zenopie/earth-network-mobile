@@ -11,7 +11,9 @@ import network.erth.earth.proto.dex.MsgAddLiquidityShielded
 import network.erth.earth.proto.dex.MsgNoteSwap
 import network.erth.earth.proto.dex.MsgRemoveLiquidityShielded
 import network.erth.earth.proto.personhood.MsgBindHandle
+import network.erth.earth.proto.personhood.ClaimProof
 import network.erth.earth.proto.personhood.MsgClaimAnml
+import network.erth.earth.proto.personhood.MsgClaimAnmlDays
 import network.erth.earth.proto.personhood.MsgMoveCaretaker
 import network.erth.earth.proto.personhood.MsgMoveHandle
 import network.erth.earth.proto.personhood.MoveProof
@@ -50,6 +52,7 @@ object PrivateMsgs {
     const val SHIELD = "/earth.shielded.v1.MsgShield"
     const val REGISTER = "/earth.personhood.v1.MsgRegister"
     const val CLAIM_ANML = "/earth.personhood.v1.MsgClaimAnml"
+    const val CLAIM_ANML_DAYS = "/earth.personhood.v1.MsgClaimAnmlDays"
     const val SET_CARETAKER = "/earth.personhood.v1.MsgSetCaretaker"
     const val BIND_HANDLE = "/earth.personhood.v1.MsgBindHandle"
     const val MOVE_HANDLE = "/earth.personhood.v1.MsgMoveHandle"
@@ -213,6 +216,7 @@ object PrivateMsgs {
         is MsgSend -> listOf(msg.bundle)
         is MsgRegister -> listOf(msg.fee)
         is MsgClaimAnml -> listOf(msg.fee)
+        is MsgClaimAnmlDays -> listOf(msg.fee)
         is MsgSetCaretaker -> listOf(msg.fee)
         is MsgBindHandle -> listOf(msg.fee)
         is MsgMoveHandle -> listOf(msg.fee)
@@ -269,6 +273,22 @@ object PrivateMsgs {
             is MsgMoveCaretaker -> msg.toBuilder().setMove(mp(msg.move)).build()
             else -> throw IllegalArgumentException("not a move: ${msg.javaClass.simpleName}")
         }
+    }
+
+    /**
+     * A MsgClaimAnmlDays with its claim proof's body, root and nullifiers
+     * (one per day, in day order) set. The sighash binds none of them, as a
+     * move's.
+     */
+    fun withClaim(msg: MessageLite, proof: ByteArray, root: Fr, nullifiers: List<Fr>): MessageLite = when (msg) {
+        is MsgClaimAnmlDays -> {
+            require(nullifiers.size.toLong() == msg.day - msg.firstDay + 1) { "a claim carries one nullifier per day" }
+            msg.toBuilder().setClaim(
+                ClaimProof.newBuilder().setProof(ByteString.copyFrom(proof)).setRoot(ByteString.copyFrom(root.toBytes()))
+                    .addAllNullifiers(nullifiers.map { ByteString.copyFrom(it.toBytes()) }),
+            ).build()
+        }
+        else -> throw IllegalArgumentException("not a claim run: ${msg.javaClass.simpleName}")
     }
 
     /** The msg's stake proof, if it carries one. */
@@ -337,6 +357,8 @@ object PrivateMsgs {
             affiliateField(msg), bytes(msg.signatureAlgorithm),
         ) + msg.publicSignalsList.map { decimalField(it) }
         is MsgClaimAnml -> listOf(u(msg.day), f(msg.pc), bytes(msg.ciphertext))
+        // The claim proof binds the sighash; its nullifiers are its own public inputs.
+        is MsgClaimAnmlDays -> listOf(u(msg.firstDay), u(msg.day), f(msg.pc), bytes(msg.ciphertext))
         is MsgSetCaretaker -> msg.percentagesList.flatMap { listOf(u(it.optionId), u(it.percent)) }
         is MsgBindHandle -> bindHandleFields(msg)
         // The move proof binds the sighash; its nullifiers are its own public inputs.
@@ -402,6 +424,7 @@ object PrivateMsgs {
         is MsgSend -> SEND
         is MsgRegister -> REGISTER
         is MsgClaimAnml -> CLAIM_ANML
+        is MsgClaimAnmlDays -> CLAIM_ANML_DAYS
         is MsgSetCaretaker -> SET_CARETAKER
         is MsgBindHandle -> BIND_HANDLE
         is MsgMoveHandle -> MOVE_HANDLE

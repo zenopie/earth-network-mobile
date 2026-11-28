@@ -66,6 +66,11 @@ final class PrivateMsgsTests: XCTestCase {
         Membership(proof: Data([0xbe, 0xef, UInt8(truncatingIfNeeded: seed)]), root: fb(seed + 100), nullifier: fb(seed + 101))
     }
 
+    /// main.go claimProof.
+    func claimProof(_ seed: UInt64, _ days: Int) -> ClaimProof {
+        ClaimProof(proof: Data([0xc1, 0xa1, UInt8(truncatingIfNeeded: seed)]), root: fb(seed + 100), nullifiers: (0 ..< days).map { fb(seed + 101 + UInt64($0)) })
+    }
+
     /// main.go moveProof.
     func moveProof(_ seed: UInt64) -> MoveProof {
         MoveProof(proof: Data([0x30, 0x7e, UInt8(truncatingIfNeeded: seed)]), root: fb(seed + 100), oldNullifier: fb(seed + 101), newNullifier: fb(seed + 102))
@@ -97,6 +102,7 @@ final class PrivateMsgsTests: XCTestCase {
         "register": register("alice-01"),
         "register_no_affiliate": register(""),
         "claim_anml": MsgClaimAnmlPrivate(fee: fee(50, 2000), membership: membership(50), day: 20360, pc: fb(51), ciphertext: bct(51)),
+        "claim_anml_days": MsgClaimAnmlDays(fee: fee(52, 2000), claim: claimProof(52, 4), firstDay: 20357, day: 20360, pc: fb(53), ciphertext: bct(53)),
         "set_caretaker": MsgSetCaretaker(fee: fee(60, 2000), membership: membership(60), percentages: [w(1, 60), w(7, 40)], maxPredecessor: 1_750_000_000),
         "set_caretaker_no_bound": MsgSetCaretaker(fee: fee(61, 2000), membership: membership(61), percentages: [w(2, 100)], maxPredecessor: PrivacyHash.noBound),
         "move_caretaker": MsgMoveCaretaker(fee: fee(62, 2000), move: moveProof(62)),

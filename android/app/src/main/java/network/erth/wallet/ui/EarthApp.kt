@@ -29,7 +29,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import network.erth.wallet.R
 import network.erth.wallet.notify.Notifications
 import network.erth.wallet.privacy.PrivacySession
@@ -240,18 +242,37 @@ fun EarthApp(
         Unit
     }
 
-    // Private: a membership proof for today's claim scope, the ANML minted
-    // to a note, the fee paid from shielded ERTH. Nothing names this wallet.
-    val claimAnml = {
-        tx.requestPrivate(
-            details = TxConfirmDetails(
-                action = "Claim ANML",
-                msgTypeUrl = PrivateMsgs.CLAIM_ANML,
-                balanceUerth = 0L,
-            ),
-            shieldedErth = state?.shieldedErthUerth ?: 0L,
-            run = { ctx -> PrivacySession.wallet(ctx).claimAnml().hash },
-        )
+    // Private: one claim proof for every unclaimed day up to a week (today's
+    // alone on a chain before v1.4.0), the ANML minted to one note, the fee
+    // paid from shielded ERTH. Nothing names this wallet.
+    // The sheet names what the claim takes as of the tap (the chain's day and
+    // this wallet's claims), not a cached count; one tap, one sheet.
+    var claimReading by remember { mutableStateOf(false) }
+    val claimAnml: () -> Unit = {
+        if (!claimReading) {
+            claimReading = true
+            refreshScope.launch {
+                val claim = withContext(Dispatchers.IO) {
+                    runCatching { PrivacySession.wallet(context).claimOutlook() }.getOrNull()
+                }
+                claimReading = false
+                // Unknown (the read failed): the sheet says what the claim does, not a guess.
+                val days = claim?.days?.let { maxOf(it, 1) }
+                tx.requestPrivate(
+                    details = TxConfirmDetails(
+                        action = when {
+                            days == null -> "Claim every unclaimed day's ANML"
+                            days > 1 -> "Claim $days ANML"
+                            else -> "Claim ANML"
+                        },
+                        msgTypeUrl = if (claim?.run == false) PrivateMsgs.CLAIM_ANML else PrivateMsgs.CLAIM_ANML_DAYS,
+                        balanceUerth = 0L,
+                    ),
+                    shieldedErth = state?.shieldedErthUerth ?: 0L,
+                    run = { ctx -> PrivacySession.wallet(ctx).claimAnml().hash },
+                )
+            }
+        }
     }
 
     BlankBgScaffold(

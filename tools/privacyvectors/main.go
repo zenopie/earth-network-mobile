@@ -99,6 +99,15 @@ func membership(seed uint64) personhoodtypes.Membership {
 	return personhoodtypes.Membership{Proof: []byte{0xbe, 0xef, byte(seed)}, Root: fb(seed + 100), Nullifier: fb(seed + 101)}
 }
 
+// claimProof is a claim proof for days nullifiers (a run of that many days).
+func claimProof(seed uint64, days int) personhoodtypes.ClaimProof {
+	c := personhoodtypes.ClaimProof{Proof: []byte{0xc1, 0xa1, byte(seed)}, Root: fb(seed + 100)}
+	for i := 0; i < days; i++ {
+		c.Nullifiers = append(c.Nullifiers, fb(seed+101+uint64(i)))
+	}
+	return c
+}
+
 func moveProof(seed uint64) personhoodtypes.MoveProof {
 	return personhoodtypes.MoveProof{Proof: []byte{0x30, 0x7e, byte(seed)}, Root: fb(seed + 100), OldNullifier: fb(seed + 101), NewNullifier: fb(seed + 102)}
 }
@@ -633,6 +642,7 @@ func main() {
 	}
 	out["referral_opening"] = refs
 	add("claim_anml", &personhoodtypes.MsgClaimAnml{Fee: fee(50, 2000), Membership: membership(50), Day: 20360, Pc: fb(51), Ciphertext: bct(51)})
+	add("claim_anml_days", &personhoodtypes.MsgClaimAnmlDays{Fee: fee(52, 2000), Claim: claimProof(52, 4), FirstDay: 20357, Day: 20360, Pc: fb(53), Ciphertext: bct(53)})
 	add("set_caretaker", &personhoodtypes.MsgSetCaretaker{Fee: fee(60, 2000), Membership: membership(60),
 		Percentages: []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 7, Percent: 40}}, MaxPredecessor: 1_750_000_000})
 	add("set_caretaker_no_bound", &personhoodtypes.MsgSetCaretaker{Fee: fee(61, 2000), Membership: membership(61),

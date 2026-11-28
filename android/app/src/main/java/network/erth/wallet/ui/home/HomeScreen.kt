@@ -105,6 +105,8 @@ fun HomeScreen(
     onRegister: () -> Unit,
     /** 0 means claimable now, null means not registered, else when it opens. */
     anmlClaimableAt: Long?,
+    /** The days a claim now takes (unclaimed days up to a week). */
+    anmlClaimableDays: Int?,
     /** Null while the wallet is still loading. */
     registered: Boolean?,
     /** Held but not spendable, so the balance above cannot show it. */
@@ -162,6 +164,7 @@ fun HomeScreen(
             onClaimAnml = onClaimAnml,
             onRegister = onRegister,
             anmlClaimableAt = anmlClaimableAt,
+            anmlClaimableDays = anmlClaimableDays,
             registered = registered,
         )
         Spacer(Modifier.height(2.dp))
@@ -296,6 +299,7 @@ private fun HomeActions(
     onClaimAnml: () -> Unit,
     onRegister: () -> Unit,
     anmlClaimableAt: Long?,
+    anmlClaimableDays: Int?,
     registered: Boolean?,
     modifier: Modifier = Modifier,
 ) {
@@ -322,6 +326,8 @@ private fun HomeActions(
     val claimLabel = when {
         registered == null -> network.erth.wallet.ui.components.LOADING
         notRegistered -> "Verify"
+        // Days saved up: the button says how many ANML it collects.
+        claimable && (anmlClaimableDays ?: 0) > 1 -> "Claim $anmlClaimableDays"
         claimable -> "Claim"
         anmlClaimableAt == null -> "Claim"
         else -> (anmlClaimableAt - now).coerceAtLeast(0).asCountdown()

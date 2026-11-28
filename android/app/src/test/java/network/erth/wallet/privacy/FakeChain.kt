@@ -16,6 +16,8 @@ import network.erth.earth.proto.personhood.MsgMoveHandle
 import network.erth.earth.proto.personhood.MoveProof
 import network.erth.wallet.privacy.prove.MoveWitness
 import network.erth.earth.proto.personhood.MsgClaimAnml
+import network.erth.earth.proto.personhood.MsgClaimAnmlDays
+import network.erth.wallet.privacy.prove.ClaimWitness
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.Bundle
@@ -608,6 +610,9 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     var dropNext = 0
     /** Broadcasts accepted (CheckTx) that then fail in their block (DeliverTx code 5): nothing changes. */
     var failInBlockNext = 0
+    /** What a failInBlockNext tx fails with. */
+    var failInBlockCode = 5
+    var failInBlockLog = "failed in block (test)"
     /** The last committed msg. */
     var lastMsg: MessageLite? = null
     /** Every tx by hash, as Query/GetTx answers. */
@@ -626,14 +631,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         // CheckTx answers with the code and codespace (a simulate with the text alone).
         try { check(tx, simulate = true) } catch (e: IllegalArgumentException) {
             if (e.message?.endsWith("(code 1130)") == true) {
-                prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear()
+                prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear(); prover.claims.clear()
                 throw network.erth.wallet.privacy.tx.UnsignedTx.TxRejected(1130, e.message!!, "personhood", answeringLcd)
             }
         }
         if (rejectNext > 0) {
             // The proofs made for it never reach the chain.
             rejectNext--
-            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear()
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear(); prover.claims.clear()
             throw network.erth.wallet.privacy.tx.UnsignedTx.TxRejected(19, "broadcast refused (test)")
         }
         val hash = network.erth.wallet.privacy.tx.UnsignedTx.hash(tx)
@@ -642,17 +647,17 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             dropNext--
             check(tx, simulate = true)
             accepted(hash)
-            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear()
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear(); prover.claims.clear()
             throw java.io.IOException("tx not committed (test)")
         }
         if (failInBlockNext > 0) {
             failInBlockNext--
             check(tx, simulate = true)
             accepted(hash)
-            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear()
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear(); prover.claims.clear()
             block()
-            txs[hash] = TxResult(hash, height - 1, now, emptyList(), code = 5, log = "failed in block (test)")
-            throw java.io.IOException("tx failed (code 5)")
+            txs[hash] = TxResult(hash, height - 1, now, emptyList(), code = failInBlockCode, log = failInBlockLog)
+            throw java.io.IOException("tx failed (code $failInBlockCode): $failInBlockLog")
         }
         check(tx, simulate = true)
         accepted(hash)
@@ -676,6 +681,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             PrivateMsgs.SEND -> MsgSend.parseFrom(any.value)
             PrivateMsgs.REGISTER -> MsgRegister.parseFrom(any.value)
             PrivateMsgs.CLAIM_ANML -> MsgClaimAnml.parseFrom(any.value)
+            PrivateMsgs.CLAIM_ANML_DAYS -> MsgClaimAnmlDays.parseFrom(any.value)
             PrivateMsgs.VOTE_PROPOSAL -> MsgVoteProposal.parseFrom(any.value)
             PrivateMsgs.DELEGATE -> MsgDelegate.parseFrom(any.value)
             PrivateMsgs.RESTAKE -> MsgRestake.parseFrom(any.value)
@@ -763,6 +769,15 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgMoveHandle -> { only(null); moveShape(m.move); require(network.erth.wallet.privacy.handles.Handles.valid(m.handle)) { "handle" } }
             is MsgMoveCaretaker -> { only(null); moveShape(m.move) }
             is MsgClaimAnml -> { only(null); require(m.ciphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES) }
+            is MsgClaimAnmlDays -> {
+                only(null)
+                require(m.ciphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
+                val n = m.day - m.firstDay + 1
+                require(m.firstDay <= m.day && n <= CLAIM_WINDOW_DAYS) { "first_day ${m.firstDay} to day ${m.day} is not a run of 1 to $CLAIM_WINDOW_DAYS days" }
+                require(m.claim.nullifiersCount.toLong() == n) { "${m.claim.nullifiersCount} nullifiers for $n days" }
+                require(m.claim.proof.size() == PROOF_BYTES) { "a claim proof is exactly $PROOF_BYTES bytes" }
+                require(m.claim.nullifiersList.toSet().size == m.claim.nullifiersCount) { "claim nullifiers repeat" }
+            }
             else -> only(null)
         }
         require(PrivateMsgs.totalFee(m) > 0)
@@ -890,10 +905,21 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** Query/LeaseBounds at the chain's last block time. */
     fun leaseBounds() = network.erth.wallet.privacy.PrivacyChainReads.LeaseBounds(
         now, 86_400, effectiveHandleLease(), handleClaimBound(), effectiveCaretakerLease(), now - effectiveCaretakerLease() - 86_400,
+        claimEarliestDay = if (claimDays) claimEarliestDay() else 0L,
     ).also { leaseBoundsReads++ }
 
     /** Every LeaseBounds read (the wallet must use it for every bound). */
     var leaseBoundsReads = 0
+
+    /** Whether the chain has MsgClaimAnmlDays (v1.4.0), and its claim floor. */
+    var claimDays = false
+    var claimFloor = 0L
+
+    /** (day, nullifier) of every ANML claim, by either msg. */
+    val claimNullifiers = HashSet<Pair<Long, Fr>>()
+
+    /** x/personhood ClaimEarliestDay. */
+    private fun claimEarliestDay(): Long = maxOf(now / 86_400 - (CLAIM_WINDOW_DAYS - 1), claimFloor, 0L)
 
     private fun nf(m: Membership): Fr = Fr.fromBytes(m.nullifier.toByteArray())
 
@@ -1226,6 +1252,30 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(w.publicInputs() == expect) { "membership proof is for other public inputs" }
             }
         }
+        if (m is MsgClaimAnmlDays) {
+            require(claimDays) { "fake chain does not know ${PrivateMsgs.CLAIM_ANML_DAYS}" }
+            // x/personhood checkClaimDays, then the claim proof.
+            require(m.day == now / 86_400) { "claim through day ${m.day}, today is ${now / 86_400}: claim is not for today" }
+            require(m.firstDay >= claimEarliestDay()) { "claim from day ${m.firstDay}, claims reach back to day ${claimEarliestDay()}: claim is not for today" }
+            // The chain names the last claimed day of the run.
+            m.claim.nullifiersList.withIndex().lastOrNull { (i, nf) -> m.firstDay + i to f(nf) in claimNullifiers }?.let { (i, _) ->
+                throw IllegalArgumentException("day ${m.firstDay + i}: a day in this claim has already been claimed")
+            }
+            require(f(m.claim.root) in identityRoots) { "unknown identity anchor" }
+            if (!simulate) {
+                val w = prover.claims.removeFirstOrNull() ?: error("no claim proof")
+                val scopes = (m.firstDay..m.day).map { Privacy.claimScope(it) }
+                val nfs = m.claim.nullifiersList.map { f(it) }
+                val pad = List(ClaimWitness.SLOTS - scopes.size) { Fr.ZERO }
+                val expect = listOf(f(m.claim.root)) + scopes + pad + nfs + pad + listOf(sighash, Privacy.u64((m.firstDay - 1) * 86_400))
+                require(w.publicInputs() == expect) { "invalid membership proof (code 1118): the claim proof is for other public inputs" }
+            }
+        }
+        if (m is MsgClaimAnml) {
+            // v1.4.0 retired it (ErrClaimRetired, before any check or fee).
+            require(!claimDays) { "MsgClaimAnml is retired: claim with MsgClaimAnmlDays" }
+            require(m.day to nf(m.membership) !in claimNullifiers) { "already claimed today; the next claim opens at 00:00 UTC" }
+        }
         PrivateMsgs.move(m)?.let { mv ->
             require(f(mv.root) in identityRoots) { "unknown identity anchor" }
             val scope = moveStatement(m)!!
@@ -1301,7 +1351,17 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 }
                 events.add("register" to mapOf("leaf_index" to idx.toString(), "switched" to switched.toString()))
             }
-            is MsgClaimAnml -> mint("uanml", 1_000_000, f(m.pc), m.ciphertext.toByteArray())
+            is MsgClaimAnml -> {
+                claimNullifiers.add(m.day to nf(m.membership))
+                mint("uanml", 1_000_000, f(m.pc), m.ciphertext.toByteArray())
+            }
+            is MsgClaimAnmlDays -> {
+                m.claim.nullifiersList.forEachIndexed { i, nf -> claimNullifiers.add(m.firstDay + i to f(nf)) }
+                mint("uanml", 1_000_000 * m.claim.nullifiersCount.toLong(), f(m.pc), m.ciphertext.toByteArray())
+                m.claim.nullifiersList.forEachIndexed { i, nf ->
+                    events.add("claim_anml" to mapOf("day" to (m.firstDay + i).toString(), "nullifier" to f(nf).toHex()))
+                }
+            }
             is MsgVoteProposal -> votes.add(m.proposalId to m.optionValue)
             is MsgDelegate -> {
                 validators.add(m.validator)
@@ -1691,6 +1751,7 @@ fun dumpWitnesses(chain: FakeChain, test: String) {
     chain.prover.allStakes.forEachIndexed { i, w -> write("stake", i, w.proverToml()) }
     chain.prover.allMemberships.forEachIndexed { i, w -> write("membership", i, w.proverToml()) }
     chain.prover.allMoves.forEachIndexed { i, w -> write("move", i, w.proverToml()) }
+    chain.prover.allClaims.forEachIndexed { i, w -> write("claim", i, w.proverToml()) }
     chain.prover.allVotes.forEachIndexed { i, w -> write("vote", i, w.proverToml()) }
 }
 
@@ -1700,6 +1761,9 @@ fun dumpWitnesses(chain: FakeChain, test: String) {
  * to match against the tx and for a test to dump as Prover.toml.
  */
 const val PROOF_BYTES = 14_656
+
+/** x/personhood ClaimWindowDays. */
+const val CLAIM_WINDOW_DAYS = 7
 
 class CheckingProver : Prover {
     val actions = ArrayDeque<ActionWitness>()
@@ -1712,6 +1776,14 @@ class CheckingProver : Prover {
     val allMemberships = ArrayList<MembershipWitness>()
     val moves = ArrayDeque<MoveWitness>()
     val allMoves = ArrayList<MoveWitness>()
+    val claims = ArrayDeque<ClaimWitness>()
+    val allClaims = ArrayList<ClaimWitness>()
+
+    override fun proveClaim(w: ClaimWitness): ByteArray {
+        w.check()
+        claims.add(w); allClaims.add(w)
+        return ByteArray(14_656) { 6 }
+    }
 
     override fun proveAction(w: ActionWitness): ByteArray {
         w.check()

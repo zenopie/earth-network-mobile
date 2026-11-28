@@ -165,7 +165,7 @@ data class ActivityEntry(
                 "MsgWithdrawDelegatorReward" -> { party = f("validator_address"); "Claimed rewards" to Glyph.RECEIVE }
                 "MsgRegister" -> "Registered" to Glyph.REGISTER
                 // Distinct from registration: you register once and claim every day.
-                "MsgClaimAnml" -> "Claimed ANML" to Glyph.RECEIVE
+                "MsgClaimAnml", "MsgClaimAnmlDays" -> "Claimed ANML" to Glyph.RECEIVE
                 "MsgSwap" -> "Swapped" to Glyph.SWAP
                 "MsgSetAllocations", "MsgSetAllocation" -> "Allocated" to Glyph.VOTE
                 "MsgVote" -> { party = f("proposal_id").takeIf { it.isNotEmpty() }?.let { "proposal $it" }.orEmpty(); "Voted" to Glyph.VOTE }

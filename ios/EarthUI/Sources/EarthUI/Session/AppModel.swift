@@ -69,6 +69,8 @@ public final class AppModel {
     public private(set) var identityStatus: WalletSync.IdentityStatus = .none
     /// When ANML can next be claimed: 0 for now, nil without a live registration.
     public private(set) var claimOpensAt: Int64?
+    /// What a claim now takes (unclaimed days up to a week, and which msg); nil when unknown.
+    public private(set) var claimOutlook: PrivacyWallet.ClaimOutlook?
     /// The block the private side is synced to (0: not yet), and the chain's
     /// latest as last read (0: unknown). Shown on the wallet screen: notes
     /// and stake are only as current as the first.
@@ -1093,6 +1095,7 @@ public final class AppModel {
         shieldedAddress = ""
         identityStatus = .none
         claimOpensAt = nil
+        claimOutlook = nil
         syncedHeight = 0
         mergeable = [:]
         unshieldableErth = 0
@@ -1106,6 +1109,17 @@ public final class AppModel {
         addressedHandles = []; caretakerSplitUnknown = false; outgoingMoves = []; incomingMoves = []
         caretakerSplit = [:]; registeredBefore = false
         PrivacyProving.registrationMayFollow = true
+    }
+
+    /// What a claim now takes, asked of the wallet (and the chain's
+    /// LeaseBounds, only while a claim is open). Unknown (nil) when the read
+    /// fails: a stale count is never shown.
+    @discardableResult
+    func refreshClaimOutlook(bounds: PrivacyReads.LeaseBounds? = nil) async -> PrivacyWallet.ClaimOutlook? {
+        guard let w = privacy else { return nil }
+        let o = try? await w.claimOutlook(bounds: bounds)
+        if w === privacy { claimOutlook = o ?? nil }
+        return o ?? nil
     }
 
     /// Copies the wallet's snapshot into what the screens read.
@@ -1172,6 +1186,8 @@ public final class AppModel {
         guard w === privacy else { return }
         if let p = params { leaseSeconds = p.caretakerVoteSeconds; registrationValiditySeconds = p.registrationValiditySeconds }
         if let b = bounds, (1 ... Handles.maxAheadSeconds).contains(b.handleLeaseSeconds) { handleLeaseSeconds = b.handleLeaseSeconds }
+        // The wallet reads (and checks) LeaseBounds itself.
+        await refreshClaimOutlook()
         await refreshPersonal()
         // Inside a full pass, that pass says when it is done.
         if w === privacy, refreshTask == nil { dataVersion &+= 1 }

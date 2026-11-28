@@ -10,6 +10,7 @@ import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.prove.ActionWitness
 import network.erth.wallet.privacy.prove.MembershipWitness
 import network.erth.wallet.privacy.prove.MoveWitness
+import network.erth.wallet.privacy.prove.ClaimWitness
 import network.erth.wallet.privacy.prove.StakeWitness
 import network.erth.wallet.privacy.prove.VoteWitness
 import network.erth.wallet.privacy.zk.Fr
@@ -22,6 +23,7 @@ interface Prover {
     fun proveStake(w: StakeWitness): ByteArray
     fun proveMembership(w: MembershipWitness): ByteArray
     fun proveMove(w: MoveWitness): ByteArray
+    fun proveClaim(w: ClaimWitness): ByteArray
     fun proveVote(w: VoteWitness): ByteArray
 }
 
@@ -83,6 +85,8 @@ class Assembled(
      * sets the msg's MoveProof (root, nullifiers, proof) on the built msg.
      */
     val move: MoveWitnessSpec? = null,
+    /** A claim proof's statement (MsgClaimAnmlDays): the engine sets the msg's ClaimProof on the built msg. */
+    val claim: ClaimWitnessSpec? = null,
     /**
      * Gas declared beyond the simulation and its headroom: what the chain
      * may charge by the tx's block that it did not when simulated (a move's
@@ -120,6 +124,21 @@ class MoveWitnessSpec(private val make: (signal: Fr) -> MoveWitness) {
 
     fun witness(signal: Fr): MoveWitness = make(signal).also {
         check(it.root == root && it.oldNullifier == oldNullifier && it.newNullifier == newNullifier) { "the move witness is for another statement" }
+    }
+}
+
+/**
+ * A claim proof's statement, waiting for the sighash (its signal). The root
+ * and the nullifiers are fixed before it: the chain checks every day's
+ * nullifier before any proof.
+ */
+class ClaimWitnessSpec(private val make: (signal: Fr) -> ClaimWitness) {
+    private val probe = make(Fr.ZERO)
+    val root: Fr get() = probe.root
+    val nullifiers: List<Fr> get() = probe.nullifiers
+
+    fun witness(signal: Fr): ClaimWitness = make(signal).also {
+        check(it.root == root && it.nullifiers == nullifiers) { "the claim witness is for another statement" }
     }
 }
 
@@ -246,6 +265,9 @@ class PrivateTxEngine(
         } ?: a.move?.let { mv ->
             val w = mv.witness(sighash).also { it.check() }
             PrivateMsgs.withMove(built, proofSized(prover.proveMove(w)), w.root, w.oldNullifier, w.newNullifier)
+        } ?: a.claim?.let { c ->
+            val w = c.witness(sighash).also { it.check() }
+            PrivateMsgs.withClaim(built, proofSized(prover.proveClaim(w)), w.root, w.nullifiers)
         } ?: built
         check(PrivateMsgs.sighash(msg, chainId, tx) == sighash)
         check(PrivateMsgs.totalFee(msg) == q.fee) { "the msg must pay exactly the quoted fee" }
@@ -363,6 +385,14 @@ class PrivateTxEngine(
             // caretaker vote the old one holds) before any proof, so random ones
             // could never simulate. The tx reveals them anyway.
             PrivateMsgs.withMove(msg, PLACEHOLDER, mv.root, mv.oldNullifier, mv.newNullifier)
+        } ?: a.claim?.let { c ->
+            // A quote's nullifiers are random, as a membership's: the node
+            // cannot tell whose claim it is before the user confirms (first_day
+            // and day, so how many days are owed, it sees either way). The
+            // send's are real, and its simulate names a day already claimed
+            // (1131) before any fee.
+            val nfs = if (placeholders) c.nullifiers.map { Fr.fromBytes(randomField().toByteArray()) } else c.nullifiers
+            PrivateMsgs.withClaim(msg, PLACEHOLDER, c.root, nfs)
         } ?: msg
     }
 
@@ -499,6 +529,8 @@ class PrivateTxEngine(
                 if (!Fr.fromBytes(p.creditNullifier.toByteArray()).isZero) g += CREDIT_GAS + if (msg is network.erth.earth.proto.shieldedstaking.MsgCheckIn) 0L else REDELEGATE_RECORD_GAS
             }
             if (a.membership != null) g += MEMBERSHIP_GAS
+            // A claim proof costs what a membership proof does: the note and a nullifier per day.
+            a.claim?.let { g += MEMBERSHIP_GAS + it.nullifiers.size * NOTE_GAS }
             if (a.move != null) g += MEMBERSHIP_GAS + if (msg is network.erth.earth.proto.personhood.MsgMoveCaretaker) MOVE_CARETAKER_EXTRA_GAS else MOVE_HANDLE_EXTRA_GAS
             a.vote?.let { g += VOTE_GAS + (1L + it.vnfs.size) * NOTE_GAS }
             if (msg is network.erth.earth.proto.personhood.MsgRegister) g += REGISTER_GAS

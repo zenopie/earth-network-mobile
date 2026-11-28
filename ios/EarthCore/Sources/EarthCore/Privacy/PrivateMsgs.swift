@@ -239,6 +239,34 @@ public struct MoveProof: ProtoMessage, Equatable, Sendable {
     }
 }
 
+/// earth.personhood.v1.ClaimProof: a claim circuit proof (circuits/claim):
+/// one live identity leaf's nullifiers in the claim scopes of a run of days,
+/// one per day in day order. Public inputs, in order: root, scopes[7],
+/// nullifiers[7] (the slots after the run 0 in both), signal (the msg's
+/// sighash), max_activation.
+public struct ClaimProof: ProtoMessage, Equatable, Sendable {
+    public var proof: Data
+    public var root: Data
+    public var nullifiers: [Data]
+
+    public init(proof: Data, root: Data, nullifiers: [Data]) {
+        self.proof = proof; self.root = root; self.nullifiers = nullifiers
+    }
+
+    public func encoded() -> Data {
+        var w = ProtoWriter()
+        w.bytes(1, proof)
+        w.bytes(2, root)
+        w.repeatedBytes(3, nullifiers)
+        return w.data
+    }
+
+    public static func decode(_ d: Data) throws -> ClaimProof {
+        let f = try ProtoFields(d)
+        return ClaimProof(proof: f.bytes(1), root: f.bytes(2), nullifiers: f.repeatedBytes(3))
+    }
+}
+
 /// cosmos.gov.v1.WeightedVoteOption. `option` is cosmos.gov.v1.VoteOption
 /// (1 yes, 2 abstain, 3 no, 4 no with veto); `weight` a decimal in (0, 1].
 public struct WeightedVoteOption: ProtoMessage, Equatable, Sendable {
@@ -523,7 +551,7 @@ public enum PrivateMsgs {
     /// Decodes a private msg from its Any (the in-memory chain, reading a tx back).
     public static func decode(typeURL: String, value: Data) throws -> any PrivateMsg {
         let types: [any DecodablePrivateMsg.Type] = [
-            MsgSend.self, MsgRegisterPrivate.self, MsgClaimAnmlPrivate.self, MsgSetCaretaker.self, MsgMoveCaretaker.self,
+            MsgSend.self, MsgRegisterPrivate.self, MsgClaimAnmlPrivate.self, MsgClaimAnmlDays.self, MsgSetCaretaker.self, MsgMoveCaretaker.self,
             MsgBindHandle.self, MsgMoveHandle.self,
             MsgVoteProposalPrivate.self, MsgProposeRemoval.self, MsgVoteRemoval.self, MsgShieldedDelegate.self, MsgRestake.self,
             MsgShieldedUndelegate.self, MsgStakeVote.self, MsgRedelegate.self, MsgCheckIn.self, MsgNoteSwap.self, MsgAddLiquidityShielded.self,
@@ -707,6 +735,47 @@ public struct MsgClaimAnmlPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable 
     }
 
     public func sighashFields() throws -> [Fr] { [PrivateMsgs.u(day), try PrivateMsgs.f(pc), PrivateMsgs.bytes(ciphertext)] }
+}
+
+/// One ANML per day for the consecutive days first_day..day (day = today, at
+/// most 7 days) in one note, with one claim proof. sighash fields:
+/// first_day, day, pc, Bytes(ciphertext) (the claim proof binds the
+/// sighash; its nullifiers are its own public inputs).
+public struct MsgClaimAnmlDays: DecodablePrivateMsg, FeeBundleMsg, Equatable {
+    public static let typeURL = "/earth.personhood.v1.MsgClaimAnmlDays"
+    public var fee: ShieldedBundle
+    public var claim: ClaimProof
+    public var firstDay: UInt64
+    public var day: UInt64
+    public var pc: Data
+    public var ciphertext: Data
+
+    public init(fee: ShieldedBundle, claim: ClaimProof, firstDay: UInt64, day: UInt64, pc: Data, ciphertext: Data) {
+        self.fee = fee; self.claim = claim; self.firstDay = firstDay; self.day = day; self.pc = pc; self.ciphertext = ciphertext
+    }
+
+    public var feeBundle: ShieldedBundle { fee }
+
+    public func encoded() -> Data {
+        var w = ProtoWriter()
+        w.message(1, fee)
+        w.message(2, claim)
+        w.uint64(3, firstDay)
+        w.uint64(4, day)
+        w.bytes(5, pc)
+        w.bytes(6, ciphertext)
+        return w.data
+    }
+
+    public static func decodeMsg(_ d: Data) throws -> Self {
+        let f = try ProtoFields(d)
+        return Self(fee: try f.message(1, ShieldedBundle.decode), claim: try f.message(2, ClaimProof.decode),
+                    firstDay: f.uint64(3), day: f.uint64(4), pc: f.bytes(5), ciphertext: f.bytes(6))
+    }
+
+    public func sighashFields() throws -> [Fr] {
+        [PrivateMsgs.u(firstDay), PrivateMsgs.u(day), try PrivateMsgs.f(pc), PrivateMsgs.bytes(ciphertext)]
+    }
 }
 
 public struct MsgSetCaretaker: DecodablePrivateMsg, FeeBundleMsg, Equatable {

@@ -4,6 +4,7 @@ members = [
   "privacy_core",
   "membership",
   "move",
+  "claim",
   "action",
   "stake",
   "vote",
